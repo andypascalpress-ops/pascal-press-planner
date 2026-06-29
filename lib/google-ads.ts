@@ -1,5 +1,5 @@
 /**
- * Google Ads REST API v24 client
+ * Google Ads REST API client
  *
  * Required env vars:
  *   GOOGLE_ADS_DEVELOPER_TOKEN   — from your Google Ads account (Tools → API Centre)
@@ -7,8 +7,11 @@
  *   GOOGLE_ADS_CLIENT_SECRET     — OAuth2 client secret
  *   GOOGLE_ADS_REFRESH_TOKEN     — long-lived refresh token (run scripts/get-google-refresh-token.mjs once)
  *   GOOGLE_ADS_PP_CUSTOMER_ID    — Pascal Press account ID, e.g. "123-456-7890"
- *   GOOGLE_ADS_ETZ_CUSTOMER_ID   — Excel Test Zone account ID
+ *   GOOGLE_ADS_ETZ_CUSTOMER_ID   — (optional) Excel Test Zone sub-account ID once separated into MCC
  *   GOOGLE_ADS_LOGIN_CUSTOMER_ID — (optional) MCC / manager account ID if PP/ETZ are sub-accounts
+ *
+ * Until ETZ has its own sub-account, ETZ spend is pulled from the PP account
+ * by filtering campaign names containing "ETZ". PP spend excludes those campaigns.
  */
 
 const GOOGLE_ADS_API_VERSION = 'v24';
@@ -39,6 +42,7 @@ export interface GoogleAdsConfig {
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function parseJsonOrThrow(res: Response, context: string): Promise<any> {
   const text = await res.text();
   try {
@@ -112,13 +116,26 @@ async function gaqlSearch(
 /**
  * Fetch monthly spend + conversion value for a Google Ads account over a date range.
  * Results are aggregated across all campaigns for each calendar month.
+ *
+ * @param campaignNameFilter  Optional: { contains: 'ETZ' } to include only matching campaigns,
+ *                            or { excludes: 'ETZ' } to exclude them.
  */
 export async function fetchMonthlySpend(
   cfg: GoogleAdsConfig,
   startDate: string, // 'YYYY-MM-DD'
-  endDate:   string  // 'YYYY-MM-DD'
+  endDate:   string, // 'YYYY-MM-DD'
+  campaignNameFilter?: { contains: string } | { excludes: string }
 ): Promise<MonthlySpend[]> {
   const accessToken = await getAccessToken(cfg);
+
+  let nameClause = '';
+  if (campaignNameFilter) {
+    if ('contains' in campaignNameFilter) {
+      nameClause = `AND campaign.name LIKE '%${campaignNameFilter.contains}%'`;
+    } else {
+      nameClause = `AND campaign.name NOT LIKE '%${campaignNameFilter.excludes}%'`;
+    }
+  }
 
   const query = `
     SELECT
@@ -127,6 +144,7 @@ export async function fetchMonthlySpend(
       metrics.conversions_value
     FROM campaign
     WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+    ${nameClause}
     ORDER BY segments.month
   `;
 
@@ -158,20 +176,24 @@ export async function fetchMonthlySpend(
 // ─── Config builder ───────────────────────────────────────────────────────────
 
 export function buildConfig(brand: 'pp' | 'etz'): GoogleAdsConfig {
+  // ETZ falls back to PP account when GOOGLE_ADS_ETZ_CUSTOMER_ID is not yet set
+  // (while ETZ campaigns still live under the PP account, filtered by name)
+  const customerId = brand === 'pp'
+    ? process.env.GOOGLE_ADS_PP_CUSTOMER_ID
+    : (process.env.GOOGLE_ADS_ETZ_CUSTOMER_ID || process.env.GOOGLE_ADS_PP_CUSTOMER_ID);
+
   const required = {
     developerToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
     clientId:       process.env.GOOGLE_ADS_CLIENT_ID,
     clientSecret:   process.env.GOOGLE_ADS_CLIENT_SECRET,
     refreshToken:   process.env.GOOGLE_ADS_REFRESH_TOKEN,
-    customerId:     brand === 'pp'
-                      ? process.env.GOOGLE_ADS_PP_CUSTOMER_ID
-                      : process.env.GOOGLE_ADS_ETZ_CUSTOMER_ID,
+    customerId,
   };
 
   const missing = Object.entries(required)
     .filter(([, v]) => !v)
     .map(([k]) => k === 'customerId'
-      ? `GOOGLE_ADS_${brand.toUpperCase()}_CUSTOMER_ID`
+      ? 'GOOGLE_ADS_PP_CUSTOMER_ID'
       : `GOOGLE_ADS_${k.replace(/([A-Z])/g, '_$1').toUpperCase()}`
     );
 
@@ -180,11 +202,16 @@ export function buildConfig(brand: 'pp' | 'etz'): GoogleAdsConfig {
   }
 
   return {
-    developerToken: required.developerToken!,
-    clientId:       required.clientId!,
-    clientSecret:   required.clientSecret!,
-    refreshToken:   required.refreshToken!,
-    customerId:     required.customerId!.replace(/-/g, ''),
+    developerToken:  required.developerToken!,
+    clientId:        required.clientId!,
+    clientSecret:    required.clientSecret!,
+    refreshToken:    required.refreshToken!,
+    customerId:      required.customerId!.replace(/-/g, ''),
     loginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID?.replace(/-/g, ''),
   };
+}
+
+/** Returns true when ETZ has its own dedicated Google Ads sub-account */
+export function etzHasOwnAccount(): boolean {
+  return !!process.env.GOOGLE_ADS_ETZ_CUSTOMER_ID;
 }
