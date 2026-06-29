@@ -12,7 +12,7 @@ export async function GET() {
 
 export async function POST() {
   try {
-    const { boardId } = await createSpendBoard();
+        const boardId = await createSpendBoard();
     await addSpendColumnsToBoard(boardId);
     return NextResponse.json({ success: true, boardId });
   } catch (err) {
