@@ -1,5 +1,5 @@
 /**
- * Google Ads REST API v18 client
+ * Google Ads REST API v24 client
  *
  * Required env vars:
  *   GOOGLE_ADS_DEVELOPER_TOKEN   — from your Google Ads account (Tools → API Centre)
@@ -11,7 +11,7 @@
  *   GOOGLE_ADS_LOGIN_CUSTOMER_ID — (optional) MCC / manager account ID if PP/ETZ are sub-accounts
  */
 
-const GOOGLE_ADS_API_VERSION = 'v18';
+const GOOGLE_ADS_API_VERSION = 'v24';
 const GOOGLE_ADS_BASE = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}`;
 const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
