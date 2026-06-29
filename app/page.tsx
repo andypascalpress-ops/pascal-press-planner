@@ -277,6 +277,7 @@ export default function Home() {
   const completeCount = filteredCampaigns.filter(c => c.status === 'Complete').length;
   const totalRevenue  = filteredCampaigns.reduce((s, c) => s + (c.revenue || 0), 0);
   const totalOrders   = filteredCampaigns.reduce((s, c) => s + (c.orders || 0), 0);
+  const topCampaigns  = [...filteredCampaigns].sort((a, b) => (b.revenue || 0) - (a.revenue || 0)).slice(0, 3);
   const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
   const FMT = new Intl.NumberFormat('en-AU');
 
@@ -402,11 +403,24 @@ export default function Home() {
 
         {/* ── Sub-stats bar (campaign views only) ── */}
         {view !== 'finance' && !loading && !error && (
-          <div className="flex items-center gap-5 px-6 py-2 border-t border-gray-100 text-sm text-gray-600">
+          <div className="flex items-center gap-5 px-6 py-2 border-t border-gray-100 text-sm text-gray-600 flex-wrap">
             <span><strong className="text-gray-900">{filteredCampaigns.length}</strong> campaigns</span>
             <span><strong className="text-gray-900">{completeCount}</strong> complete</span>
             {totalRevenue > 0 && <span>Revenue: <strong className="text-green-700">{AUD.format(totalRevenue)}</strong></span>}
             {totalOrders > 0 && <span>Orders: <strong className="text-gray-900">{FMT.format(totalOrders)}</strong></span>}
+            {topCampaigns.length > 0 && totalRevenue > 0 && (
+              <>
+                <span className="text-gray-300">|</span>
+                <span className="text-gray-400 text-xs uppercase tracking-wide font-medium">Top 3:</span>
+                {topCampaigns.map((c, i) => (
+                  <span key={c.id} className="flex items-center gap-1">
+                    <span className="text-gray-400 text-xs">{i + 1}.</span>
+                    <strong className="text-gray-900 truncate max-w-[180px]">{c.name}</strong>
+                    <span className="text-green-700">{AUD.format(c.revenue)}</span>
+                  </span>
+                ))}
+              </>
+            )}
           </div>
         )}
       </header>
