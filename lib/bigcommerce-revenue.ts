@@ -6,7 +6,7 @@
 const STORE_HASH = process.env.BIGCOMMERCE_STORE_HASH ?? '';
 const ACCESS_TOKEN = process.env.BIGCOMMERCE_ACCESS_TOKEN ?? '';
 const BC_BASE = `https://api.bigcommerce.com/stores/${STORE_HASH}/v2`;
-const BC_BASE_V3 = `https://api.bigcommerce.com/stores/${STORE_HASH}/v3`;h
+const BC_BASE_V3 = `https://api.bigcommerce.com/stores/${STORE_HASH}/v3`;
 
 function bcHeaders() {
   return {
