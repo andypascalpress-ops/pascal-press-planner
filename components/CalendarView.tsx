@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { Campaign } from '@/lib/types';
 import { CAMPAIGN_COLORS, FY_MONTHS } from '@/lib/constants';
 
@@ -11,32 +12,45 @@ interface Props {
 }
 
 export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMonth }: Props) {
+  const [selectedType, setSelectedType] = useState<string | null>(null);
   const months = FY_MONTHS;
+
+  const visibleCampaigns = selectedType ? campaigns.filter(c => c.type === selectedType) : campaigns;
 
   const campaignsByMonth: Record<string, Campaign[]> = {};
   for (const m of months) campaignsByMonth[m] = [];
 
-  for (const c of campaigns) {
+  for (const c of visibleCampaigns) {
     if (campaignsByMonth[c.month]) {
       campaignsByMonth[c.month].push(c);
     }
   }
 
-  const totalRevenue = campaigns.reduce((s, c) => s + (c.revenue || 0), 0);
-  const totalOrders = campaigns.reduce((s, c) => s + (c.orders || 0), 0);
-  const complete = campaigns.filter(c => c.status === 'Complete').length;
+  const totalRevenue = visibleCampaigns.reduce((s, c) => s + (c.revenue || 0), 0);
+  const totalOrders = visibleCampaigns.reduce((s, c) => s + (c.orders || 0), 0);
+  const complete = visibleCampaigns.filter(c => c.status === 'Complete').length;
 
   return (
     <div className="flex-1 overflow-y-auto">
       {/* Summary bar */}
-      <div className="flex gap-6 px-6 py-3 bg-white border-b border-gray-200 text-sm text-gray-600">
-        <span><strong className="text-gray-900">{campaigns.length}</strong> campaigns</span>
+      <div className="flex items-center gap-6 px-6 py-3 bg-white border-b border-gray-200 text-sm text-gray-600">
+        <span><strong className="text-gray-900">{visibleCampaigns.length}</strong> campaigns</span>
         <span><strong className="text-gray-900">{complete}</strong> complete</span>
         {totalRevenue > 0 && (
           <span>Revenue: <strong className="text-gray-900">${totalRevenue.toLocaleString()}</strong></span>
         )}
         {totalOrders > 0 && (
           <span>Orders: <strong className="text-gray-900">{totalOrders.toLocaleString()}</strong></span>
+        )}
+        {selectedType && (
+          <span
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs text-white cursor-pointer hover:opacity-80"
+            style={{ backgroundColor: CAMPAIGN_COLORS[selectedType] || '#888' }}
+            onClick={() => setSelectedType(null)}
+            title="Clear filter"
+          >
+            {selectedType} ✕
+          </span>
         )}
       </div>
 
@@ -101,19 +115,31 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
         })}
       </div>
 
-      {/* Legend */}
+      {/* Legend / Type filter */}
       <div className="px-6 pb-6">
         <p className="text-xs text-gray-400 mb-2 font-medium uppercase tracking-wide">Campaign Types</p>
         <div className="flex flex-wrap gap-2">
-          {Object.entries(CAMPAIGN_COLORS).map(([type, color]) => (
-            <span
-              key={type}
-              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs text-white"
-              style={{ backgroundColor: color }}
-            >
-              {type}
-            </span>
-          ))}
+          {Object.entries(CAMPAIGN_COLORS).map(([type, color]) => {
+            const isActive = selectedType === type;
+            return (
+              <button
+                key={type}
+                onClick={() => setSelectedType(isActive ? null : type)}
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs text-white transition-all"
+                style={{
+                  backgroundColor: color,
+                  opacity: selectedType && !isActive ? 0.35 : 1,
+                  outline: isActive ? '2px solid white' : 'none',
+                  outlineOffset: '1px',
+                  boxShadow: isActive ? `0 0 0 3px ${color}` : 'none',
+                }}
+                title={isActive ? `Clear filter` : `Filter by ${type}`}
+              >
+                {type}
+                {isActive && <span className="ml-0.5 opacity-80">✕</span>}
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
