@@ -6,6 +6,7 @@
 const STORE_HASH = process.env.BIGCOMMERCE_STORE_HASH ?? '';
 const ACCESS_TOKEN = process.env.BIGCOMMERCE_ACCESS_TOKEN ?? '';
 const BC_BASE = `https://api.bigcommerce.com/stores/${STORE_HASH}/v2`;
+const BC_BASE_V3 = `https://api.bigcommerce.com/stores/${STORE_HASH}/v3`;h
 
 function bcHeaders() {
   return {
@@ -92,12 +93,13 @@ export async function fetchPPRevenue(month: string): Promise<RevenueData> {
       for (let i = 0; i < customerIds.length; i += 50) {
         const chunk = customerIds.slice(i, i + 50);
         const res = await fetch(
-          `${BC_BASE}/customers?id:in=${chunk.join(',')}&limit=250`,
+                    `${BC_BASE_V3}/customers?id:in=${chunk.join(',')}&limit=250`,
           { headers: bcHeaders() }
         );
         if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data)) customerChunks.push(...data);
+                    const json = await res.json();
+                    const data: BCCustomer[] = Array.isArray(json) ? json : (json.data ?? []);
+                    customerChunks.push(...data);
         }
       }
       for (const c of customerChunks) {
