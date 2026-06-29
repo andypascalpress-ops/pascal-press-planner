@@ -39,7 +39,6 @@ export interface GoogleAdsConfig {
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function parseJsonOrThrow(res: Response, context: string): Promise<any> {
   const text = await res.text();
   try {
