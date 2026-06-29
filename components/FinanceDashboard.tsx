@@ -312,11 +312,15 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
               <div className="text-gray-300 text-xl">→</div>
               <div className="flex-1">
                 <div className="text-xs text-gray-500 mb-0.5">Stripe Revenue</div>
-                <div className="text-lg font-bold text-gray-400">—</div>
+                <div className={`text-lg font-bold ${revenue?.etz?.connected ? 'text-green-700' : 'text-gray-400'}`}>
+                  {revenue?.etz?.connected ? AUD.format(etzRevenue) : '—'}
+                </div>
               </div>
               <div className="text-right min-w-12">
                 <div className="text-xs text-gray-500 mb-0.5">ROAS</div>
-                <div className="text-lg font-bold text-gray-300">—</div>
+                <div className={`text-lg font-bold ${etzRoas !== null ? (etzRoas >= 3 ? 'text-green-700' : etzRoas >= 1 ? 'text-yellow-600' : 'text-red-600') : 'text-gray-300'}`}>
+                  {etzRoas !== null ? `${etzRoas.toFixed(1)}x` : '—'}
+                </div>
               </div>
             </div>
           </div>
