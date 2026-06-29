@@ -37,6 +37,18 @@ export interface GoogleAdsConfig {
   loginCustomerId?: string; // MCC account if applicable
 }
 
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function parseJsonOrThrow(res: Response, context: string): Promise<any> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`${context} returned non-JSON (HTTP ${res.status}): ${text.slice(0, 400)}`);
+  }
+}
+
 // ─── OAuth ────────────────────────────────────────────────────────────────────
 
 async function getAccessToken(cfg: GoogleAdsConfig): Promise<string> {
@@ -50,9 +62,9 @@ async function getAccessToken(cfg: GoogleAdsConfig): Promise<string> {
       grant_type:    'refresh_token',
     }),
   });
-  const data = await res.json();
+  const data = await parseJsonOrThrow(res, 'Google OAuth');
   if (!data.access_token) {
-    throw new Error(`Google OAuth failed: ${data.error_description ?? JSON.stringify(data)}`);
+    throw new Error(`Google OAuth failed (HTTP ${res.status}): ${data.error_description ?? data.error ?? JSON.stringify(data)}`);
   }
   return data.access_token as string;
 }
@@ -78,15 +90,20 @@ async function gaqlSearch(
     headers['login-customer-id'] = cfg.loginCustomerId;
   }
 
-  const res = await fetch(
-    `${GOOGLE_ADS_BASE}/customers/${cfg.customerId}/googleAds:search`,
-    { method: 'POST', headers, body: JSON.stringify({ query }) }
-  );
-  const data = await res.json();
+  const url = `${GOOGLE_ADS_BASE}/customers/${cfg.customerId}/googleAds:search`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ query }),
+  });
+
+  const data = await parseJsonOrThrow(res, `Google Ads API (${url})`);
 
   if (!res.ok) {
-    const msg = data?.error?.message ?? data?.error?.details?.[0]?.errors?.[0]?.message ?? JSON.stringify(data);
-    throw new Error(`Google Ads API error: ${msg}`);
+    const msg = data?.error?.message
+      ?? data?.error?.details?.[0]?.errors?.[0]?.message
+      ?? JSON.stringify(data);
+    throw new Error(`Google Ads API error (HTTP ${res.status}): ${msg}`);
   }
   return (data.results ?? []) as GaqlRow[];
 }
