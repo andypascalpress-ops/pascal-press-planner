@@ -16,8 +16,11 @@ function stripeHeaders() {
 
 function monthUnixRange(month: string): { gte: number; lte: number } {
   const [year, mon] = month.split('-').map(Number);
-  const start = new Date(Date.UTC(year, mon - 1, 1));
-  const end   = new Date(Date.UTC(year, mon, 0, 23, 59, 59));
+  // Shift to AEST (UTC+10) so timestamps align with the Stripe dashboard.
+  // e.g. June 1 00:00 AEST = May 31 14:00 UTC, so subtract 10h from UTC midnight.
+  const AEST_OFFSET_MS = 10 * 60 * 60 * 1000;
+  const start = new Date(Date.UTC(year, mon - 1, 1) - AEST_OFFSET_MS);
+  const end   = new Date(Date.UTC(year, mon, 0, 23, 59, 59) - AEST_OFFSET_MS);
   return {
     gte: Math.floor(start.getTime() / 1000),
     lte: Math.floor(end.getTime() / 1000),

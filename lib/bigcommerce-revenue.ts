@@ -5,7 +5,7 @@
 
 const STORE_HASH = process.env.BIGCOMMERCE_STORE_HASH ?? '';
 const ACCESS_TOKEN = process.env.BIGCOMMERCE_ACCESS_TOKEN ?? '';
-const BC_BASE = `https://api.bigcommerce.com/stores/${STORE_HASH}/v2`;
+const BC_BASE    = `https://api.bigcommerce.com/stores/${STORE_HASH}/v2`;
 const BC_BASE_V3 = `https://api.bigcommerce.com/stores/${STORE_HASH}/v3`;
 
 function bcHeaders() {
@@ -73,9 +73,11 @@ export async function fetchPPRevenue(month: string): Promise<RevenueData> {
   try {
     const { start, end } = monthRange(month);
 
+    // Use AEST (UTC+10) so the date range matches the BigCommerce dashboard,
+    // which shows orders in Australian Eastern Standard Time.
     const orders = await fetchAllPages<BCOrder>('/orders', {
-      min_date_created: `${start}T00:00:00+00:00`,
-      max_date_created: `${end}T23:59:59+00:00`,
+      min_date_created: `${start}T00:00:00+10:00`,
+      max_date_created: `${end}T23:59:59+10:00`,
     });
 
     const excludedStatuses = new Set(['Cancelled', 'Refunded', 'Incomplete']);
@@ -92,14 +94,15 @@ export async function fetchPPRevenue(month: string): Promise<RevenueData> {
       const customerChunks: BCCustomer[] = [];
       for (let i = 0; i < customerIds.length; i += 50) {
         const chunk = customerIds.slice(i, i + 50);
+        // v3 API supports id:in filter; response is { data: [...], meta: {...} }
         const res = await fetch(
-                    `${BC_BASE_V3}/customers?id:in=${chunk.join(',')}&limit=250`,
+          `${BC_BASE_V3}/customers?id:in=${chunk.join(',')}&limit=250`,
           { headers: bcHeaders() }
         );
         if (res.ok) {
-                    const json = await res.json();
-                    const data: BCCustomer[] = Array.isArray(json) ? json : (json.data ?? []);
-                    customerChunks.push(...data);
+          const json = await res.json();
+          const data: BCCustomer[] = Array.isArray(json) ? json : (json.data ?? []);
+          customerChunks.push(...data);
         }
       }
       for (const c of customerChunks) {
