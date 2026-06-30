@@ -80,6 +80,12 @@ export const ANNUAL_BUDGETS: Record<string, number> = {
   'Excel Test Zone':  36000,  // Google $24k + Facebook $12k
 };
 
+// Fixed monthly Google Ads budgets (source of truth for budget calculations)
+export const MONTHLY_GOOGLE_BUDGETS: Record<string, number> = {
+  'Pascal Press':    8000,
+  'Excel Test Zone': 3000,
+};
+
 export const SPEND_CHANNELS = [
   'Google Ads',
   'Meta Ads',
