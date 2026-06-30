@@ -1,7 +1,9 @@
 /**
  * Stripe API client for ETZ revenue and customer analytics.
- * Revenue: /v1/charges — gross charge amount minus per-charge refunds.
- * Customers: same charges fetch with expand[]=data.customer → new vs returning.
+ * Revenue : /v1/charges — gross amount minus per-charge refunds.
+ * Customers: only counts customers with net spend > $1 this month.
+ *            "New"       = no prior succeeded charge before this month.
+ *            "Returning" = has at least one prior succeeded charge.
  * Required env var: STRIPE_SECRET_KEY
  */
 
@@ -17,7 +19,7 @@ function stripeHeaders() {
 function monthUnixRange(month: string): { gte: number; lte: number } {
   const [year, mon] = month.split('-').map(Number);
   const start = new Date(Date.UTC(year!, mon! - 1, 1));
-  const end   = new Date(Date.UTC(year!, mon!, 0, 23, 59, 59));
+  const end   = new Date(Date.UTC(year!, mon!,  0, 23, 59, 59));
   return {
     gte: Math.floor(start.getTime() / 1000),
     lte: Math.floor(end.getTime()   / 1000),
@@ -30,10 +32,24 @@ interface StripeCharge {
   amount_refunded: number;
   paid: boolean;
   status: string;
-  customer: { id: string; created: number } | null;
+  customer: { id: string } | null;
 }
 
 interface StripeList<T> { data: T[]; has_more: boolean; }
+
+/** Returns true if this customer has any succeeded charge created before `beforeUnix`. */
+async function hasPriorCharge(customerId: string, beforeUnix: number): Promise<boolean> {
+  const params = new URLSearchParams({
+    customer: customerId,
+    'created[lt]': String(beforeUnix),
+    limit: '1',
+  });
+  const res = await fetch(`${STRIPE_BASE}/charges?${params}`, { headers: stripeHeaders() });
+  if (!res.ok) return false;
+  const data: StripeList<{ paid: boolean; status: string }> = await res.json();
+  // Only count as "prior" if there's an actual succeeded charge, not just a failed attempt
+  return data.data.some(c => c.paid && c.status === 'succeeded');
+}
 
 export async function fetchETZStripeRevenue(month: string): Promise<RevenueData> {
   if (!STRIPE_SECRET_KEY) {
@@ -43,23 +59,22 @@ export async function fetchETZStripeRevenue(month: string): Promise<RevenueData>
   try {
     const { gte, lte } = monthUnixRange(month);
 
-    let totalCents       = 0;
-    let totalOrders      = 0;
-    let guestCount       = 0;
-    const seenCustomers  = new Map<string, number>(); // id → created unix
+    let totalCents  = 0;
+    let totalOrders = 0;
+    // Map from customerId → net cents spent this month (to filter > $1 buyers)
+    const customerNetSpend = new Map<string, number>();
     let startingAfter: string | null = null;
 
+    // ── Step 1: collect all succeeded charges ─────────────────────────────────
     while (true) {
       const params = new URLSearchParams({
         'created[gte]': String(gte),
         'created[lte]': String(lte),
-        'expand[]': 'data.customer',
         limit: '100',
       });
       if (startingAfter) params.set('starting_after', startingAfter);
 
       const res = await fetch(`${STRIPE_BASE}/charges?${params}`, { headers: stripeHeaders() });
-
       if (!res.ok) {
         const err = await res.text();
         throw new Error(`Stripe charges error (${res.status}): ${err.slice(0, 200)}`);
@@ -70,15 +85,14 @@ export async function fetchETZStripeRevenue(month: string): Promise<RevenueData>
       for (const charge of data.data) {
         if (!charge.paid || charge.status !== 'succeeded') continue;
 
-        // Revenue: gross amount minus any refunds already applied to this charge
-        totalCents += charge.amount - (charge.amount_refunded ?? 0);
+        const net = charge.amount - (charge.amount_refunded ?? 0);
+        totalCents += net;
         totalOrders++;
 
-        // Customer classification
-        if (!charge.customer) {
-          guestCount++;
-        } else if (!seenCustomers.has(charge.customer.id)) {
-          seenCustomers.set(charge.customer.id, charge.customer.created);
+        // Track per-customer net spend (only for customers with a Stripe ID)
+        if (charge.customer?.id) {
+          const prev = customerNetSpend.get(charge.customer.id) ?? 0;
+          customerNetSpend.set(charge.customer.id, prev + net);
         }
       }
 
@@ -86,16 +100,22 @@ export async function fetchETZStripeRevenue(month: string): Promise<RevenueData>
       startingAfter = data.data[data.data.length - 1]!.id;
     }
 
-    // Classify unique customers: account created this month = new, before = returning.
-    // Guest checkouts (no customer object) are counted as new.
-    let newCustomers      = guestCount;
-    let returningCustomers = 0;
+    // ── Step 2: filter to customers who spent > $1 net this month ─────────────
+    const qualifyingIds = [...customerNetSpend.entries()]
+      .filter(([, cents]) => cents > 100) // > $1.00
+      .map(([id]) => id);
 
-    for (const [, created] of seenCustomers) {
-      if (created >= gte) {
-        newCustomers++;
-      } else {
+    // ── Step 3: check prior charge history in parallel ────────────────────────
+    const priorChecks = qualifyingIds.map(id => hasPriorCharge(id, gte));
+    const priorResults = await Promise.all(priorChecks);
+
+    let newCustomers       = 0;
+    let returningCustomers = 0;
+    for (const hasPrior of priorResults) {
+      if (hasPrior) {
         returningCustomers++;
+      } else {
+        newCustomers++;
       }
     }
 
