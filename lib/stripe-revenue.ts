@@ -1,5 +1,7 @@
 /**
  * Stripe API client for ETZ revenue.
+ * Uses /v1/balance_transactions to match the Stripe dashboard "Net volume" figure,
+ * which is gross payments minus Stripe fees, refunds, and disputes.
  * Required env var: STRIPE_SECRET_KEY
  */
 
@@ -9,36 +11,65 @@ const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY ?? '';
 const STRIPE_BASE = 'https://api.stripe.com/v1';
 
 function stripeHeaders() {
-  return {
-    Authorization: `Bearer ${STRIPE_SECRET_KEY}`,
-  };
+  return { Authorization: `Bearer ${STRIPE_SECRET_KEY}` };
 }
 
 function monthUnixRange(month: string): { gte: number; lte: number } {
   const [year, mon] = month.split('-').map(Number);
-  // Shift to AEST (UTC+10) so timestamps align with the Stripe dashboard.
-  // e.g. June 1 00:00 AEST = May 31 14:00 UTC, so subtract 10h from UTC midnight.
-  const AEST_OFFSET_MS = 10 * 60 * 60 * 1000;
-  const start = new Date(Date.UTC(year, mon - 1, 1) - AEST_OFFSET_MS);
-  const end   = new Date(Date.UTC(year, mon, 0, 23, 59, 59) - AEST_OFFSET_MS);
+  // Use UTC midnight — balance_transactions use UTC timestamps,
+  // and Stripe's "Net volume" chart for June shows Jun 1–30 UTC.
+  const start = new Date(Date.UTC(year!, mon! - 1, 1));
+  const end   = new Date(Date.UTC(year!, mon!, 0, 23, 59, 59));
   return {
     gte: Math.floor(start.getTime() / 1000),
-    lte: Math.floor(end.getTime() / 1000),
+    lte: Math.floor(end.getTime()   / 1000),
   };
 }
 
-interface StripeCharge {
+interface BalanceTxn {
   id: string;
-  amount: number;
-  currency: string;
-  paid: boolean;
-  status: string;
-  amount_refunded: number;
+  type: string;   // 'payment', 'refund', 'dispute', etc.
+  net: number;    // cents, after Stripe fee deducted
+  amount: number; // gross cents
 }
 
 interface StripeList<T> {
   data: T[];
   has_more: boolean;
+}
+
+async function fetchBalanceTxns(
+  gte: number,
+  lte: number,
+  type: string,
+): Promise<BalanceTxn[]> {
+  const results: BalanceTxn[] = [];
+  let startingAfter: string | null = null;
+
+  while (true) {
+    const params = new URLSearchParams({
+      'created[gte]': String(gte),
+      'created[lte]': String(lte),
+      type,
+      limit: '100',
+    });
+    if (startingAfter) params.set('starting_after', startingAfter);
+
+    const res = await fetch(`${STRIPE_BASE}/balance_transactions?${params}`, {
+      headers: stripeHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Stripe balance_transactions error (${res.status}): ${err.slice(0, 200)}`);
+    }
+
+    const data: StripeList<BalanceTxn> = await res.json();
+    results.push(...data.data);
+    if (!data.has_more || data.data.length === 0) break;
+    startingAfter = data.data[data.data.length - 1]!.id;
+  }
+
+  return results;
 }
 
 export async function fetchETZStripeRevenue(month: string): Promise<RevenueData> {
@@ -48,37 +79,19 @@ export async function fetchETZStripeRevenue(month: string): Promise<RevenueData>
 
   try {
     const { gte, lte } = monthUnixRange(month);
-    let totalCents = 0;
-    let totalOrders = 0;
-    let startingAfter: string | null = null;
 
-    while (true) {
-      const params = new URLSearchParams({
-        'created[gte]': String(gte),
-        'created[lte]': String(lte),
-        limit: '100',
-      });
-      if (startingAfter) params.set('starting_after', startingAfter);
+    // Fetch payments (net = gross charge - Stripe fee)
+    // and refunds (net is negative) — mirrors Stripe's "Net volume" calculation.
+    const [payments, refunds] = await Promise.all([
+      fetchBalanceTxns(gte, lte, 'payment'),
+      fetchBalanceTxns(gte, lte, 'refund'),
+    ]);
 
-      const res = await fetch(`${STRIPE_BASE}/charges?${params}`, { headers: stripeHeaders() });
+    const paymentCents = payments.reduce((s, t) => s + t.net, 0);
+    const refundCents  = refunds.reduce((s, t)  => s + t.net, 0); // already negative
 
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`Stripe API error (HTTP ${res.status}): ${errText.slice(0, 300)}`);
-      }
-
-      const data: StripeList<StripeCharge> = await res.json();
-
-      for (const charge of data.data) {
-        if (charge.paid && charge.status === 'succeeded') {
-          totalCents += charge.amount - (charge.amount_refunded ?? 0);
-          totalOrders++;
-        }
-      }
-
-      if (!data.has_more || data.data.length === 0) break;
-      startingAfter = data.data[data.data.length - 1].id;
-    }
+    const totalCents  = paymentCents + refundCents;
+    const totalOrders = payments.length;
 
     return {
       totalRevenue: totalCents / 100,
