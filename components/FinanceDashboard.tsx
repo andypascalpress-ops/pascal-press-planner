@@ -26,6 +26,12 @@ interface ChartPoint {
   revenue: number;
 }
 
+interface CustomerPoint {
+  label: string;
+  newCusts: number;
+  retCusts: number;
+}
+
 interface Props {
   records: SpendRecord[];
   syncing: boolean;
@@ -249,6 +255,77 @@ function SpendRevenueChart({
           )}
           {hasRevenue && d.revenue > 0 && (
             <circle cx={px(i).toFixed(1)} cy={py(d.revenue).toFixed(1)} r="3" fill={revenueColor} />
+          )}
+          <text x={px(i).toFixed(1)} y={H - 4} textAnchor="middle" fontSize="10" fill="#6b7280">
+            {d.label}
+          </text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+// ─── Customer trend chart ────────────────────────────────────────────────────
+
+function CustomerTrendChart({
+  data,
+  newColor,
+  retColor,
+}: {
+  data: CustomerPoint[];
+  newColor: string;
+  retColor: string;
+}) {
+  const W   = 400;
+  const H   = 160;
+  const PAD = { t: 12, r: 16, b: 28, l: 44 };
+  const cW  = W - PAD.l - PAD.r;
+  const cH  = H - PAD.t - PAD.b;
+  const n   = data.length;
+  if (n < 2) return null;
+
+  const allVals = data.flatMap(d => [d.newCusts, d.retCusts]);
+  const maxVal  = Math.max(...allVals, 1);
+  const hasData = data.some(d => d.newCusts > 0 || d.retCusts > 0);
+  if (!hasData) return (
+    <div className="h-40 flex items-center justify-center text-sm text-gray-300 italic">No data yet</div>
+  );
+
+  const px = (i: number) => PAD.l + (i / (n - 1)) * cW;
+  const py = (v: number) => PAD.t + cH - (Math.max(0, v) / maxVal) * cH;
+
+  const toPath = (vals: number[]) =>
+    vals.map((v, i) => (i === 0 ? 'M' : 'L') + ' ' + px(i).toFixed(1) + ' ' + py(v).toFixed(1)).join(' ');
+
+  const newPath = toPath(data.map(d => d.newCusts));
+  const retPath = toPath(data.map(d => d.retCusts));
+
+  const ticks = Array.from({ length: 4 }, (_, i) => {
+    const v = Math.round((maxVal / 3) * i);
+    return { value: v, y: py(v) };
+  });
+
+  return (
+    <svg viewBox={'0 0 ' + W + ' ' + H} className="w-full" style={{ display: 'block' }}>
+      {ticks.map((t, i) => (
+        <g key={i}>
+          <line x1={PAD.l} y1={t.y.toFixed(1)} x2={W - PAD.r} y2={t.y.toFixed(1)}
+            stroke="#f3f4f6" strokeWidth="1" />
+          <text x={PAD.l - 4} y={t.y + 4} textAnchor="end" fontSize="9" fill="#9ca3af">
+            {t.value}
+          </text>
+        </g>
+      ))}
+      <path d={retPath} fill="none" stroke={retColor} strokeWidth="2"
+        strokeLinejoin="round" strokeDasharray="5 3" />
+      <path d={newPath} fill="none" stroke={newColor} strokeWidth="2" strokeLinejoin="round" />
+      {data.map((d, i) => (
+        <g key={i}>
+          {d.newCusts > 0 && (
+            <circle cx={px(i).toFixed(1)} cy={py(d.newCusts).toFixed(1)} r="3" fill={newColor} />
+          )}
+          {d.retCusts > 0 && (
+            <circle cx={px(i).toFixed(1)} cy={py(d.retCusts).toFixed(1)} r="3" fill={retColor} />
           )}
           <text x={px(i).toFixed(1)} y={H - 4} textAnchor="middle" fontSize="10" fill="#6b7280">
             {d.label}
@@ -658,6 +735,18 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const ppRev  = revenue?.pp     ?? null;
   const etzRev = revenue?.etz    ?? null;
 
+  const ppCustomerData: CustomerPoint[] = CHART_YMS.map((ym, i) => ({
+    label:    CHART_LABELS[i] ?? ym,
+    newCusts: revenueHistory?.find(h => h.month === ym)?.pp.newCustomers      ?? 0,
+    retCusts: revenueHistory?.find(h => h.month === ym)?.pp.returningCustomers ?? 0,
+  }));
+
+  const etzCustomerData: CustomerPoint[] = CHART_YMS.map((ym, i) => ({
+    label:    CHART_LABELS[i] ?? ym,
+    newCusts: revenueHistory?.find(h => h.month === ym)?.etz.newCustomers      ?? 0,
+    retCusts: revenueHistory?.find(h => h.month === ym)?.etz.returningCustomers ?? 0,
+  }));
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-gray-50">
 
@@ -848,6 +937,59 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
               <div className="h-40 flex items-center justify-center text-sm text-gray-400">Loading&hellip;</div>
             ) : (
               <SpendRevenueChart data={etzChartData} spendColor="#10b981" revenueColor="#22c55e" />
+            )}
+          </div>
+        </div>
+
+        {/* New vs Returning customer charts — FY26 Jan–Jun */}
+        <div className="grid grid-cols-2 gap-4 px-6 pb-6">
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+              Pascal Press &middot; New vs Returning FY26 Jan&ndash;Jun
+            </div>
+            <div className="flex items-center gap-4 mb-3 text-xs text-gray-500">
+              <span className="flex items-center gap-1.5">
+                <svg width="16" height="4" style={{ display: 'inline' }}>
+                  <line x1="0" y1="2" x2="16" y2="2" stroke="#3b82f6" strokeWidth="2" />
+                </svg>
+                New
+              </span>
+              <span className="flex items-center gap-1.5">
+                <svg width="16" height="4" style={{ display: 'inline' }}>
+                  <line x1="0" y1="2" x2="16" y2="2" stroke="#8b5cf6" strokeWidth="2" strokeDasharray="5 3" />
+                </svg>
+                Returning
+              </span>
+            </div>
+            {loadingHistory ? (
+              <div className="h-40 flex items-center justify-center text-sm text-gray-400">Loading&hellip;</div>
+            ) : (
+              <CustomerTrendChart data={ppCustomerData} newColor="#3b82f6" retColor="#8b5cf6" />
+            )}
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+              Excel Test Zone &middot; New vs Returning FY26 Jan&ndash;Jun
+            </div>
+            <div className="flex items-center gap-4 mb-3 text-xs text-gray-500">
+              <span className="flex items-center gap-1.5">
+                <svg width="16" height="4" style={{ display: 'inline' }}>
+                  <line x1="0" y1="2" x2="16" y2="2" stroke="#10b981" strokeWidth="2" />
+                </svg>
+                New
+              </span>
+              <span className="flex items-center gap-1.5">
+                <svg width="16" height="4" style={{ display: 'inline' }}>
+                  <line x1="0" y1="2" x2="16" y2="2" stroke="#8b5cf6" strokeWidth="2" strokeDasharray="5 3" />
+                </svg>
+                Returning
+              </span>
+            </div>
+            {loadingHistory ? (
+              <div className="h-40 flex items-center justify-center text-sm text-gray-400">Loading&hellip;</div>
+            ) : (
+              <CustomerTrendChart data={etzCustomerData} newColor="#10b981" retColor="#8b5cf6" />
             )}
           </div>
         </div>
