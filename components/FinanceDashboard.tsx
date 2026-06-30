@@ -192,7 +192,7 @@ function MetricTile({ label, value, sub, color, delta }: MetricTileProps) {
   );
 }
 
-// ─── Line chart ──────────────────────────────────────────────────────────────
+// ─── Bar + line chart (spend = bars, revenue = line, dual independent scales) ─
 
 function SpendRevenueChart({
   data,
@@ -204,63 +204,112 @@ function SpendRevenueChart({
   revenueColor: string;
 }) {
   const W   = 400;
-  const H   = 160;
-  const PAD = { t: 12, r: 16, b: 28, l: 52 };
+  const H   = 200;
+  const PAD = { t: 28, r: 16, b: 28, l: 52 };
   const cW  = W - PAD.l - PAD.r;
   const cH  = H - PAD.t - PAD.b;
   const n   = data.length;
   if (n < 2) return null;
 
-  const allVals    = data.flatMap(d => [d.spend, d.revenue]);
-  const maxVal     = Math.max(...allVals, 1);
+  const maxRev   = Math.max(...data.map(d => d.revenue), 1);
+  const maxSpend = Math.max(...data.map(d => d.spend),   1);
   const hasRevenue = data.some(d => d.revenue > 0);
 
-  const px = (i: number): number => PAD.l + (i / (n - 1)) * cW;
-  const py = (v: number): number => PAD.t + cH - (Math.max(0, v) / maxVal) * cH;
+  // Revenue uses left axis (full height)
+  const ry = (v: number) => PAD.t + cH - (Math.max(0, v) / maxRev) * cH;
+  // Spend bars use 80% of chart height so they're always visible
+  const barMaxH = cH * 0.8;
+  const sy = (v: number) => PAD.t + cH - (Math.max(0, v) / maxSpend) * barMaxH;
 
-  const toPath = (vals: number[]): string =>
-    vals.map((v, i) => (i === 0 ? 'M' : 'L') + ' ' + px(i).toFixed(1) + ' ' + py(v).toFixed(1)).join(' ');
+  const slotW = cW / n;
+  const barW  = Math.max(slotW * 0.42, 8);
 
-  const spendPath = toPath(data.map(d => d.spend));
-  const revPath   = toPath(data.map(d => d.revenue));
+  const revPath = data.map((d, i) => {
+    const cx = PAD.l + slotW * i + slotW / 2;
+    return (i === 0 ? 'M' : 'L') + cx.toFixed(1) + ' ' + ry(d.revenue).toFixed(1);
+  }).join(' ');
 
-  const ticks = Array.from({ length: 4 }, (_, i) => {
-    const v = (maxVal / 3) * i;
-    return { value: v, y: py(v) };
-  });
-
-  const fmt = (v: number): string =>
+  const fmt = (v: number) =>
     v >= 1000 ? '$' + (v / 1000).toFixed(0) + 'k' : '$' + v.toFixed(0);
+
+  // Revenue gridlines (left axis)
+  const revTicks = [0, 0.5, 1].map(f => ({
+    v: maxRev * f,
+    y: ry(maxRev * f),
+  }));
 
   return (
     <svg viewBox={'0 0 ' + W + ' ' + H} className="w-full" style={{ display: 'block' }}>
-      {ticks.map((t, i) => (
+      {/* Revenue gridlines + left axis labels */}
+      {revTicks.map((t, i) => (
         <g key={i}>
           <line x1={PAD.l} y1={t.y.toFixed(1)} x2={W - PAD.r} y2={t.y.toFixed(1)}
             stroke="#f3f4f6" strokeWidth="1" />
-          <text x={PAD.l - 4} y={t.y + 4} textAnchor="end" fontSize="9" fill="#9ca3af">
-            {fmt(t.value)}
+          <text x={PAD.l - 4} y={(t.y + 4).toFixed(1)} textAnchor="end" fontSize="9" fill="#9ca3af">
+            {fmt(t.v)}
           </text>
         </g>
       ))}
+
+      {/* Spend bars */}
+      {data.map((d, i) => {
+        const cx = PAD.l + slotW * i + slotW / 2;
+        const bx = cx - barW / 2;
+        const by = sy(d.spend);
+        const bh = Math.max((PAD.t + cH) - by, 2);
+        const roas = d.spend > 0 && d.revenue > 0
+          ? (d.revenue / d.spend).toFixed(1)
+          : null;
+        return (
+          <g key={i}>
+            {d.spend > 0 && (
+              <>
+                <rect
+                  x={bx.toFixed(1)} y={by.toFixed(1)}
+                  width={barW.toFixed(1)} height={bh.toFixed(1)}
+                  fill={spendColor} opacity="0.75" rx="2"
+                />
+                {/* Spend $ label above bar */}
+                <text x={cx.toFixed(1)} y={(by - 4).toFixed(1)}
+                  textAnchor="middle" fontSize="8" fill={spendColor} fontWeight="600">
+                  {fmt(d.spend)}
+                </text>
+                {/* ROAS above spend label */}
+                {roas !== null && (
+                  <text x={cx.toFixed(1)} y={(by - 15).toFixed(1)}
+                    textAnchor="middle" fontSize="8" fill="#6b7280">
+                    {roas}x
+                  </text>
+                )}
+              </>
+            )}
+            <text x={cx.toFixed(1)} y={(H - 4).toFixed(1)}
+              textAnchor="middle" fontSize="10" fill="#6b7280">
+              {d.label}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* Revenue line on top */}
       {hasRevenue && (
-        <path d={revPath} fill="none" stroke={revenueColor} strokeWidth="2"
-          strokeLinejoin="round" strokeDasharray="5 3" />
+        <>
+          <path d={revPath} fill="none" stroke={revenueColor}
+            strokeWidth="2.5" strokeLinejoin="round" />
+          {data.map((d, i) => {
+            const cx = PAD.l + slotW * i + slotW / 2;
+            return d.revenue > 0 ? (
+              <circle key={i} cx={cx.toFixed(1)} cy={ry(d.revenue).toFixed(1)}
+                r="3.5" fill={revenueColor} />
+            ) : null;
+          })}
+        </>
       )}
-      <path d={spendPath} fill="none" stroke={spendColor} strokeWidth="2" strokeLinejoin="round" />
-      {data.map((d, i) => (
-        <g key={i}>
-          {d.spend > 0 && (
-            <circle cx={px(i).toFixed(1)} cy={py(d.spend).toFixed(1)} r="3" fill={spendColor} />
-          )}
-          {hasRevenue && d.revenue > 0 && (
-            <circle cx={px(i).toFixed(1)} cy={py(d.revenue).toFixed(1)} r="3" fill={revenueColor} />
-          )}
-          <text x={px(i).toFixed(1)} y={H - 4} textAnchor="middle" fontSize="10" fill="#6b7280">
-            {d.label}
-          </text>
-        </g>
-      ))}
+
+      {/* Axis labels */}
+      <text x={PAD.l - 4} y={PAD.t - 8} textAnchor="end" fontSize="8" fill={revenueColor} fontWeight="600">
+        Revenue
+      </text>
     </svg>
   );
 }
@@ -894,19 +943,18 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
               Pascal Press &middot; FY26 Jan&ndash;Jun
             </div>
-            <div className="flex items-center gap-4 mb-3 text-xs text-gray-500">
+            <div className="flex items-center gap-4 mb-3 text-xs text-gray-500 flex-wrap">
               <span className="flex items-center gap-1.5">
-                <svg width="16" height="4" style={{ display: 'inline' }}>
-                  <line x1="0" y1="2" x2="16" y2="2" stroke="#3b82f6" strokeWidth="2" />
-                </svg>
-                Spend
+                <span style={{ display:'inline-block', width:12, height:10, background:'#3b82f6', borderRadius:2, opacity:0.75 }} />
+                Ad Spend
               </span>
               <span className="flex items-center gap-1.5">
                 <svg width="16" height="4" style={{ display: 'inline' }}>
-                  <line x1="0" y1="2" x2="16" y2="2" stroke="#22c55e" strokeWidth="2" strokeDasharray="4 2" />
+                  <line x1="0" y1="2" x2="16" y2="2" stroke="#22c55e" strokeWidth="2.5" />
                 </svg>
                 Revenue
               </span>
+              <span className="text-gray-400 italic">label above bar = ROAS</span>
             </div>
             {loadingHistory ? (
               <div className="h-40 flex items-center justify-center text-sm text-gray-400">Loading&hellip;</div>
@@ -919,19 +967,18 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
               Excel Test Zone &middot; FY26 Jan&ndash;Jun
             </div>
-            <div className="flex items-center gap-4 mb-3 text-xs text-gray-500">
+            <div className="flex items-center gap-4 mb-3 text-xs text-gray-500 flex-wrap">
               <span className="flex items-center gap-1.5">
-                <svg width="16" height="4" style={{ display: 'inline' }}>
-                  <line x1="0" y1="2" x2="16" y2="2" stroke="#10b981" strokeWidth="2" />
-                </svg>
-                Spend
+                <span style={{ display:'inline-block', width:12, height:10, background:'#10b981', borderRadius:2, opacity:0.75 }} />
+                Ad Spend
               </span>
               <span className="flex items-center gap-1.5">
                 <svg width="16" height="4" style={{ display: 'inline' }}>
-                  <line x1="0" y1="2" x2="16" y2="2" stroke="#22c55e" strokeWidth="2" strokeDasharray="4 2" />
+                  <line x1="0" y1="2" x2="16" y2="2" stroke="#22c55e" strokeWidth="2.5" />
                 </svg>
                 Revenue
               </span>
+              <span className="text-gray-400 italic">label above bar = ROAS</span>
             </div>
             {loadingHistory ? (
               <div className="h-40 flex items-center justify-center text-sm text-gray-400">Loading&hellip;</div>
