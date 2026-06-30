@@ -32,6 +32,18 @@ interface CustomerPoint {
   retCusts: number;
 }
 
+interface GoogleAdsSpendResponse {
+  month: string;
+  pp:  { spend: number; connected: boolean };
+  etz: { spend: number; connected: boolean };
+}
+
+interface GoogleAdsHistoryItem {
+  month: string; // YYYY-MM
+  pp: number;
+  etz: number;
+}
+
 interface Props {
   records: SpendRecord[];
   syncing: boolean;
@@ -398,26 +410,37 @@ interface BrandPanelProps {
   revenue: RevenueData | null;
   revenueLabel: string;
   prevRevenue: RevenueData | null;
+  /** Live Google Ads spend from API — overrides Monday.com actualSpend when present */
+  liveGoogleAdsSpend?: number | null;
+  liveGoogleAdsConnected?: boolean;
 }
 
 function BrandPanel({
   brand, label, color, accentBg, accentText,
   records, selectedMonth, revenue, revenueLabel, prevRevenue,
+  liveGoogleAdsSpend, liveGoogleAdsConnected,
 }: BrandPanelProps) {
   const monthRecords = spendForBrandMonth(records, brand, selectedMonth);
   const annualBudget = (ANNUAL_BUDGETS as Record<string, number>)[brand] ?? 0;
 
-  const totalSpend  = monthRecords.reduce((s, r) => s + (r.actualSpend ?? 0), 0);
+  // Budget comes from Monday.com / constants; actual spend comes live from Google Ads API
   const totalBudget = monthRecords.reduce((s, r) => s + effectiveBudget(r), 0);
 
-  // Channel breakdown — Meta Ads excluded
+  // Build per-channel spend from Monday.com, then override Google Ads with live API data
   const byChannel: Record<string, number> = {};
   for (const r of monthRecords) {
     byChannel[r.channel] = (byChannel[r.channel] ?? 0) + (r.actualSpend ?? 0);
   }
+  if (liveGoogleAdsSpend != null && liveGoogleAdsSpend > 0) {
+    byChannel['Google Ads'] = liveGoogleAdsSpend;
+  }
+
   const channelEntries = Object.entries(byChannel)
     .filter(([ch, v]) => v > 0 && ch !== 'Meta Ads')
     .sort(([, a], [, b]) => b - a);
+
+  // Total spend = sum of live-corrected channel entries
+  const totalSpend = channelEntries.reduce((s, [, v]) => s + v, 0);
 
   const googleSpend = byChannel['Google Ads'] ?? 0;
 
@@ -479,11 +502,17 @@ function BrandPanel({
                 const chBudget = monthRecords
                   .filter(r => r.channel === ch)
                   .reduce((s, r) => s + effectiveBudget(r), 0);
-                const isOver = chBudget > 0 && amt > chBudget;
+                const isOver   = chBudget > 0 && amt > chBudget;
+                const isLive   = ch === 'Google Ads' && liveGoogleAdsConnected === true;
                 return (
                   <div key={ch} className="flex items-center justify-between text-sm">
                     <span className="text-gray-600 flex items-center gap-1.5">
                       {ch}
+                      {isLive && (
+                        <span className="text-xs bg-blue-50 text-blue-500 px-1.5 py-0.5 rounded font-medium">
+                          live
+                        </span>
+                      )}
                       {isOver && (
                         <span className="text-xs bg-red-50 text-red-500 px-1.5 py-0.5 rounded font-medium">
                           over budget
@@ -730,11 +759,13 @@ function BudgetBreakdownTable({ brand, records, accentBg, accentText }: {
 // ─── Main dashboard ───────────────────────────────────────────────────────────
 
 export default function FinanceDashboard({ records, syncing, lastSynced, onSyncGoogleAds }: Props) {
-  const [selectedMonth,  setSelectedMonth ] = useState<string>(currentYearMonth());
-  const [revenue,        setRevenue       ] = useState<RevenueResponse | null>(null);
-  const [loadingRevenue, setLoadingRevenue] = useState(false);
-  const [revenueHistory, setRevenueHistory] = useState<MonthRevHistory[] | null>(null);
-  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [selectedMonth,    setSelectedMonth   ] = useState<string>(currentYearMonth());
+  const [revenue,          setRevenue         ] = useState<RevenueResponse | null>(null);
+  const [loadingRevenue,   setLoadingRevenue  ] = useState(false);
+  const [revenueHistory,   setRevenueHistory  ] = useState<MonthRevHistory[] | null>(null);
+  const [loadingHistory,   setLoadingHistory  ] = useState(false);
+  const [googleAdsSpend,   setGoogleAdsSpend  ] = useState<GoogleAdsSpendResponse | null>(null);
+  const [googleAdsHistory, setGoogleAdsHistory] = useState<GoogleAdsHistoryItem[] | null>(null);
 
   useEffect(() => {
     setLoadingRevenue(true);
@@ -743,40 +774,62 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
       .then((data: RevenueResponse) => { setRevenue(data); })
       .catch(() => { /* ignore */ })
       .finally(() => { setLoadingRevenue(false); });
+
+    // Fetch live Google Ads spend for the selected month
+    fetch('/api/google-ads-spend?month=' + selectedMonth)
+      .then(r => r.json())
+      .then((data: GoogleAdsSpendResponse) => { setGoogleAdsSpend(data); })
+      .catch(() => { /* ignore */ });
   }, [selectedMonth]);
 
   useEffect(() => {
     setLoadingHistory(true);
-    fetch('/api/revenue-history')
-      .then(r => r.json())
-      .then((data: MonthRevHistory[]) => { setRevenueHistory(data); })
+    Promise.all([
+      fetch('/api/revenue-history').then(r => r.json()),
+      fetch('/api/google-ads-history').then(r => r.json()),
+    ])
+      .then(([revData, gadsData]: [MonthRevHistory[], GoogleAdsHistoryItem[]]) => {
+        setRevenueHistory(revData);
+        setGoogleAdsHistory(gadsData);
+      })
       .catch(() => { /* ignore */ })
       .finally(() => { setLoadingHistory(false); });
   }, []);
 
-  const ppRecords      = spendForBrandMonth(records, 'Pascal Press',    selectedMonth);
-  const etzRecords     = spendForBrandMonth(records, 'Excel Test Zone',  selectedMonth);
-  const ppSpend        = ppRecords.reduce((s, r)  => s + (r.actualSpend ?? 0), 0);
-  const etzGoogleSpend = etzRecords
-    .filter(r => r.channel === 'Google Ads')
-    .reduce((s, r) => s + (r.actualSpend ?? 0), 0);
+  const ppRecords  = spendForBrandMonth(records, 'Pascal Press',   selectedMonth);
+  const etzRecords = spendForBrandMonth(records, 'Excel Test Zone', selectedMonth);
+
+  // Use live Google Ads API spend; fall back to Monday.com if API call failed
+  const ppLiveSpend  = googleAdsSpend?.pp.connected  ? googleAdsSpend.pp.spend  : null;
+  const etzLiveSpend = googleAdsSpend?.etz.connected ? googleAdsSpend.etz.spend : null;
+
+  const ppSpend = ppLiveSpend !== null && ppLiveSpend !== undefined
+    ? ppLiveSpend
+    : ppRecords.reduce((s, r) => s + (r.actualSpend ?? 0), 0);
+
+  const etzGoogleSpend = etzLiveSpend !== null && etzLiveSpend !== undefined
+    ? etzLiveSpend
+    : etzRecords.filter(r => r.channel === 'Google Ads').reduce((s, r) => s + (r.actualSpend ?? 0), 0);
+
   const ppRevenue  = revenue?.pp?.totalRevenue  ?? 0;
   const etzRevenue = revenue?.etz?.totalRevenue ?? 0;
   const ppRoas     = ppSpend        > 0 && ppRevenue  > 0 ? ppRevenue  / ppSpend        : null;
   const etzRoas    = etzGoogleSpend > 0 && etzRevenue > 0 ? etzRevenue / etzGoogleSpend : null;
 
+  // Chart data: prefer live Google Ads history, fall back to Monday.com records
   const ppChartData: ChartPoint[] = CHART_YMS.map((ym, i) => ({
     label:   CHART_LABELS[i] ?? ym,
-    spend:   spendForBrandMonth(records, 'Pascal Press', ym)
-               .reduce((s, r) => s + (r.actualSpend ?? 0), 0),
+    spend:   googleAdsHistory?.find(h => h.month === ym)?.pp
+             ?? spendForBrandMonth(records, 'Pascal Press', ym).reduce((s, r) => s + (r.actualSpend ?? 0), 0),
     revenue: revenueHistory?.find(h => h.month === ym)?.pp.totalRevenue ?? 0,
   }));
 
   const etzChartData: ChartPoint[] = CHART_YMS.map((ym, i) => ({
     label:   CHART_LABELS[i] ?? ym,
-    spend:   spendForBrandMonth(records, 'Excel Test Zone', ym)
-               .filter(r => r.channel === 'Google Ads')
-               .reduce((s, r) => s + (r.actualSpend ?? 0), 0),
+    spend:   googleAdsHistory?.find(h => h.month === ym)?.etz
+             ?? spendForBrandMonth(records, 'Excel Test Zone', ym)
+                 .filter(r => r.channel === 'Google Ads')
+                 .reduce((s, r) => s + (r.actualSpend ?? 0), 0),
     revenue: revenueHistory?.find(h => h.month === ym)?.etz.totalRevenue ?? 0,
   }));
 
@@ -922,6 +975,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             revenue={ppRev}
             revenueLabel="BigCommerce"
             prevRevenue={ppPrev}
+            liveGoogleAdsSpend={ppLiveSpend}
+            liveGoogleAdsConnected={googleAdsSpend?.pp.connected}
           />
           <BrandPanel
             brand="Excel Test Zone"
@@ -934,6 +989,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             revenue={etzRev}
             revenueLabel="Stripe"
             prevRevenue={null}
+            liveGoogleAdsSpend={etzLiveSpend}
+            liveGoogleAdsConnected={googleAdsSpend?.etz.connected}
           />
         </div>
 
