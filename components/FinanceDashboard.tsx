@@ -334,7 +334,9 @@ function BrandPanel({
             </span>
             {totalBudget > 0 && (
               <span className={'text-xs font-medium px-2 py-0.5 rounded-full ' + (totalSpend > totalBudget ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700')}>
-                {((totalSpend / totalBudget) * 100).toFixed(0)}% of budget
+                {totalSpend > totalBudget
+                    ? Math.round((totalSpend / totalBudget - 1) * 100) + '% over budget'
+                    : Math.round((totalSpend / totalBudget) * 100) + '% used'}
               </span>
             )}
           </div>
@@ -554,7 +556,11 @@ function BudgetBreakdownTable({ brand, records, accentBg, accentText }: {
                     {totalBudget === 0 ? '—' : (monthVar > 0 ? '+' : '') + AUD.format(monthVar)}
                   </td>
                   <td className={'px-4 py-2 text-right font-medium ' + (totalBudget === 0 ? 'text-gray-400' : monthIsOver ? 'text-red-600' : 'text-green-600')}>
-                    {totalBudget > 0 ? Math.round((totalSpend / totalBudget) * 100) + '%' : '—'}
+                    {totalBudget > 0
+                      ? totalSpend > totalBudget
+                        ? Math.round((totalSpend / totalBudget - 1) * 100) + '% over'
+                        : Math.round((totalSpend / totalBudget) * 100) + '% used'
+                      : '—'}
                   </td>
                 </tr>
                 {/* Per-channel rows */}
@@ -577,7 +583,11 @@ function BudgetBreakdownTable({ brand, records, accentBg, accentText }: {
                         {row.budget === 0 ? '—' : (variance > 0 ? '+' : '') + AUD.format(variance)}
                       </td>
                       <td className={'px-4 py-1.5 text-right text-xs ' + (pct === null ? 'text-gray-400' : isOver ? 'text-red-600' : 'text-green-600')}>
-                        {pct !== null ? pct + '%' : '—'}
+                        {pct !== null
+                          ? isOver
+                            ? Math.round((row.spend / row.budget - 1) * 100) + '% over'
+                            : pct + '% used'
+                          : '—'}
                       </td>
                     </tr>
                   );
