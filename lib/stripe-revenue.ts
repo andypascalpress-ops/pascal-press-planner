@@ -1,9 +1,17 @@
 /**
  * Stripe API client for ETZ revenue and customer analytics.
  * Revenue : /v1/charges — gross amount minus per-charge refunds.
- * Customers: only counts customers with net spend > $1 this month.
- *            "New"       = no prior succeeded charge before this month.
- *            "Returning" = has at least one prior succeeded charge.
+ *
+ * Customer classification (two modes):
+ *  accurate: true  (default) — checks each customer's prior charge history. Exact but
+ *                              makes one extra Stripe API call per unique customer. Use for
+ *                              current-month display only.
+ *  accurate: false            — uses customer.created date as proxy. Fast (no extra calls),
+ *                              suitable for multi-month history charts.
+ *
+ * Both modes only count customers with net spend > $1 to exclude $0 Stripe customer
+ * objects created during abandoned checkouts.
+ *
  * Required env var: STRIPE_SECRET_KEY
  */
 
@@ -26,18 +34,18 @@ function monthUnixRange(month: string): { gte: number; lte: number } {
   };
 }
 
-interface StripeCharge {
+interface StripeChargeExpanded {
   id: string;
   amount: number;
   amount_refunded: number;
   paid: boolean;
   status: string;
-  customer: { id: string } | null;
+  customer: { id: string; created: number } | null;
 }
 
 interface StripeList<T> { data: T[]; has_more: boolean; }
 
-/** Returns true if this customer has any succeeded charge created before `beforeUnix`. */
+/** Returns true if the customer had any succeeded charge created before `beforeUnix`. */
 async function hasPriorCharge(customerId: string, beforeUnix: number): Promise<boolean> {
   const params = new URLSearchParams({
     customer: customerId,
@@ -47,11 +55,16 @@ async function hasPriorCharge(customerId: string, beforeUnix: number): Promise<b
   const res = await fetch(`${STRIPE_BASE}/charges?${params}`, { headers: stripeHeaders() });
   if (!res.ok) return false;
   const data: StripeList<{ paid: boolean; status: string }> = await res.json();
-  // Only count as "prior" if there's an actual succeeded charge, not just a failed attempt
   return data.data.some(c => c.paid && c.status === 'succeeded');
 }
 
-export async function fetchETZStripeRevenue(month: string): Promise<RevenueData> {
+export async function fetchETZStripeRevenue(
+  month: string,
+  options?: { accurate?: boolean },
+): Promise<RevenueData> {
+  // accurate defaults to true (exact new/returning via prior-charge lookup)
+  const accurate = options?.accurate !== false;
+
   if (!STRIPE_SECRET_KEY) {
     return { totalRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'stripe', connected: false };
   }
@@ -61,15 +74,16 @@ export async function fetchETZStripeRevenue(month: string): Promise<RevenueData>
 
     let totalCents  = 0;
     let totalOrders = 0;
-    // Map from customerId → net cents spent this month (to filter > $1 buyers)
-    const customerNetSpend = new Map<string, number>();
+    // customerId → { created: unix, netCents: total net cents this month }
+    const customerMap = new Map<string, { created: number; netCents: number }>();
     let startingAfter: string | null = null;
 
-    // ── Step 1: collect all succeeded charges ─────────────────────────────────
+    // ── Fetch all succeeded charges with expanded customer objects ────────────
     while (true) {
       const params = new URLSearchParams({
         'created[gte]': String(gte),
         'created[lte]': String(lte),
+        'expand[]': 'data.customer',
         limit: '100',
       });
       if (startingAfter) params.set('starting_after', startingAfter);
@@ -80,19 +94,24 @@ export async function fetchETZStripeRevenue(month: string): Promise<RevenueData>
         throw new Error(`Stripe charges error (${res.status}): ${err.slice(0, 200)}`);
       }
 
-      const data: StripeList<StripeCharge> = await res.json();
+      const data: StripeList<StripeChargeExpanded> = await res.json();
 
       for (const charge of data.data) {
         if (!charge.paid || charge.status !== 'succeeded') continue;
-
         const net = charge.amount - (charge.amount_refunded ?? 0);
         totalCents += net;
         totalOrders++;
 
-        // Track per-customer net spend (only for customers with a Stripe ID)
         if (charge.customer?.id) {
-          const prev = customerNetSpend.get(charge.customer.id) ?? 0;
-          customerNetSpend.set(charge.customer.id, prev + net);
+          const prev = customerMap.get(charge.customer.id);
+          if (!prev) {
+            customerMap.set(charge.customer.id, {
+              created: charge.customer.created,
+              netCents: net,
+            });
+          } else {
+            prev.netCents += net;
+          }
         }
       }
 
@@ -100,22 +119,26 @@ export async function fetchETZStripeRevenue(month: string): Promise<RevenueData>
       startingAfter = data.data[data.data.length - 1]!.id;
     }
 
-    // ── Step 2: filter to customers who spent > $1 net this month ─────────────
-    const qualifyingIds = [...customerNetSpend.entries()]
-      .filter(([, cents]) => cents > 100) // > $1.00
-      .map(([id]) => id);
-
-    // ── Step 3: check prior charge history in parallel ────────────────────────
-    const priorChecks = qualifyingIds.map(id => hasPriorCharge(id, gte));
-    const priorResults = await Promise.all(priorChecks);
+    // ── Classify customers who spent > $1 net this month ─────────────────────
+    const qualifying = [...customerMap.entries()].filter(([, v]) => v.netCents > 100);
 
     let newCustomers       = 0;
     let returningCustomers = 0;
-    for (const hasPrior of priorResults) {
-      if (hasPrior) {
-        returningCustomers++;
-      } else {
-        newCustomers++;
+
+    if (accurate) {
+      // Exact mode: check actual prior charge history in parallel.
+      const checks = qualifying.map(([id]) => hasPriorCharge(id, gte));
+      const results = await Promise.all(checks);
+      for (const hasPrior of results) {
+        if (hasPrior) returningCustomers++;
+        else newCustomers++;
+      }
+    } else {
+      // Quick mode: use customer.created date as proxy (no extra API calls).
+      // Suitable for multi-month history charts.
+      for (const [, { created }] of qualifying) {
+        if (created >= gte) newCustomers++;
+        else returningCustomers++;
       }
     }
 

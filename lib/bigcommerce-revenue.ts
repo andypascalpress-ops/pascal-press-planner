@@ -1,12 +1,17 @@
 /**
  * BigCommerce REST API client for revenue & customer analytics.
  * Requires env vars: BIGCOMMERCE_STORE_HASH, BIGCOMMERCE_ACCESS_TOKEN
+ *
+ * New vs Returning logic:
+ *  - Registered customers (customer_id > 0): deduped by id; "new" if account created this month.
+ *  - Guest orders (customer_id === 0): deduped by billing email; all counted as "new"
+ *    (no account history available for guests).
  */
 
-const STORE_HASH = process.env.BIGCOMMERCE_STORE_HASH ?? '';
+const STORE_HASH   = process.env.BIGCOMMERCE_STORE_HASH   ?? '';
 const ACCESS_TOKEN = process.env.BIGCOMMERCE_ACCESS_TOKEN ?? '';
-const BC_BASE    = `https://api.bigcommerce.com/stores/${STORE_HASH}/v2`;
-const BC_BASE_V3 = `https://api.bigcommerce.com/stores/${STORE_HASH}/v3`;
+const BC_BASE      = `https://api.bigcommerce.com/stores/${STORE_HASH}/v2`;
+const BC_BASE_V3   = `https://api.bigcommerce.com/stores/${STORE_HASH}/v3`;
 
 function bcHeaders() {
   return {
@@ -27,11 +32,11 @@ export interface RevenueData {
 
 function monthRange(month: string): { start: string; end: string } {
   const [year, mon] = month.split('-').map(Number);
-  const start = new Date(year, mon - 1, 1);
-  const end   = new Date(year, mon, 0);
+  const start = new Date(year!, mon! - 1, 1);
+  const end   = new Date(year!, mon!,     0);
   return {
-    start: start.toISOString().split('T')[0],
-    end:   end.toISOString().split('T')[0],
+    start: start.toISOString().split('T')[0]!,
+    end:   end.toISOString().split('T')[0]!,
   };
 }
 
@@ -39,7 +44,7 @@ async function fetchAllPages<T>(path: string, params: Record<string, string>): P
   const results: T[] = [];
   let page = 1;
   while (true) {
-    const qs = new URLSearchParams({ ...params, page: String(page), limit: '250' });
+    const qs  = new URLSearchParams({ ...params, page: String(page), limit: '250' });
     const res = await fetch(`${BC_BASE}${path}?${qs}`, { headers: bcHeaders() });
     if (res.status === 204 || res.status === 404) break;
     if (!res.ok) throw new Error(`BigCommerce ${path} -> ${res.status}`);
@@ -55,9 +60,13 @@ async function fetchAllPages<T>(path: string, params: Record<string, string>): P
 interface BCOrder {
   id: number;
   total_inc_tax: string;
+  total_ex_tax: string;
   customer_id: number;
   date_created: string;
   status: string;
+  billing_address: {
+    email: string;
+  };
 }
 
 interface BCCustomer {
@@ -73,15 +82,13 @@ export async function fetchPPRevenue(month: string): Promise<RevenueData> {
   try {
     const { start, end } = monthRange(month);
 
-    // Use AEST (UTC+10) so the date range matches the BigCommerce dashboard,
-    // which shows orders in Australian Eastern Standard Time.
+    // Use AEST (UTC+10) to match BigCommerce dashboard date range.
     const orders = await fetchAllPages<BCOrder>('/orders', {
       min_date_created: `${start}T00:00:00+10:00`,
       max_date_created: `${end}T23:59:59+10:00`,
     });
 
     // Exclude statuses that BC's revenue dashboard doesn't count.
-    // 'Awaiting Payment' and 'Manual Verification Required' are not yet confirmed revenue.
     const excludedStatuses = new Set([
       'Cancelled', 'Refunded', 'Incomplete',
       'Awaiting Payment', 'Manual Verification Required',
@@ -91,27 +98,42 @@ export async function fetchPPRevenue(month: string): Promise<RevenueData> {
     const totalRevenue = validOrders.reduce((s, o) => s + parseFloat(o.total_inc_tax || '0'), 0);
     const totalOrders  = validOrders.length;
 
-    const customerIds = [...new Set(validOrders.map(o => o.customer_id).filter(id => id > 0))];
-    let newCustomers = validOrders.filter(o => o.customer_id === 0).length;
+    // ── Customer classification ───────────────────────────────────────────────
+    // Guest orders (customer_id === 0): deduplicate by billing email.
+    // All unique guest emails are counted as "new" — no account history available.
+    const guestEmails = new Set<string>();
+    for (const o of validOrders) {
+      if (o.customer_id === 0) {
+        const email = (o.billing_address?.email ?? '').toLowerCase().trim();
+        if (email) guestEmails.add(email);
+      }
+    }
+
+    // Registered customers: deduplicate by customer_id.
+    const registeredIds = [
+      ...new Set(validOrders.filter(o => o.customer_id > 0).map(o => o.customer_id)),
+    ];
+
+    let newCustomers       = guestEmails.size; // unique guest emails → all new
     let returningCustomers = 0;
 
-    if (customerIds.length > 0) {
-      const customerChunks: BCCustomer[] = [];
-      for (let i = 0; i < customerIds.length; i += 50) {
-        const chunk = customerIds.slice(i, i + 50);
-        // v3 API supports id:in filter; response is { data: [...], meta: {...} }
-        const res = await fetch(
+    if (registeredIds.length > 0) {
+      const customers: BCCustomer[] = [];
+      for (let i = 0; i < registeredIds.length; i += 50) {
+        const chunk = registeredIds.slice(i, i + 50);
+        const res   = await fetch(
           `${BC_BASE_V3}/customers?id:in=${chunk.join(',')}&limit=250`,
-          { headers: bcHeaders() }
+          { headers: bcHeaders() },
         );
         if (res.ok) {
           const json = await res.json();
           const data: BCCustomer[] = Array.isArray(json) ? json : (json.data ?? []);
-          customerChunks.push(...data);
+          customers.push(...data);
         }
       }
-      for (const c of customerChunks) {
-        const regDate = c.date_created?.split('T')[0] ?? '';
+      for (const c of customers) {
+        // "New" if the account was created within this calendar month.
+        const regDate = (c.date_created ?? '').split('T')[0] ?? '';
         if (regDate >= start && regDate <= end) {
           newCustomers++;
         } else {
