@@ -13,7 +13,9 @@ export async function GET() {
     CHART_MONTHS.map(async (month) => {
       const [pp, etz] = await Promise.all([
         fetchPPRevenue(month),
-        fetchETZStripeRevenue(month),
+        // accurate: false — uses customer.created date proxy, no per-customer lookups.
+        // Avoids 6×N Stripe API calls timing out; suitable for trend charts.
+        fetchETZStripeRevenue(month, { accurate: false }),
       ]);
       return { month, pp, etz };
     })
