@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { SpendRecord } from '@/lib/types';
-import { ANNUAL_BUDGETS } from '@/lib/constants';
+import { ANNUAL_BUDGETS, MONTHLY_GOOGLE_BUDGETS } from '@/lib/constants';
 import { RevenueData } from '@/lib/bigcommerce-revenue';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
@@ -99,6 +99,12 @@ function elapsedDays(ym: string): number {
   const first = new Date(year, mon - 1, 1);
   const nowStart = new Date(now.getFullYear(), now.getMonth(), 1);
   return first < nowStart ? daysInMonth(ym) : 1;
+}
+
+// Monthly budget for a record — Google Ads uses the fixed constant; others use Monday.com value
+function effectiveBudget(r: SpendRecord): number {
+  if (r.channel === 'Google Ads') return MONTHLY_GOOGLE_BUDGETS[r.brand] ?? 0;
+  return r.budget ?? 0;
 }
 
 // ─── Small UI components ─────────────────────────────────────────────────────
@@ -276,7 +282,7 @@ function BrandPanel({
   const annualBudget = (ANNUAL_BUDGETS as Record<string, number>)[brand] ?? 0;
 
   const totalSpend  = monthRecords.reduce((s, r) => s + (r.actualSpend ?? 0), 0);
-  const totalBudget = monthRecords.reduce((s, r) => s + (r.budget    ?? 0), 0);
+  const totalBudget = monthRecords.reduce((s, r) => s + effectiveBudget(r), 0);
 
   // Channel breakdown — Meta Ads excluded
   const byChannel: Record<string, number> = {};
@@ -344,7 +350,7 @@ function BrandPanel({
               {channelEntries.map(([ch, amt]) => {
                 const chBudget = monthRecords
                   .filter(r => r.channel === ch)
-                  .reduce((s, r) => s + (r.budget ?? 0), 0);
+                  .reduce((s, r) => s + effectiveBudget(r), 0);
                 const isOver = chBudget > 0 && amt > chBudget;
                 return (
                   <div key={ch} className="flex items-center justify-between text-sm">
@@ -461,6 +467,126 @@ function BrandPanel({
         )}
 
       </div>
+    </div>
+  );
+}
+
+// ─── Monthly budget breakdown table ──────────────────────────────────────────
+
+const FY26_YMS = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06'];
+
+interface BudgetRow {
+  channel: string;
+  budget: number;
+  spend: number;
+}
+
+function BudgetBreakdownTable({ brand, records, accentBg, accentText }: {
+  brand: string;
+  records: SpendRecord[];
+  accentBg: string;
+  accentText: string;
+}) {
+  // Build rows for every FY26 month that has data or a Google budget
+  const months: { ym: string; label: string; rows: BudgetRow[]; totalBudget: number; totalSpend: number }[] = [];
+
+  for (const ym of FY26_YMS) {
+    const { mon } = parseYM(ym);
+    const mLabel  = (MONTH_NAMES[mon - 1] ?? '') + ' ' + parseYM(ym).year;
+    const recs    = spendForBrandMonth(records, brand, ym);
+
+    // Aggregate by channel
+    const byChannel: Record<string, { spend: number; budget: number }> = {};
+
+    // Always seed Google Ads with the fixed monthly budget
+    const gBudget = MONTHLY_GOOGLE_BUDGETS[brand] ?? 0;
+    if (gBudget > 0) byChannel['Google Ads'] = { spend: 0, budget: gBudget };
+
+    for (const r of recs) {
+      if (!byChannel[r.channel]) byChannel[r.channel] = { spend: 0, budget: effectiveBudget(r) };
+      byChannel[r.channel].spend  += r.actualSpend ?? 0;
+      // For Google Ads budget is already set to fixed value; for others use the record
+      if (r.channel !== 'Google Ads') byChannel[r.channel].budget = Math.max(byChannel[r.channel].budget, effectiveBudget(r));
+    }
+
+    const rows: BudgetRow[] = Object.entries(byChannel)
+      .filter(([, v]) => v.spend > 0 || v.budget > 0)
+      .sort(([a], [b]) => a === 'Google Ads' ? -1 : b === 'Google Ads' ? 1 : a.localeCompare(b))
+      .map(([ch, v]) => ({ channel: ch, budget: v.budget, spend: v.spend }));
+
+    if (rows.length === 0) continue;
+
+    const totalBudget = rows.reduce((s, r) => s + r.budget, 0);
+    const totalSpend  = rows.reduce((s, r) => s + r.spend,  0);
+    months.push({ ym, label: mLabel, rows, totalBudget, totalSpend });
+  }
+
+  if (months.length === 0) {
+    return (
+      <div className="text-sm text-gray-400 italic px-4 py-3">No spend data for FY26</div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm border-collapse">
+        <thead>
+          <tr className={accentBg}>
+            <th className={'text-left px-4 py-2 font-semibold ' + accentText}>Month / Channel</th>
+            <th className={'text-right px-4 py-2 font-semibold ' + accentText}>Budget</th>
+            <th className={'text-right px-4 py-2 font-semibold ' + accentText}>Actual</th>
+            <th className={'text-right px-4 py-2 font-semibold ' + accentText}>Variance</th>
+            <th className={'text-right px-4 py-2 font-semibold ' + accentText}>% Used</th>
+          </tr>
+        </thead>
+        <tbody>
+          {months.map(({ label, rows, totalBudget, totalSpend }, mi) => {
+            const monthVar    = totalSpend - totalBudget;
+            const monthIsOver = totalBudget > 0 && monthVar > 0;
+            return (
+              <>
+                {/* Month summary row */}
+                <tr key={label} className={mi % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                  <td className="px-4 py-2 font-semibold text-gray-800">{label}</td>
+                  <td className="px-4 py-2 text-right text-gray-700">{totalBudget > 0 ? AUD.format(totalBudget) : '—'}</td>
+                  <td className="px-4 py-2 text-right text-gray-900 font-medium">{totalSpend > 0 ? AUD.format(totalSpend) : '—'}</td>
+                  <td className={'px-4 py-2 text-right font-semibold ' + (totalBudget === 0 ? 'text-gray-400' : monthIsOver ? 'text-red-600' : 'text-green-600')}>
+                    {totalBudget === 0 ? '—' : (monthVar > 0 ? '+' : '') + AUD.format(monthVar)}
+                  </td>
+                  <td className={'px-4 py-2 text-right font-medium ' + (totalBudget === 0 ? 'text-gray-400' : monthIsOver ? 'text-red-600' : 'text-green-600')}>
+                    {totalBudget > 0 ? Math.round((totalSpend / totalBudget) * 100) + '%' : '—'}
+                  </td>
+                </tr>
+                {/* Per-channel rows */}
+                {rows.map(row => {
+                  const variance = row.spend - row.budget;
+                  const isOver   = row.budget > 0 && variance > 0;
+                  const pct      = row.budget > 0 ? Math.round((row.spend / row.budget) * 100) : null;
+                  return (
+                    <tr key={label + row.channel} className={mi % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                      <td className="pl-8 pr-4 py-1.5 text-gray-500 flex items-center gap-1.5">
+                        <span className="text-gray-300">└</span>
+                        {row.channel}
+                        {isOver && (
+                          <span className="text-xs bg-red-50 text-red-500 px-1.5 py-0.5 rounded font-medium">over</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-1.5 text-right text-gray-500">{row.budget > 0 ? AUD.format(row.budget) : '—'}</td>
+                      <td className={'px-4 py-1.5 text-right ' + (row.spend > 0 ? 'text-gray-800' : 'text-gray-400')}>{row.spend > 0 ? AUD.format(row.spend) : '—'}</td>
+                      <td className={'px-4 py-1.5 text-right text-xs ' + (row.budget === 0 ? 'text-gray-400' : isOver ? 'text-red-600 font-semibold' : 'text-green-600')}>
+                        {row.budget === 0 ? '—' : (variance > 0 ? '+' : '') + AUD.format(variance)}
+                      </td>
+                      <td className={'px-4 py-1.5 text-right text-xs ' + (pct === null ? 'text-gray-400' : isOver ? 'text-red-600' : 'text-green-600')}>
+                        {pct !== null ? pct + '%' : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -713,6 +839,38 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             ) : (
               <SpendRevenueChart data={etzChartData} spendColor="#10b981" revenueColor="#22c55e" />
             )}
+          </div>
+        </div>
+
+        {/* Monthly budget breakdown — FY26 Jan–Jun */}
+        <div className="grid grid-cols-2 gap-4 px-6 pb-6">
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 bg-blue-50 border-b border-gray-200">
+              <div className="text-xs font-semibold text-blue-900 uppercase tracking-wide">
+                Pascal Press &middot; Budget vs Spend by Month
+              </div>
+              <div className="text-xs text-blue-700 mt-0.5">Google Ads budget: {AUD.format(MONTHLY_GOOGLE_BUDGETS['Pascal Press'] ?? 0)}/mo</div>
+            </div>
+            <BudgetBreakdownTable
+              brand="Pascal Press"
+              records={records}
+              accentBg="bg-blue-50"
+              accentText="text-blue-800"
+            />
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 bg-emerald-50 border-b border-gray-200">
+              <div className="text-xs font-semibold text-emerald-900 uppercase tracking-wide">
+                Excel Test Zone &middot; Budget vs Spend by Month
+              </div>
+              <div className="text-xs text-emerald-700 mt-0.5">Google Ads budget: {AUD.format(MONTHLY_GOOGLE_BUDGETS['Excel Test Zone'] ?? 0)}/mo</div>
+            </div>
+            <BudgetBreakdownTable
+              brand="Excel Test Zone"
+              records={records}
+              accentBg="bg-emerald-50"
+              accentText="text-emerald-800"
+            />
           </div>
         </div>
 
