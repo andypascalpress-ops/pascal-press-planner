@@ -411,4 +411,175 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
           {loadingRevenue && (
             <span className="text-xs text-gray-400 flex items-center gap-1">
               <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" 
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+              </svg>
+              Loading…
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onSyncGoogleAds}
+            disabled={syncing}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+          >
+            {syncing ? (
+              <>
+                <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                </svg>
+                Syncing…
+              </>
+            ) : (
+              <>
+                <svg className="h-3.5 w-3.5 text-gray-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd"/>
+                </svg>
+                Sync Google Ads
+              </>
+            )}
+          </button>
+          {lastSynced && (
+            <span className="text-xs text-gray-400">
+              Synced {new Date(lastSynced).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Scrollable body */}
+      <div className="flex-1 overflow-auto">
+        {/* Summary strip */}
+        <div className="px-6 pt-4 pb-0">
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-3">
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2.5">
+              Summary · {monthLabel(selectedMonth)}
+            </div>
+            <div className="grid grid-cols-2 gap-6">
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <div className="text-xs text-gray-500 mb-0.5">Pascal Press · Total Spend</div>
+                  <div className="text-lg font-bold text-gray-900">{ppSpend > 0 ? AUD.format(ppSpend) : '—'}</div>
+                </div>
+                <div className="text-gray-300 text-xl">→</div>
+                <div className="flex-1">
+                  <div className="text-xs text-gray-500 mb-0.5">BigCommerce Revenue</div>
+                  <div className={`text-lg font-bold ${revenue?.pp?.connected ? 'text-green-700' : 'text-gray-400'}`}>
+                    {revenue?.pp?.connected ? AUD.format(ppRevenue) : '—'}
+                  </div>
+                </div>
+                <div className="text-right min-w-12">
+                  <div className="text-xs text-gray-500 mb-0.5">ROAS</div>
+                  <div className={`text-lg font-bold ${ppRoas !== null ? (ppRoas >= 3 ? 'text-green-700' : ppRoas >= 1 ? 'text-yellow-600' : 'text-red-600') : 'text-gray-300'}`}>
+                    {ppRoas !== null ? `${ppRoas.toFixed(1)}x` : '—'}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 pl-6 border-l border-gray-100">
+                <div className="flex-1">
+                  <div className="text-xs text-gray-500 mb-0.5">Excel Test Zone · Google Ads</div>
+                  <div className="text-lg font-bold text-gray-900">{etzGoogleSpend > 0 ? AUD.format(etzGoogleSpend) : '—'}</div>
+                </div>
+                <div className="text-gray-300 text-xl">→</div>
+                <div className="flex-1">
+                  <div className="text-xs text-gray-500 mb-0.5">Stripe Revenue</div>
+                  <div className={`text-lg font-bold ${revenue?.etz?.connected ? 'text-green-700' : 'text-gray-400'}`}>
+                    {revenue?.etz?.connected ? AUD.format(etzRevenue) : '—'}
+                  </div>
+                </div>
+                <div className="text-right min-w-12">
+                  <div className="text-xs text-gray-500 mb-0.5">ROAS</div>
+                  <div className={`text-lg font-bold ${etzRoas !== null ? (etzRoas >= 3 ? 'text-green-700' : etzRoas >= 1 ? 'text-yellow-600' : 'text-red-600') : 'text-gray-300'}`}>
+                    {etzRoas !== null ? `${etzRoas.toFixed(1)}x` : '—'}
+                  </div>       </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Brand panels */}
+        <div className="flex gap-4 px-6 py-4">
+          <BrandPanel
+            brand="Pascal Press"
+            label="Pascal Press"
+            color="bg-blue-500"
+            accentBg="bg-blue-50"
+            accentText="text-blue-900"
+            records={records}
+            selectedMonth={selectedMonth}
+            revenue={revenue?.pp ?? null}
+            revenueLabel="BigCommerce"
+            prevRevenue={revenue?.ppPrev ?? null}
+          />
+          <BrandPanel
+            brand="Excel Test Zone"
+            label="Excel Test Zone"
+            color="bg-emerald-500"
+            accentBg="bg-emerald-50"
+            accentText="text-emerald-900"
+            records={records}
+            selectedMonth={selectedMonth}
+            revenue={revenue?.etz ?? null}
+            revenueLabel="Stripe"
+          />
+        </div>
+
+        {/* Line charts — FY26 Jan–Jun */}
+        <div className="grid grid-cols-2 gap-4 px-6 pb-6">
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+              Pascal Press · FY26 Jan–Jun
+            </div>
+            <div className="flex items-center gap-4 mb-3 text-xs text-gray-500">
+              <span className="flex items-center gap-1.5">
+                <svg width="16" height="4" style={{ display: 'inline' }}>
+                  <line x1="0" y1="2" x2="16" y2="2" stroke="#3b82f6" strokeWidth="2"/>
+                </svg>
+                Spend
+              </span>
+              <span className="flex items-center gap-1.5">
+                <svg width="16" height="4" style={{ display: 'inline' }}>
+                  <line x1="0" y1="2" x2="16" y2="2" stroke="#22c55e" strokeWidth="2" strokeDasharray="4 2"/>
+                </svg>
+                Revenue
+              </span>
+            </div>
+            {loadingHistory ? (
+              <div className="h-40 flex items-center justify-center text-sm text-gray-400">Loading…</div>
+            ) : (
+              <SpendRevenueChart data={ppChartData} spendColor="#3b82f6" revenueColor="#22c55e" />
+            )}
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+              Excel Test Zone · FY26 Jan–Jun
+            </div>
+            <div className="flex items-center gap-4 mb-3 text-xs text-gray-500">
+              <span className="flex items-center gap-1.5">
+                <svg width="16" height="4" style={{ display: 'inline' }}>
+                  <line x1="0" y1="2" x2="16" y2="2" stroke="#10b981" strokeWidth="2"/>
+                </svg>
+                Spend
+              </span>
+              <span className="flex items-center gap-1.5">
+                <svg width="16" height="4" style={{ display: 'inline' }}>
+                  <line x1="0" y1="2" x2="16" y2="2" stroke="#22c55e" strokeWidth="2" strokeDasharray="4 2"/>
+                </svg>
+                Revenue
+              </span>
+            </div>
+            {loadingHistory ? (
+              <div className="h-40 flex items-center justify-center text-sm text-gray-400">Loading…</div>
+            ) : (
+              <SpendRevenueChart data={etzChartData} spendColor="#10b981" revenueColor="#22c55e" />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
