@@ -80,7 +80,12 @@ export async function fetchPPRevenue(month: string): Promise<RevenueData> {
       max_date_created: `${end}T23:59:59+10:00`,
     });
 
-    const excludedStatuses = new Set(['Cancelled', 'Refunded', 'Incomplete']);
+    // Exclude statuses that BC's revenue dashboard doesn't count.
+    // 'Awaiting Payment' and 'Manual Verification Required' are not yet confirmed revenue.
+    const excludedStatuses = new Set([
+      'Cancelled', 'Refunded', 'Incomplete',
+      'Awaiting Payment', 'Manual Verification Required',
+    ]);
     const validOrders = orders.filter(o => !excludedStatuses.has(o.status));
 
     const totalRevenue = validOrders.reduce((s, o) => s + parseFloat(o.total_inc_tax || '0'), 0);
