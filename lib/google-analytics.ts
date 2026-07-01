@@ -18,8 +18,13 @@ const GA4_BASE        = `https://analyticsdata.googleapis.com/v1beta/properties/
 const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
 async function getAccessToken(): Promise<string> {
-  const clientId     = process.env.GOOGLE_ADS_CLIENT_ID              ?? '';
-  const clientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET          ?? '';
+  // Use dedicated GA4 OAuth client if available; fall back to Google Ads client
+  const clientId     = process.env.GOOGLE_ANALYTICS_CLIENT_ID
+                    ?? process.env.GOOGLE_ADS_CLIENT_ID
+                    ?? '';
+  const clientSecret = process.env.GOOGLE_ANALYTICS_CLIENT_SECRET
+                    ?? process.env.GOOGLE_ADS_CLIENT_SECRET
+                    ?? '';
   // Prefer a dedicated analytics token; fall back to the Google Ads token which
   // may already carry analytics.readonly scope if broad access was granted.
   const refreshToken = process.env.GOOGLE_ANALYTICS_REFRESH_TOKEN
