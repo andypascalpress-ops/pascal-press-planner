@@ -23,7 +23,8 @@ interface MonthRevHistory {
 interface ChartPoint {
   label: string;
   spend: number;
-  revenue: number;
+  revenue: number;        // Total store revenue
+  googlePaidRev?: number; // Google Ads attributed revenue (paid traffic only)
 }
 
 interface CustomerPoint {
@@ -204,124 +205,116 @@ function MetricTile({ label, value, sub, color, delta }: MetricTileProps) {
   );
 }
 
-// ─── Bar + line chart (spend = bars, revenue = line, dual independent scales) ─
+// ─── Bar + line chart ────────────────────────────────────────────────────────
+// Spend = bars (independent scale, always visible)
+// Google Paid Revenue = solid line   Total Revenue = dashed line  (left axis)
 
 function SpendRevenueChart({
   data,
   spendColor,
-  revenueColor,
+  googlePaidColor = '#2563eb',
+  totalRevColor   = '#10b981',
 }: {
   data: ChartPoint[];
   spendColor: string;
-  revenueColor: string;
+  googlePaidColor?: string;
+  totalRevColor?: string;
 }) {
   const W   = 400;
-  const H   = 200;
-  const PAD = { t: 28, r: 16, b: 28, l: 52 };
+  const H   = 210;
+  const PAD = { t: 32, r: 16, b: 28, l: 52 };
   const cW  = W - PAD.l - PAD.r;
   const cH  = H - PAD.t - PAD.b;
   const n   = data.length;
   if (n < 2) return null;
 
-  const maxRev   = Math.max(...data.map(d => d.revenue), 1);
-  const maxSpend = Math.max(...data.map(d => d.spend),   1);
-  const hasRevenue = data.some(d => d.revenue > 0);
+  const hasGooglePaid = data.some(d => (d.googlePaidRev ?? 0) > 0);
+  const hasTotal      = data.some(d => d.revenue > 0);
 
-  // Revenue uses left axis (full height)
+  // Left axis: max of total revenue (or google paid if no total)
+  const maxRev   = Math.max(...data.map(d => Math.max(d.revenue, d.googlePaidRev ?? 0)), 1);
+  const maxSpend = Math.max(...data.map(d => d.spend), 1);
+
   const ry = (v: number) => PAD.t + cH - (Math.max(0, v) / maxRev) * cH;
-  // Spend bars use 80% of chart height so they're always visible
-  const barMaxH = cH * 0.8;
-  const sy = (v: number) => PAD.t + cH - (Math.max(0, v) / maxSpend) * barMaxH;
+  const sy = (v: number) => PAD.t + cH - (Math.max(0, v) / maxSpend) * (cH * 0.75);
 
   const slotW = cW / n;
-  const barW  = Math.max(slotW * 0.42, 8);
+  const barW  = Math.max(slotW * 0.4, 8);
+  const fmt   = (v: number) => v >= 1000 ? '$' + Math.round(v / 1000) + 'k' : '$' + Math.round(v);
 
-  const revPath = data.map((d, i) => {
-    const cx = PAD.l + slotW * i + slotW / 2;
-    return (i === 0 ? 'M' : 'L') + cx.toFixed(1) + ' ' + ry(d.revenue).toFixed(1);
-  }).join(' ');
+  const makePath = (vals: number[]) =>
+    vals.map((v, i) => {
+      const cx = PAD.l + slotW * i + slotW / 2;
+      return (i === 0 ? 'M' : 'L') + cx.toFixed(1) + ' ' + ry(v).toFixed(1);
+    }).join(' ');
 
-  const fmt = (v: number) =>
-    v >= 1000 ? '$' + (v / 1000).toFixed(0) + 'k' : '$' + v.toFixed(0);
+  const totalPath  = makePath(data.map(d => d.revenue));
+  const googlePath = makePath(data.map(d => d.googlePaidRev ?? 0));
 
-  // Revenue gridlines (left axis)
-  const revTicks = [0, 0.5, 1].map(f => ({
-    v: maxRev * f,
-    y: ry(maxRev * f),
-  }));
+  const revTicks = [0, 0.5, 1].map(f => ({ v: maxRev * f, y: ry(maxRev * f) }));
 
   return (
     <svg viewBox={'0 0 ' + W + ' ' + H} className="w-full" style={{ display: 'block' }}>
-      {/* Revenue gridlines + left axis labels */}
+      {/* Gridlines + left axis */}
       {revTicks.map((t, i) => (
         <g key={i}>
-          <line x1={PAD.l} y1={t.y.toFixed(1)} x2={W - PAD.r} y2={t.y.toFixed(1)}
-            stroke="#f3f4f6" strokeWidth="1" />
-          <text x={PAD.l - 4} y={(t.y + 4).toFixed(1)} textAnchor="end" fontSize="9" fill="#9ca3af">
-            {fmt(t.v)}
-          </text>
+          <line x1={PAD.l} y1={t.y.toFixed(1)} x2={W - PAD.r} y2={t.y.toFixed(1)} stroke="#f3f4f6" strokeWidth="1" />
+          <text x={PAD.l - 4} y={(t.y + 4).toFixed(1)} textAnchor="end" fontSize="9" fill="#9ca3af">{fmt(t.v)}</text>
         </g>
       ))}
 
       {/* Spend bars */}
       {data.map((d, i) => {
-        const cx = PAD.l + slotW * i + slotW / 2;
-        const bx = cx - barW / 2;
-        const by = sy(d.spend);
-        const bh = Math.max((PAD.t + cH) - by, 2);
-        const roas = d.spend > 0 && d.revenue > 0
-          ? (d.revenue / d.spend).toFixed(1)
-          : null;
+        const cx  = PAD.l + slotW * i + slotW / 2;
+        const bx  = cx - barW / 2;
+        const by  = sy(d.spend);
+        const bh  = Math.max((PAD.t + cH) - by, 2);
+        // ROAS uses Google paid revenue if available, else total
+        const roasBase = hasGooglePaid ? (d.googlePaidRev ?? 0) : d.revenue;
+        const roas = d.spend > 0 && roasBase > 0 ? (roasBase / d.spend).toFixed(1) : null;
         return (
           <g key={i}>
             {d.spend > 0 && (
               <>
-                <rect
-                  x={bx.toFixed(1)} y={by.toFixed(1)}
-                  width={barW.toFixed(1)} height={bh.toFixed(1)}
-                  fill={spendColor} opacity="0.75" rx="2"
-                />
-                {/* Spend $ label above bar */}
-                <text x={cx.toFixed(1)} y={(by - 4).toFixed(1)}
-                  textAnchor="middle" fontSize="8" fill={spendColor} fontWeight="600">
+                <rect x={bx.toFixed(1)} y={by.toFixed(1)} width={barW.toFixed(1)} height={bh.toFixed(1)}
+                  fill={spendColor} opacity="0.8" rx="2" />
+                <text x={cx.toFixed(1)} y={(by - 4).toFixed(1)} textAnchor="middle" fontSize="8" fill={spendColor} fontWeight="600">
                   {fmt(d.spend)}
                 </text>
-                {/* ROAS above spend label */}
-                {roas !== null && (
-                  <text x={cx.toFixed(1)} y={(by - 15).toFixed(1)}
-                    textAnchor="middle" fontSize="8" fill="#6b7280">
+                {roas && (
+                  <text x={cx.toFixed(1)} y={(by - 16).toFixed(1)} textAnchor="middle" fontSize="8" fill="#6b7280">
                     {roas}x
                   </text>
                 )}
               </>
             )}
-            <text x={cx.toFixed(1)} y={(H - 4).toFixed(1)}
-              textAnchor="middle" fontSize="10" fill="#6b7280">
-              {d.label}
-            </text>
+            <text x={cx.toFixed(1)} y={(H - 4).toFixed(1)} textAnchor="middle" fontSize="10" fill="#6b7280">{d.label}</text>
           </g>
         );
       })}
 
-      {/* Revenue line on top */}
-      {hasRevenue && (
+      {/* Total revenue — dashed line */}
+      {hasTotal && (
         <>
-          <path d={revPath} fill="none" stroke={revenueColor}
-            strokeWidth="2.5" strokeLinejoin="round" />
+          <path d={totalPath} fill="none" stroke={totalRevColor} strokeWidth="2" strokeDasharray="5 3" strokeLinejoin="round" />
           {data.map((d, i) => {
             const cx = PAD.l + slotW * i + slotW / 2;
-            return d.revenue > 0 ? (
-              <circle key={i} cx={cx.toFixed(1)} cy={ry(d.revenue).toFixed(1)}
-                r="3.5" fill={revenueColor} />
-            ) : null;
+            return d.revenue > 0 ? <circle key={i} cx={cx.toFixed(1)} cy={ry(d.revenue).toFixed(1)} r="3" fill={totalRevColor} /> : null;
           })}
         </>
       )}
 
-      {/* Axis labels */}
-      <text x={PAD.l - 4} y={PAD.t - 8} textAnchor="end" fontSize="8" fill={revenueColor} fontWeight="600">
-        Revenue
-      </text>
+      {/* Google paid revenue — solid line on top */}
+      {hasGooglePaid && (
+        <>
+          <path d={googlePath} fill="none" stroke={googlePaidColor} strokeWidth="2.5" strokeLinejoin="round" />
+          {data.map((d, i) => {
+            const cx = PAD.l + slotW * i + slotW / 2;
+            const v  = d.googlePaidRev ?? 0;
+            return v > 0 ? <circle key={i} cx={cx.toFixed(1)} cy={ry(v).toFixed(1)} r="3.5" fill={googlePaidColor} /> : null;
+          })}
+        </>
+      )}
     </svg>
   );
 }
@@ -455,14 +448,25 @@ function BrandPanel({
   const prevNewCusts = prevRevenue?.newCustomers       ?? 0;
   const prevRetCusts = prevRevenue?.returningCustomers ?? 0;
 
-  const roas       = totalSpend > 0 && rev > 0 ? rev / totalSpend : null;
-  const googleRoas = googleSpend > 0 && rev > 0 ? rev / googleSpend : null;
-  const aov        = orders > 0 && rev > 0 ? rev / orders : null;
-  const cac        = totalSpend > 0 && newCusts > 0 ? totalSpend / newCusts : null;
-  const retRate    = totalCusts > 0 ? Math.round((retCusts / totalCusts) * 100) : null;
-  const prevRoas   = totalSpend > 0 && prevRev > 0 ? prevRev / totalSpend : null;
+  const googlePaidRev    = revenue?.googlePaidRevenue    ?? 0;
+  const googleOrganicRev = revenue?.googleOrganicRevenue ?? 0;
+
+  const aov      = orders > 0 && rev > 0 ? rev / orders : null;
+  const cac      = totalSpend > 0 && newCusts > 0 ? totalSpend / newCusts : null;
+  const retRate  = totalCusts > 0 ? Math.round((retCusts / totalCusts) * 100) : null;
+  const prevRoas = totalSpend > 0 && prevRev > 0 ? prevRev / totalSpend : null;
+
+  // Google Ads ROAS: paid-traffic BC revenue ÷ Google Ads spend (most accurate)
+  // Falls back to total revenue ÷ spend when no referral data available (e.g. Stripe)
+  const paidRoas = googleSpend > 0 && googlePaidRev > 0
+    ? googlePaidRev / googleSpend
+    : googleSpend > 0 && rev > 0
+      ? rev / googleSpend
+      : null;
+  const roas = totalSpend > 0 && rev > 0 ? rev / totalSpend : null;
 
   const isConnected = revenue?.connected === true;
+  const source      = revenue?.source ?? 'bigcommerce';
 
   return (
     <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -531,93 +535,130 @@ function BrandPanel({
           )}
         </div>
 
-        {/* ── Revenue ── */}
+        {/* ── Google Ads Performance ── */}
         <div className="px-5 py-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Revenue</div>
-            <span className={'text-xs px-2 py-0.5 rounded-full font-medium ' + (isConnected ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-400')}>
-              {isConnected ? revenueLabel : revenueLabel + ' · not connected'}
-            </span>
-          </div>
-          {isConnected ? (
-            <>
-              <div className="flex justify-between items-baseline mb-1">
-                <span className="text-2xl font-bold text-green-700">{AUD.format(rev)}</span>
-                <span className="text-sm text-gray-500">{orders} orders</span>
-              </div>
-              {prevRev > 0 && (
-                <div className="flex items-center gap-1.5 mb-3">
-                  <Delta current={rev} prev={prevRev} />
-                  <span className="text-xs text-gray-400">vs last month</span>
-                </div>
+          <div className="rounded-xl border border-blue-100 overflow-hidden">
+            <div className="bg-blue-600 px-4 py-2.5 flex items-center justify-between">
+              <span className="text-white font-bold text-sm tracking-wide">Google Ads Performance</span>
+              {paidRoas !== null && (
+                <span className={
+                  'font-bold text-sm px-2.5 py-0.5 rounded-full ' +
+                  (paidRoas >= 4 ? 'bg-green-100 text-green-800' : paidRoas >= 2 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800')
+                }>
+                  {paidRoas.toFixed(1)}x ROAS
+                </span>
               )}
-
-              <div className="grid grid-cols-3 gap-2">
-                {aov !== null && (
-                  <MetricTile label="Avg Order Value" value={AUD.format(aov)} color="text-blue-700" />
-                )}
-                {roas !== null && (
-                  <MetricTile
-                    label="ROAS"
-                    value={roas.toFixed(1) + 'x'}
-                    color={roas >= 4 ? 'text-green-700' : roas >= 2 ? 'text-yellow-600' : 'text-red-600'}
-                    delta={prevRoas !== null ? { current: roas, prev: prevRoas } : undefined}
-                  />
-                )}
-                {googleRoas !== null && (
-                  <MetricTile
-                    label="Google ROAS"
-                    value={googleRoas.toFixed(1) + 'x'}
-                    color={googleRoas >= 4 ? 'text-green-700' : googleRoas >= 2 ? 'text-yellow-600' : 'text-red-600'}
-                  />
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="text-sm text-gray-400 italic">Connect {revenueLabel} to see revenue</div>
-          )}
+            </div>
+            <div className="bg-blue-50 px-4 py-3 space-y-3">
+              {isConnected ? (
+                <>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-white rounded-lg py-2 px-1 shadow-sm">
+                      <div className="text-xs text-gray-500 mb-1 leading-tight">Ad Spend</div>
+                      <div className="text-base font-bold text-gray-900">
+                        {totalSpend > 0 ? AUD.format(totalSpend) : '—'}
+                      </div>
+                    </div>
+                    <div className="bg-white rounded-lg py-2 px-1 shadow-sm">
+                      <div className="text-xs text-gray-500 mb-1 leading-tight">Paid Traffic Rev</div>
+                      <div className="text-base font-bold text-blue-700">
+                        {googlePaidRev > 0 ? AUD.format(googlePaidRev) : source === 'stripe' ? 'N/A' : '—'}
+                      </div>
+                    </div>
+                    <div className="bg-white rounded-lg py-2 px-1 shadow-sm">
+                      <div className="text-xs text-gray-500 mb-1 leading-tight">Organic Rev</div>
+                      <div className="text-base font-bold text-teal-700">
+                        {googleOrganicRev > 0 ? AUD.format(googleOrganicRev) : source === 'stripe' ? 'N/A' : '—'}
+                      </div>
+                    </div>
+                  </div>
+                  {paidRoas !== null && (
+                    <div className="text-center text-xs text-blue-700 bg-blue-100 rounded-lg py-2 px-3">
+                      Every <span className="font-bold">$1</span> on Google Ads returned{' '}
+                      <span className="font-bold text-blue-900">${paidRoas.toFixed(2)}</span>{' '}
+                      {googlePaidRev > 0 ? 'in paid-traffic revenue' : 'in store revenue'}
+                    </div>
+                  )}
+                  {source === 'stripe' && (
+                    <div className="text-center text-xs text-gray-400 italic">
+                      Paid vs organic breakdown not available via Stripe
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-sm text-gray-400 italic py-1">Connect {revenueLabel} to see revenue</div>
+              )}
+            </div>
+          </div>
         </div>
+
+        {/* ── Total Store Revenue ── */}
+        {isConnected && (
+          <div className="px-5 pb-4">
+            <div className="rounded-xl border border-green-100 overflow-hidden">
+              <div className="bg-emerald-600 px-4 py-2.5 flex items-center justify-between">
+                <span className="text-white font-bold text-sm tracking-wide">Total Store Revenue</span>
+                <span className="text-emerald-100 text-xs font-medium">{revenueLabel}</span>
+              </div>
+              <div className="bg-emerald-50 px-4 py-3">
+                <div className="flex items-baseline gap-3 mb-1.5">
+                  <span className="text-3xl font-bold text-emerald-800">{AUD.format(rev)}</span>
+                  {prevRev > 0 && (
+                    <span className="flex items-center gap-1">
+                      <Delta current={rev} prev={prevRev} />
+                      <span className="text-xs text-gray-400">vs last month</span>
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-3 text-sm text-emerald-700">
+                  <span>{orders} orders</span>
+                  {aov !== null && <span>· Avg {AUD.format(aov)} per order</span>}
+                  {roas !== null && (
+                    <span>· Overall ROAS <span className="font-semibold">{roas.toFixed(1)}x</span></span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Customers ── */}
         {isConnected && totalCusts > 0 && (
-          <div className="px-5 py-4">
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Customers</div>
-            <div className="grid grid-cols-2 gap-3 mb-3">
-              <div className="bg-blue-50 rounded-lg p-3 text-center">
+          <div className="px-5 pb-4">
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Customers This Month</div>
+            <div className="grid grid-cols-4 gap-2">
+              <div className="bg-blue-50 rounded-lg p-2.5 text-center">
                 <div className="text-xl font-bold text-blue-700">{newCusts}</div>
                 {prevRevenue?.connected === true && prevNewCusts > 0 && (
-                  <div className="flex justify-center mt-0.5">
-                    <Delta current={newCusts} prev={prevNewCusts} />
-                  </div>
+                  <div className="flex justify-center mt-0.5"><Delta current={newCusts} prev={prevNewCusts} /></div>
                 )}
                 <div className="text-xs text-blue-500 mt-0.5">New</div>
               </div>
-              <div className="bg-purple-50 rounded-lg p-3 text-center">
+              <div className="bg-purple-50 rounded-lg p-2.5 text-center">
                 <div className="text-xl font-bold text-purple-700">{retCusts}</div>
                 {prevRevenue?.connected === true && prevRetCusts > 0 && (
-                  <div className="flex justify-center mt-0.5">
-                    <Delta current={retCusts} prev={prevRetCusts} />
-                  </div>
+                  <div className="flex justify-center mt-0.5"><Delta current={retCusts} prev={prevRetCusts} /></div>
                 )}
                 <div className="text-xs text-purple-500 mt-0.5">Returning</div>
               </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
               {cac !== null && (
-                <MetricTile
-                  label="Cost per Acquisition"
-                  value={AUD.format(cac)}
-                  sub="per new customer"
-                  color="text-orange-600"
-                />
+                <div className="bg-orange-50 rounded-lg p-2.5 text-center">
+                  <div className="text-base font-bold text-orange-700">{AUD.format(cac)}</div>
+                  <div className="text-xs text-orange-500 mt-0.5">Cost/Acq.</div>
+                </div>
               )}
               {retRate !== null && (
-                <MetricTile
-                  label="Retention Rate"
-                  value={retRate + '%'}
-                  sub="returning"
-                  color={retRate >= 40 ? 'text-green-700' : 'text-yellow-600'}
-                />
+                <div className={
+                  'rounded-lg p-2.5 text-center ' +
+                  (retRate >= 40 ? 'bg-green-50' : 'bg-yellow-50')
+                }>
+                  <div className={'text-base font-bold ' + (retRate >= 40 ? 'text-green-700' : 'text-yellow-700')}>
+                    {retRate}%
+                  </div>
+                  <div className={'text-xs mt-0.5 ' + (retRate >= 40 ? 'text-green-500' : 'text-yellow-500')}>
+                    Retention
+                  </div>
+                </div>
               )}
             </div>
           </div>
@@ -818,19 +859,21 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
 
   // Chart data: prefer live Google Ads history, fall back to Monday.com records
   const ppChartData: ChartPoint[] = CHART_YMS.map((ym, i) => ({
-    label:   CHART_LABELS[i] ?? ym,
-    spend:   googleAdsHistory?.find(h => h.month === ym)?.pp
-             ?? spendForBrandMonth(records, 'Pascal Press', ym).reduce((s, r) => s + (r.actualSpend ?? 0), 0),
-    revenue: revenueHistory?.find(h => h.month === ym)?.pp.totalRevenue ?? 0,
+    label:        CHART_LABELS[i] ?? ym,
+    spend:        googleAdsHistory?.find(h => h.month === ym)?.pp
+                  ?? spendForBrandMonth(records, 'Pascal Press', ym).reduce((s, r) => s + (r.actualSpend ?? 0), 0),
+    revenue:      revenueHistory?.find(h => h.month === ym)?.pp.totalRevenue     ?? 0,
+    googlePaidRev: revenueHistory?.find(h => h.month === ym)?.pp.googlePaidRevenue ?? 0,
   }));
 
   const etzChartData: ChartPoint[] = CHART_YMS.map((ym, i) => ({
-    label:   CHART_LABELS[i] ?? ym,
-    spend:   googleAdsHistory?.find(h => h.month === ym)?.etz
-             ?? spendForBrandMonth(records, 'Excel Test Zone', ym)
-                 .filter(r => r.channel === 'Google Ads')
-                 .reduce((s, r) => s + (r.actualSpend ?? 0), 0),
-    revenue: revenueHistory?.find(h => h.month === ym)?.etz.totalRevenue ?? 0,
+    label:        CHART_LABELS[i] ?? ym,
+    spend:        googleAdsHistory?.find(h => h.month === ym)?.etz
+                  ?? spendForBrandMonth(records, 'Excel Test Zone', ym)
+                      .filter(r => r.channel === 'Google Ads')
+                      .reduce((s, r) => s + (r.actualSpend ?? 0), 0),
+    revenue:      revenueHistory?.find(h => h.month === ym)?.etz.totalRevenue     ?? 0,
+    googlePaidRev: revenueHistory?.find(h => h.month === ym)?.etz.googlePaidRevenue ?? 0,
   }));
 
   const ppPrev = revenue?.ppPrev ?? null;
@@ -1002,21 +1045,27 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             </div>
             <div className="flex items-center gap-4 mb-3 text-xs text-gray-500 flex-wrap">
               <span className="flex items-center gap-1.5">
-                <span style={{ display:'inline-block', width:12, height:10, background:'#3b82f6', borderRadius:2, opacity:0.75 }} />
+                <span style={{ display:'inline-block', width:12, height:10, background:'#3b82f6', borderRadius:2, opacity:0.8 }} />
                 Ad Spend
               </span>
               <span className="flex items-center gap-1.5">
-                <svg width="16" height="4" style={{ display: 'inline' }}>
-                  <line x1="0" y1="2" x2="16" y2="2" stroke="#22c55e" strokeWidth="2.5" />
+                <svg width="16" height="4" style={{ display:'inline' }}>
+                  <line x1="0" y1="2" x2="16" y2="2" stroke="#2563eb" strokeWidth="2.5" />
                 </svg>
-                Revenue
+                Google Paid Revenue
               </span>
-              <span className="text-gray-400 italic">label above bar = ROAS</span>
+              <span className="flex items-center gap-1.5">
+                <svg width="16" height="4" style={{ display:'inline' }}>
+                  <line x1="0" y1="2" x2="16" y2="2" stroke="#10b981" strokeWidth="2" strokeDasharray="4 2" />
+                </svg>
+                Total Revenue
+              </span>
+              <span className="text-gray-400 italic">bar label = ROAS</span>
             </div>
             {loadingHistory ? (
               <div className="h-40 flex items-center justify-center text-sm text-gray-400">Loading&hellip;</div>
             ) : (
-              <SpendRevenueChart data={ppChartData} spendColor="#3b82f6" revenueColor="#22c55e" />
+              <SpendRevenueChart data={ppChartData} spendColor="#3b82f6" googlePaidColor="#2563eb" totalRevColor="#10b981" />
             )}
           </div>
 
@@ -1026,21 +1075,21 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             </div>
             <div className="flex items-center gap-4 mb-3 text-xs text-gray-500 flex-wrap">
               <span className="flex items-center gap-1.5">
-                <span style={{ display:'inline-block', width:12, height:10, background:'#10b981', borderRadius:2, opacity:0.75 }} />
+                <span style={{ display:'inline-block', width:12, height:10, background:'#10b981', borderRadius:2, opacity:0.8 }} />
                 Ad Spend
               </span>
               <span className="flex items-center gap-1.5">
-                <svg width="16" height="4" style={{ display: 'inline' }}>
-                  <line x1="0" y1="2" x2="16" y2="2" stroke="#22c55e" strokeWidth="2.5" />
+                <svg width="16" height="4" style={{ display:'inline' }}>
+                  <line x1="0" y1="2" x2="16" y2="2" stroke="#10b981" strokeWidth="2" strokeDasharray="4 2" />
                 </svg>
-                Revenue
+                Total Revenue
               </span>
-              <span className="text-gray-400 italic">label above bar = ROAS</span>
+              <span className="text-gray-400 italic">bar label = ROAS</span>
             </div>
             {loadingHistory ? (
               <div className="h-40 flex items-center justify-center text-sm text-gray-400">Loading&hellip;</div>
             ) : (
-              <SpendRevenueChart data={etzChartData} spendColor="#10b981" revenueColor="#22c55e" />
+              <SpendRevenueChart data={etzChartData} spendColor="#10b981" totalRevColor="#10b981" />
             )}
           </div>
         </div>
