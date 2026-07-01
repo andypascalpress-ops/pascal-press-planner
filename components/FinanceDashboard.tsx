@@ -90,6 +90,14 @@ function currentYearMonth(): string {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
 }
 
+/** Default to last month — the current month is rarely complete. */
+function defaultYearMonth(): string {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - 1);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
 function parseYM(ym: string): { year: number; mon: number } {
   const parts = ym.split('-');
   return { year: parseInt(parts[0] ?? '2026', 10), mon: parseInt(parts[1] ?? '1', 10) };
@@ -817,7 +825,7 @@ function BudgetBreakdownTable({ brand, records, accentBg, accentText }: {
 // ─── Main dashboard ───────────────────────────────────────────────────────────
 
 export default function FinanceDashboard({ records, syncing, lastSynced, onSyncGoogleAds }: Props) {
-  const [selectedMonth,    setSelectedMonth   ] = useState<string>(currentYearMonth());
+  const [selectedMonth,    setSelectedMonth   ] = useState<string>(defaultYearMonth());
   const [revenue,          setRevenue         ] = useState<RevenueResponse | null>(null);
   const [loadingRevenue,   setLoadingRevenue  ] = useState(false);
   const [revenueHistory,   setRevenueHistory  ] = useState<MonthRevHistory[] | null>(null);
