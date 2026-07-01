@@ -66,7 +66,7 @@ export async function fetchETZStripeRevenue(
   const accurate = options?.accurate !== false;
 
   if (!STRIPE_SECRET_KEY) {
-    return { totalRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'stripe', connected: false };
+    return { totalRevenue: 0, googlePaidRevenue: 0, googleOrganicRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'stripe', connected: false };
   }
 
   try {
@@ -144,6 +144,9 @@ export async function fetchETZStripeRevenue(
 
     return {
       totalRevenue: totalCents / 100,
+      // Stripe doesn't track referral source — Google revenue breakdown not applicable
+      googlePaidRevenue: 0,
+      googleOrganicRevenue: 0,
       totalOrders,
       newCustomers,
       returningCustomers,
@@ -152,6 +155,6 @@ export async function fetchETZStripeRevenue(
     };
   } catch (err) {
     console.error('[stripe-revenue]', err);
-    return { totalRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'stripe', connected: false };
+    return { totalRevenue: 0, googlePaidRevenue: 0, googleOrganicRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'stripe', connected: false };
   }
 }

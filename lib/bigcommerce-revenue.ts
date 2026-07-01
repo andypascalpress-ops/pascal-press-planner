@@ -23,6 +23,10 @@ function bcHeaders() {
 
 export interface RevenueData {
   totalRevenue: number;
+  /** Revenue from orders where referral_source contains 'googleadservices' — Google Ads clicks */
+  googlePaidRevenue: number;
+  /** Revenue from orders where referral_source contains 'google' but NOT 'googleadservices' — organic search */
+  googleOrganicRevenue: number;
   totalOrders: number;
   newCustomers: number;
   returningCustomers: number;
@@ -64,6 +68,8 @@ interface BCOrder {
   customer_id: number;
   date_created: string;
   status: string;
+  /** HTTP referrer URL — e.g. 'https://www.googleadservices.com/...' for Google Ads clicks */
+  referral_source: string;
   billing_address: {
     email: string;
   };
@@ -76,7 +82,7 @@ interface BCCustomer {
 
 export async function fetchPPRevenue(month: string): Promise<RevenueData> {
   if (!STORE_HASH || !ACCESS_TOKEN) {
-    return { totalRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'bigcommerce', connected: false };
+    return { totalRevenue: 0, googlePaidRevenue: 0, googleOrganicRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'bigcommerce', connected: false };
   }
 
   try {
@@ -97,6 +103,19 @@ export async function fetchPPRevenue(month: string): Promise<RevenueData> {
 
     const totalRevenue = validOrders.reduce((s, o) => s + parseFloat(o.total_inc_tax || '0'), 0);
     const totalOrders  = validOrders.length;
+
+    // Google Ads (paid): referral_source contains 'googleadservices' — actual ad clicks
+    const googlePaidOrders = validOrders.filter(o =>
+      (o.referral_source ?? '').toLowerCase().includes('googleadservices')
+    );
+    const googlePaidRevenue = googlePaidOrders.reduce((s, o) => s + parseFloat(o.total_inc_tax || '0'), 0);
+
+    // Google Organic: referral_source contains 'google' but NOT 'googleadservices' — organic search
+    const googleOrganicOrders = validOrders.filter(o => {
+      const ref = (o.referral_source ?? '').toLowerCase();
+      return ref.includes('google') && !ref.includes('googleadservices');
+    });
+    const googleOrganicRevenue = googleOrganicOrders.reduce((s, o) => s + parseFloat(o.total_inc_tax || '0'), 0);
 
     // ── Customer classification ───────────────────────────────────────────────
     // Guest orders (customer_id === 0): deduplicate by billing email.
@@ -142,12 +161,16 @@ export async function fetchPPRevenue(month: string): Promise<RevenueData> {
       }
     }
 
-    return { totalRevenue, totalOrders, newCustomers, returningCustomers, source: 'bigcommerce', connected: true };
+    return {
+      totalRevenue, googlePaidRevenue, googleOrganicRevenue,
+      totalOrders, newCustomers, returningCustomers,
+      source: 'bigcommerce', connected: true,
+    };
   } catch {
-    return { totalRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'bigcommerce', connected: false };
+    return { totalRevenue: 0, googlePaidRevenue: 0, googleOrganicRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'bigcommerce', connected: false };
   }
 }
 
 export function placeholderETZRevenue(): RevenueData {
-  return { totalRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'stripe', connected: false };
+  return { totalRevenue: 0, googlePaidRevenue: 0, googleOrganicRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'stripe', connected: false };
 }
