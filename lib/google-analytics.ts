@@ -20,11 +20,15 @@ const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 async function getAccessToken(): Promise<string> {
   const clientId     = process.env.GOOGLE_ADS_CLIENT_ID              ?? '';
   const clientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET          ?? '';
-  const refreshToken = process.env.GOOGLE_ANALYTICS_REFRESH_TOKEN    ?? '';
+  // Prefer a dedicated analytics token; fall back to the Google Ads token which
+  // may already carry analytics.readonly scope if broad access was granted.
+  const refreshToken = process.env.GOOGLE_ANALYTICS_REFRESH_TOKEN
+                    ?? process.env.GOOGLE_ADS_REFRESH_TOKEN
+                    ?? '';
 
   if (!clientId || !clientSecret || !refreshToken) {
     throw new Error(
-      'Missing env vars for GA4: GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET, GOOGLE_ANALYTICS_REFRESH_TOKEN'
+      'Missing env vars for GA4: GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET, and either GOOGLE_ANALYTICS_REFRESH_TOKEN or GOOGLE_ADS_REFRESH_TOKEN'
     );
   }
 
@@ -84,7 +88,7 @@ async function runReport(accessToken: string, body: object): Promise<any> {
  * Returns { paidSearchRevenue, organicSearchRevenue, connected }.
  */
 export async function fetchGA4Revenue(month: string): Promise<GA4ChannelRevenue> {
-  if (!process.env.GOOGLE_ANALYTICS_REFRESH_TOKEN) {
+  if (!process.env.GOOGLE_ANALYTICS_REFRESH_TOKEN && !process.env.GOOGLE_ADS_REFRESH_TOKEN) {
     return { paidSearchRevenue: 0, organicSearchRevenue: 0, connected: false };
   }
 
@@ -130,7 +134,7 @@ export async function fetchGA4RevenueHistory(
   startDate: string, // 'YYYY-MM-DD'
   endDate:   string, // 'YYYY-MM-DD'
 ): Promise<GA4MonthlyRevenue[]> {
-  if (!process.env.GOOGLE_ANALYTICS_REFRESH_TOKEN) {
+  if (!process.env.GOOGLE_ANALYTICS_REFRESH_TOKEN && !process.env.GOOGLE_ADS_REFRESH_TOKEN) {
     return [];
   }
 
