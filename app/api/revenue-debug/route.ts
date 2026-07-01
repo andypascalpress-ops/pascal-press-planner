@@ -61,6 +61,32 @@ async function debugBC(month: string) {
     const EXCLUDED = new Set(['Cancelled', 'Refunded', 'Incomplete']);
     const valid = orders.filter(o => !EXCLUDED.has(o.status));
 
+    // Referral source breakdown — shows what's actually in BC orders
+    const referralSources: Record<string, { count: number; revenue: number }> = {};
+    for (const o of valid) {
+      const ref = (o.referral_source ?? '').trim() || '(empty)';
+      // Bucket by domain for readability
+      let bucket = ref;
+      if (ref !== '(empty)') {
+        try { bucket = new URL(ref).hostname.replace(/^www\./, ''); } catch { bucket = ref.slice(0, 60); }
+      }
+      if (!referralSources[bucket]) referralSources[bucket] = { count: 0, revenue: 0 };
+      referralSources[bucket].count++;
+      referralSources[bucket].revenue += parseFloat(o.total_inc_tax || '0');
+    }
+    // Sort by count desc, show top 20
+    const referralBreakdown = Object.entries(referralSources)
+      .sort(([, a], [, b]) => b.count - a.count)
+      .slice(0, 20)
+      .map(([source, v]) => ({ source, count: v.count, revenue: v.revenue.toFixed(2) }));
+
+    // Google paid vs organic using same logic as bigcommerce-revenue.ts
+    const googlePaidOrders = valid.filter(o => (o.referral_source ?? '').toLowerCase().includes('googleadservices'));
+    const googleOrganicOrders = valid.filter(o => {
+      const ref = (o.referral_source ?? '').toLowerCase();
+      return ref.includes('google') && !ref.includes('googleadservices');
+    });
+
     allOrders.push({
       timezone: tz,
       totalOrders: orders.length,
@@ -68,9 +94,15 @@ async function debugBC(month: string) {
       revenue_incTax_allStatuses: orders.reduce((s, o) => s + parseFloat(o.total_inc_tax || '0'), 0).toFixed(2),
       revenue_incTax_valid:       valid.reduce((s, o)  => s + parseFloat(o.total_inc_tax || '0'), 0).toFixed(2),
       revenue_exTax_valid:        valid.reduce((s, o)  => s + parseFloat(o.total_ex_tax  || '0'), 0).toFixed(2),
+      googlePaidOrders: googlePaidOrders.length,
+      googlePaidRevenue: googlePaidOrders.reduce((s, o) => s + parseFloat(o.total_inc_tax || '0'), 0).toFixed(2),
+      googleOrganicOrders: googleOrganicOrders.length,
+      googleOrganicRevenue: googleOrganicOrders.reduce((s, o) => s + parseFloat(o.total_inc_tax || '0'), 0).toFixed(2),
+      ordersWithEmptyReferral: valid.filter(o => !(o.referral_source ?? '').trim()).length,
+      referralBreakdown,
       byStatus,
-      firstOrder: orders[0]  ? { id: orders[0].id,  date: orders[0].date_created,  status: orders[0].status,  total_inc: orders[0].total_inc_tax }  : null,
-      lastOrder:  orders[orders.length - 1] ? { id: orders[orders.length-1].id, date: orders[orders.length-1].date_created, status: orders[orders.length-1].status, total_inc: orders[orders.length-1].total_inc_tax } : null,
+      firstOrder: orders[0]  ? { id: orders[0].id,  date: orders[0].date_created,  status: orders[0].status,  total_inc: orders[0].total_inc_tax, referral_source: orders[0].referral_source }  : null,
+      lastOrder:  orders[orders.length - 1] ? { id: orders[orders.length-1].id, date: orders[orders.length-1].date_created, status: orders[orders.length-1].status, total_inc: orders[orders.length-1].total_inc_tax, referral_source: orders[orders.length-1].referral_source } : null,
     });
   }
 
