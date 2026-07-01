@@ -45,6 +45,23 @@ interface GoogleAdsHistoryItem {
   etz: number;
 }
 
+interface GA4RevenueResponse {
+  month: string;
+  pp: {
+    paidSearchRevenue:    number;
+    organicSearchRevenue: number;
+    connected: boolean;
+  };
+}
+
+interface GA4HistoryItem {
+  month: string; // YYYY-MM
+  pp: {
+    paid:    number;
+    organic: number;
+  };
+}
+
 interface Props {
   records: SpendRecord[];
   syncing: boolean;
@@ -807,6 +824,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [loadingHistory,   setLoadingHistory  ] = useState(false);
   const [googleAdsSpend,   setGoogleAdsSpend  ] = useState<GoogleAdsSpendResponse | null>(null);
   const [googleAdsHistory, setGoogleAdsHistory] = useState<GoogleAdsHistoryItem[] | null>(null);
+  const [ga4Revenue,       setGa4Revenue      ] = useState<GA4RevenueResponse | null>(null);
+  const [ga4History,       setGa4History      ] = useState<GA4HistoryItem[] | null>(null);
 
   useEffect(() => {
     setLoadingRevenue(true);
@@ -821,6 +840,12 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
       .then(r => r.json())
       .then((data: GoogleAdsSpendResponse) => { setGoogleAdsSpend(data); })
       .catch(() => { /* ignore */ });
+
+    // Fetch GA4 revenue by channel for the selected month (PP only)
+    fetch('/api/ga4-revenue?month=' + selectedMonth)
+      .then(r => r.json())
+      .then((data: GA4RevenueResponse) => { setGa4Revenue(data); })
+      .catch(() => { /* ignore */ });
   }, [selectedMonth]);
 
   useEffect(() => {
@@ -828,10 +853,12 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
     Promise.all([
       fetch('/api/revenue-history').then(r => r.json()),
       fetch('/api/google-ads-history').then(r => r.json()),
+      fetch('/api/ga4-revenue-history').then(r => r.json()),
     ])
-      .then(([revData, gadsData]: [MonthRevHistory[], GoogleAdsHistoryItem[]]) => {
+      .then(([revData, gadsData, ga4Data]: [MonthRevHistory[], GoogleAdsHistoryItem[], GA4HistoryItem[]]) => {
         setRevenueHistory(revData);
         setGoogleAdsHistory(gadsData);
+        setGa4History(ga4Data);
       })
       .catch(() => { /* ignore */ })
       .finally(() => { setLoadingHistory(false); });
@@ -862,8 +889,11 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
     label:        CHART_LABELS[i] ?? ym,
     spend:        googleAdsHistory?.find(h => h.month === ym)?.pp
                   ?? spendForBrandMonth(records, 'Pascal Press', ym).reduce((s, r) => s + (r.actualSpend ?? 0), 0),
-    revenue:      revenueHistory?.find(h => h.month === ym)?.pp.totalRevenue     ?? 0,
-    googlePaidRev: revenueHistory?.find(h => h.month === ym)?.pp.googlePaidRevenue ?? 0,
+    revenue:      revenueHistory?.find(h => h.month === ym)?.pp.totalRevenue ?? 0,
+    // GA4 paid search revenue preferred; fall back to BC referral_source (usually 0)
+    googlePaidRev: ga4History?.find(h => h.month === ym)?.pp.paid
+                  ?? revenueHistory?.find(h => h.month === ym)?.pp.googlePaidRevenue
+                  ?? 0,
   }));
 
   const etzChartData: ChartPoint[] = CHART_YMS.map((ym, i) => ({
@@ -877,8 +907,18 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   }));
 
   const ppPrev = revenue?.ppPrev ?? null;
-  const ppRev  = revenue?.pp     ?? null;
-  const etzRev = revenue?.etz    ?? null;
+  const ppRevRaw = revenue?.pp ?? null;
+  const etzRev   = revenue?.etz ?? null;
+
+  // Overlay GA4 channel revenue on top of BC's total revenue data.
+  // GA4 is the source of truth for paid vs organic split; BC is the source of truth for totals.
+  const ppRev: typeof ppRevRaw = ppRevRaw
+    ? {
+        ...ppRevRaw,
+        googlePaidRevenue:    ga4Revenue?.pp.connected ? ga4Revenue.pp.paidSearchRevenue    : ppRevRaw.googlePaidRevenue,
+        googleOrganicRevenue: ga4Revenue?.pp.connected ? ga4Revenue.pp.organicSearchRevenue : ppRevRaw.googleOrganicRevenue,
+      }
+    : null;
 
   const ppCustomerData: CustomerPoint[] = CHART_YMS.map((ym, i) => ({
     label:    CHART_LABELS[i] ?? ym,
