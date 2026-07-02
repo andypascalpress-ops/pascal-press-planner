@@ -160,7 +160,16 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
     } while (after && allRows.length < 500);
 
     // ── Step 2: fetch statistics batch (slower, also cached) ─────────────────
-    const statsMap = await fetchStatsBatch(allRows.map(r => r.id));
+    // Race against a 7-second fallback so a slow HubSpot response can't push
+    // the whole serverless function past Vercel's 10-second limit.
+    const emptyMap = new Map<string, ReturnType<typeof extractCounters>>();
+    const statsTimeout = new Promise<typeof emptyMap>(resolve =>
+      setTimeout(() => resolve(emptyMap), 7000),
+    );
+    const statsMap = await Promise.race([
+      fetchStatsBatch(allRows.map(r => r.id)),
+      statsTimeout,
+    ]);
     const statsLoaded = statsMap.size > 0;
 
     // ── Step 3: filter + sort + map ──────────────────────────────────────────
