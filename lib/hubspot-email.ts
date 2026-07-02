@@ -40,7 +40,7 @@ export interface EmailSummary {
   totalClicks:  number;
   avgOpenRate:  number;
   avgClickRate: number;
-  statsLoaded:  boolean; // false if statistics endpoint failed
+  statsLoaded:  boolean; // false if statistics endpoint failed/timed out
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -52,14 +52,14 @@ function safeDiv(a: number, b: number): number {
 // Normalise counters from various possible HubSpot response shapes
 function extractCounters(item: Record<string, unknown>) {
   // Try: item.statistics.counters, item.stats.counters, item.counters
-  const stats  = (item.statistics ?? item.stats ?? {}) as Record<string, unknown>;
+  const stats    = (item.statistics ?? item.stats ?? {}) as Record<string, unknown>;
   const counters = (stats.counters ?? stats) as Record<string, unknown>;
   return {
-    sent:          (counters.sent          as number) ?? 0,
-    delivered:     (counters.delivered     as number) ?? 0,
-    open:          (counters.open          as number) ?? 0,
-    click:         (counters.click         as number) ?? 0,
-    unsubscribed:  (counters.unsubscribed  as number) ?? 0,
+    sent:         (counters.sent         as number) ?? 0,
+    delivered:    (counters.delivered    as number) ?? 0,
+    open:         (counters.open         as number) ?? 0,
+    click:        (counters.click        as number) ?? 0,
+    unsubscribed: (counters.unsubscribed as number) ?? 0,
   };
 }
 
@@ -74,7 +74,7 @@ interface HsEmailRow {
   sendOnPublish?: boolean;
 }
 
-/** Fetch one page of email list (no statistics — keeps the call fast). */
+/** Fetch one page of email list (no statistics — keeps each page call fast). */
 async function fetchEmailPage(
   after?: string,
 ): Promise<{ results: HsEmailRow[]; next?: string }> {
@@ -86,7 +86,7 @@ async function fetchEmailPage(
 
   const res = await fetch(`${HS_BASE}/marketing/v3/emails?${params}`, {
     headers: { Authorization: `Bearer ${getApiKey()}` },
-    next: { revalidate: 300 }, // 5-min server-side cache
+    next: { revalidate: 300 },
   });
 
   if (!res.ok) {
@@ -102,10 +102,12 @@ async function fetchEmailPage(
 }
 
 /**
- * Fetch statistics for a batch of email IDs via the v3 statistics/query endpoint.
+ * Fetch statistics for a batch of email IDs via POST /statistics/query.
  * Returns a Map of { emailId → counters }.
  */
-async function fetchStatsBatch(ids: string[]): Promise<Map<string, ReturnType<typeof extractCounters>>> {
+async function fetchStatsBatch(
+  ids: string[],
+): Promise<Map<string, ReturnType<typeof extractCounters>>> {
   const map = new Map<string, ReturnType<typeof extractCounters>>();
   if (ids.length === 0) return map;
 
@@ -120,7 +122,7 @@ async function fetchStatsBatch(ids: string[]): Promise<Map<string, ReturnType<ty
       next: { revalidate: 300 },
     });
 
-    if (!res.ok) return map; // silently return empty — list still renders without stats
+    if (!res.ok) return map;
 
     const data = await res.json();
     for (const item of (data.results ?? []) as Record<string, unknown>[]) {
@@ -129,7 +131,7 @@ async function fetchStatsBatch(ids: string[]): Promise<Map<string, ReturnType<ty
       }
     }
   } catch {
-    // Statistics unavailable — gracefully degrade to 0s
+    // Statistics unavailable — degrade gracefully
   }
 
   return map;
@@ -138,19 +140,19 @@ async function fetchStatsBatch(ids: string[]): Promise<Map<string, ReturnType<ty
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Fetch all sent marketing email campaigns, optionally filtered to a YYYY-MM month.
+ * Fetch all marketing email campaigns, optionally filtered to a YYYY-MM month.
  */
 export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary> {
   if (!process.env.HUBSPOT_API_KEY) {
     return {
-      campaigns:   [], connected: false, statsLoaded: false,
-      totalSends:  0, totalOpens: 0, totalClicks: 0,
+      campaigns: [], connected: false, statsLoaded: false,
+      totalSends: 0, totalOpens: 0, totalClicks: 0,
       avgOpenRate: 0, avgClickRate: 0,
     };
   }
 
   try {
-    // ── Step 1: fetch email list (fast, cached) ──────────────────────────────
+    // ── Step 1: fetch email list (cached pages) ──────────────────────────────
     let after: string | undefined;
     const allRows: HsEmailRow[] = [];
     do {
@@ -159,11 +161,12 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
       after = page.next;
     } while (after && allRows.length < 500);
 
-    // ── Step 2: fetch statistics batch (slower, also cached) ─────────────────
-    // Race against a 7-second fallback so a slow HubSpot response can't push
-    // the whole serverless function past Vercel's 10-second limit.
-    const emptyMap = new Map<string, ReturnType<typeof extractCounters>>();
-    const statsTimeout = new Promise<typeof emptyMap>(resolve =>
+    // ── Step 2: fetch statistics batch ───────────────────────────────────────
+    // Race against a 7-second timeout so a slow/uncached HubSpot response
+    // can't push the entire serverless function past Vercel's 10-second limit.
+    type StatsMap = Map<string, ReturnType<typeof extractCounters>>;
+    const emptyMap: StatsMap = new Map();
+    const statsTimeout = new Promise<StatsMap>(resolve =>
       setTimeout(() => resolve(emptyMap), 7000),
     );
     const statsMap = await Promise.race([
@@ -172,7 +175,7 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
     ]);
     const statsLoaded = statsMap.size > 0;
 
-    // ── Step 3: filter + sort + map ──────────────────────────────────────────
+    // ── Step 3: filter, sort, map ────────────────────────────────────────────
     const rows = month
       ? allRows.filter(r => r.publishDate?.startsWith(month))
       : allRows;
@@ -223,8 +226,8 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
   } catch (err) {
     console.error('[hubspot-email fetchEmailCampaigns]', err);
     return {
-      campaigns:   [], connected: false, statsLoaded: false,
-      totalSends:  0, totalOpens: 0, totalClicks: 0,
+      campaigns: [], connected: false, statsLoaded: false,
+      totalSends: 0, totalOpens: 0, totalClicks: 0,
       avgOpenRate: 0, avgClickRate: 0,
     };
   }
