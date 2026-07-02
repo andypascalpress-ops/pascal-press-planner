@@ -62,7 +62,7 @@ function buildMonthOptions(): string[] {
   const opts: string[] = [];
   const d = new Date();
   d.setDate(1);
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 48; i++) {
     opts.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
     d.setMonth(d.getMonth() - 1);
   }
@@ -101,7 +101,7 @@ function RateBar({ value, color }: { value: number; color: string }) {
 // ─── Main component ──────────────────────────────────────────────────────────
 
 export default function EmailTab() {
-  const [selectedMonth, setSelectedMonth] = useState<string>(defaultYearMonth());
+  const [selectedMonth, setSelectedMonth] = useState<string>('');
   const [showAll,       setShowAll]       = useState(false);
   const [data,          setData]          = useState<EmailData | null>(null);
   const [loading,       setLoading]       = useState(false);
@@ -111,7 +111,8 @@ export default function EmailTab() {
   useEffect(() => {
     setLoading(true);
     setData(null);
-    fetch(`/api/hubspot-email?month=${selectedMonth}`)
+    const url = selectedMonth ? `/api/hubspot-email?month=${selectedMonth}` : '/api/hubspot-email';
+    fetch(url)
       .then(r => r.json())
       .then((d: EmailData) => setData(d))
       .catch(() => setData(null))
@@ -137,6 +138,7 @@ export default function EmailTab() {
             onChange={e => setSelectedMonth(e.target.value)}
             className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
+            <option value="">All time</option>
             {monthOptions.map(ym => (
               <option key={ym} value={ym}>{monthLabel(ym)}</option>
             ))}
