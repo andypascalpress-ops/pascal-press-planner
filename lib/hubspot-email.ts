@@ -78,6 +78,7 @@ async function fetchEmailPage(
   const params = new URLSearchParams({
     limit:      '50',
     state:      'PUBLISHED',
+    sort:       '-publishDate',
     properties: 'name,subject,fromName,publishDate,primaryEmailCampaignId',
   });
   if (after) params.set('after', after);
