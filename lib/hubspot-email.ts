@@ -33,12 +33,12 @@ export interface EmailCampaignStats {
 }
 
 export interface EmailSummary {
-  campaigns:    EmailCampaignStats[];
-  connected:    boolean;
-  totalSends:   number;
-  totalOpens:   number;
-  totalClicks:  number;
-  avgOpenRate:  number;
+  campaigns:   EmailCampaignStats[];
+  connected:   boolean;
+  totalSends:  number;
+  totalOpens:  number;
+  totalClicks: number;
+  avgOpenRate: number;
   avgClickRate: number;
 }
 
@@ -51,24 +51,27 @@ function safeDiv(a: number, b: number): number {
 // ─── API calls ───────────────────────────────────────────────────────────────
 
 interface HsEmailRow {
-  id:          string;
-  name?:       string;
-  subject?:    string;
-  fromName?:   string;
+  id:         string;
+  name?:      string;
+  subject?:   string;
+  fromName?:  string;
   publishDate?: string;
-  counters?: {
-    sent?:         number;
-    delivered?:    number;
-    open?:         number;
-    click?:        number;
-    unsubscribed?: number;
+  sendOnPublish?: boolean;
+  statistics?: {
+    counters?: {
+      sent?:          number;
+      delivered?:     number;
+      open?:          number;
+      click?:         number;
+      unsubscribed?:  number;
+    };
   };
 }
 
 async function fetchEmailPage(after?: string): Promise<{ results: HsEmailRow[]; next?: string }> {
   const params = new URLSearchParams({
     limit: '50',
-    properties: 'name,subject,fromName,publishDate,sendOnPublish',
+    properties: 'name,subject,fromName,publishDate,sendOnPublish,statistics',
   });
   if (after) params.set('after', after);
 
@@ -77,6 +80,7 @@ async function fetchEmailPage(after?: string): Promise<{ results: HsEmailRow[]; 
       Authorization: `Bearer ${getApiKey()}`,
       'Content-Type': 'application/json',
     },
+    next: { revalidate: 300 }, // 5-min server-side cache
   });
 
   if (!res.ok) {
@@ -106,6 +110,7 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
   }
 
   try {
+    // Fetch all pages (usually 1–3 pages for most accounts)
     let after: string | undefined;
     const allRows: HsEmailRow[] = [];
     do {
@@ -114,29 +119,43 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
       after = page.next;
     } while (after && allRows.length < 500);
 
+    // Filter to requested month if provided
     const rows = month
-      ? allRows.filter(r => r.publishDate && r.publishDate.startsWith(month))
+      ? allRows.filter(r => {
+          const d = r.publishDate;
+          return d && d.startsWith(month);
+        })
       : allRows;
 
-    rows.sort((a, b) => (b.publishDate ?? '').localeCompare(a.publishDate ?? ''));
+    // Sort newest first
+    rows.sort((a, b) => {
+      const da = a.publishDate ?? '';
+      const db = b.publishDate ?? '';
+      return db.localeCompare(da);
+    });
 
     const campaigns: EmailCampaignStats[] = rows.map(r => {
-      const c      = r.counters ?? {};
-      const sends  = c.sent         ?? 0;
-      const deliv  = c.delivered    ?? sends;
-      const opens  = c.open         ?? 0;
-      const clicks = c.click        ?? 0;
+      const c      = r.statistics?.counters ?? {};
+      const sends  = c.sent       ?? 0;
+      const deliv  = c.delivered  ?? sends;
+      const opens  = c.open       ?? 0;
+      const clicks = c.click      ?? 0;
       const unsubs = c.unsubscribed ?? 0;
+
       return {
         id:           r.id,
         name:         r.name    ?? '(Untitled)',
         subject:      r.subject ?? '',
         fromName:     r.fromName ?? '',
         sentAt:       r.publishDate ?? null,
-        sends, delivered: deliv, opens, clicks, unsubscribes: unsubs,
-        openRate:    safeDiv(opens,  deliv),
-        clickRate:   safeDiv(clicks, deliv),
-        clickToOpen: safeDiv(clicks, opens),
+        sends,
+        delivered:    deliv,
+        opens,
+        clicks,
+        unsubscribes: unsubs,
+        openRate:     safeDiv(opens,  deliv),
+        clickRate:    safeDiv(clicks, deliv),
+        clickToOpen:  safeDiv(clicks, opens),
       };
     });
 
@@ -145,8 +164,11 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
     const totalClicks = campaigns.reduce((s, c) => s + c.clicks, 0);
 
     return {
-      campaigns, connected: true,
-      totalSends, totalOpens, totalClicks,
+      campaigns,
+      connected:    true,
+      totalSends,
+      totalOpens,
+      totalClicks,
       avgOpenRate:  safeDiv(totalOpens,  totalSends),
       avgClickRate: safeDiv(totalClicks, totalSends),
     };
