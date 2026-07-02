@@ -1,4 +1,4 @@
-'use client';
+—'use client';
 
 import { useState, useEffect, useCallback } from 'react';
 import { Campaign, FYFilter, ViewMode, SpendRecord } from '@/lib/types';
@@ -9,6 +9,7 @@ import ChatPanel from '@/components/ChatPanel';
 import CampaignModal from '@/components/CampaignModal';
 import FinanceTab from '@/components/FinanceTab';
 import SpendModal from '@/components/SpendModal';
+import EmailTab from '@/components/EmailTab';
 
 export default function Home() {
   // ── Campaign state ──
@@ -358,10 +359,20 @@ export default function Home() {
                 </svg>
                 Finance
               </button>
+              <button
+                onClick={() => setView('email')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${view === 'email' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="1" y="2.5" width="12" height="9" rx="1"/>
+                  <polyline points="1,2.5 7,8 13,2.5"/>
+                </svg>
+                Email
+              </button>
             </div>
 
-            {/* Add Campaign (hidden on Finance tab) */}
-            {view !== 'finance' && (
+            {/* Add Campaign (hidden on Finance and Email tabs) */}
+            {view !== 'finance' && view !== 'email' && (
               <button
                 onClick={() => openAddModal()}
                 disabled={saving}
@@ -375,7 +386,7 @@ export default function Home() {
             <button
               onClick={() => {
                 if (view === 'finance') { setSpendLoading(true); fetchSpendRecords(); }
-                else { setLoading(true); fetchCampaigns(); }
+                else if (view !== 'email') { setLoading(true); fetchCampaigns(); }
               }}
               title="Refresh data"
               className="p-1.5 text-gray-400 hover:text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
@@ -402,7 +413,7 @@ export default function Home() {
         </div>
 
         {/* ── Sub-stats bar (campaign views only) ── */}
-        {view !== 'finance' && !loading && !error && (
+        {view !== 'finance' && view !== 'email' && !loading && !error && (
           <div className="flex items-center gap-5 px-6 py-2 border-t border-gray-100 text-sm text-gray-600 flex-wrap">
             <span><strong className="text-gray-900">{filteredCampaigns.length}</strong> campaigns</span>
             <span><strong className="text-gray-900">{completeCount}</strong> complete</span>
@@ -511,6 +522,9 @@ export default function Home() {
               />
             )
           )}
+
+          {/* Email view */}
+          {view === 'email' && <EmailTab />}
         </div>
       </main>
 
