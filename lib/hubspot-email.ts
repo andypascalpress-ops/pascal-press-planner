@@ -167,7 +167,7 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
     type StatsMap = Map<string, ReturnType<typeof extractCounters>>;
     const emptyMap: StatsMap = new Map();
     const statsTimeout = new Promise<StatsMap>(resolve =>
-      setTimeout(() => resolve(emptyMap), 7000),
+      setTimeout(() => resolve(emptyMap), 20000),
     );
     const statsMap = await Promise.race([
       fetchStatsBatch(allRows.map(r => r.id)),
