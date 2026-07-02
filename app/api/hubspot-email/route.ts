@@ -1,5 +1,17 @@
+/**
+ * GET /api/hubspot-email?month=YYYY-MM
+ *
+ * Returns HubSpot marketing email campaign stats for the given month.
+ * Omit month to get all campaigns.
+ *
+ * Response: { month, campaigns, connected, statsLoaded, totalSends, totalOpens, totalClicks, avgOpenRate, avgClickRate }
+ */
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchEmailCampaigns }       from '@/lib/hubspot-email';
+
+// Edge Runtime: 25-second timeout instead of Hobby's 10-second limit,
+// giving HubSpot API calls enough headroom on a cold/uncached first request.
+export const runtime = 'edge';
 
 export async function GET(req: NextRequest) {
   const month = req.nextUrl.searchParams.get('month') ?? undefined;
