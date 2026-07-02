@@ -3,7 +3,8 @@
  * Requires: HUBSPOT_API_KEY (Private App token, pat-...)
  * Scopes needed: content, marketing-email (read)
  *
- * Docs: https://developers.hubspot.com/docs/api/marketing/marketing-emails
+ * Statistics: fetched via GET /email/public/v1/campaigns/{primaryEmailCampaignId}
+ * Confirmed working 2026-07: returns counters.sent/delivered/open/click/unsubscribed
  */
 
 const HS_BASE = 'https://api.hubapi.com';
@@ -17,19 +18,19 @@ function getApiKey(): string {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface EmailCampaignStats {
-  id:            string;
-  name:          string;
-  subject:       string;
-  fromName:      string;
-  sentAt:        string | null; // ISO date
-  sends:         number;
-  delivered:     number;
-  opens:         number;
-  clicks:        number;
-  unsubscribes:  number;
-  openRate:      number; // 0–1
-  clickRate:     number; // 0–1
-  clickToOpen:   number; // 0–1
+  id:           string;
+  name:         string;
+  subject:      string;
+  fromName:     string;
+  sentAt:       string | null;
+  sends:        number;
+  delivered:    number;
+  opens:        number;
+  clicks:       number;
+  unsubscribes: number;
+  openRate:     number; // 0–1
+  clickRate:    number; // 0–1
+  clickToOpen:  number; // 0–1
 }
 
 export interface EmailSummary {
@@ -40,7 +41,7 @@ export interface EmailSummary {
   totalClicks:  number;
   avgOpenRate:  number;
   avgClickRate: number;
-  statsLoaded:  boolean; // false if statistics endpoint failed/timed out
+  statsLoaded:  boolean;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -49,38 +50,35 @@ function safeDiv(a: number, b: number): number {
   return b > 0 ? Math.round((a / b) * 1000) / 1000 : 0;
 }
 
-// Normalise counters from various possible HubSpot response shapes
-function extractCounters(item: Record<string, unknown>) {
-  // Try: item.statistics.counters, item.stats.counters, item.counters
-  const stats    = (item.statistics ?? item.stats ?? {}) as Record<string, unknown>;
-  const counters = (stats.counters ?? stats) as Record<string, unknown>;
-  return {
-    sent:         (counters.sent         as number) ?? 0,
-    delivered:    (counters.delivered    as number) ?? 0,
-    open:         (counters.open         as number) ?? 0,
-    click:        (counters.click        as number) ?? 0,
-    unsubscribed: (counters.unsubscribed as number) ?? 0,
-  };
+// ─── API types ────────────────────────────────────────────────────────────────
+
+interface HsEmailRow {
+  id:                      string;
+  name?:                   string;
+  subject?:                string;
+  fromName?:               string;
+  publishDate?:            string;
+  primaryEmailCampaignId?: string;
+}
+
+interface V1Counters {
+  sent?:         number;
+  delivered?:    number;
+  open?:         number;
+  click?:        number;
+  unsubscribed?: number;
 }
 
 // ─── API calls ───────────────────────────────────────────────────────────────
 
-interface HsEmailRow {
-  id:             string;
-  name?:          string;
-  subject?:       string;
-  fromName?:      string;
-  publishDate?:   string;
-  sendOnPublish?: boolean;
-}
-
-/** Fetch one page of email list (no statistics — keeps each page call fast). */
+/** Fetch one page of PUBLISHED marketing emails. */
 async function fetchEmailPage(
   after?: string,
 ): Promise<{ results: HsEmailRow[]; next?: string }> {
   const params = new URLSearchParams({
     limit:      '50',
-    properties: 'name,subject,fromName,publishDate,sendOnPublish',
+    state:      'PUBLISHED',
+    properties: 'name,subject,fromName,publishDate,primaryEmailCampaignId',
   });
   if (after) params.set('after', after);
 
@@ -102,36 +100,50 @@ async function fetchEmailPage(
 }
 
 /**
- * Fetch statistics for a batch of email IDs via POST /statistics/query.
- * Returns a Map of { emailId → counters }.
+ * Fetch v1 campaign statistics for a single email.
+ * Uses GET /email/public/v1/campaigns/{primaryEmailCampaignId}
+ * Returns counters or null on failure.
  */
-async function fetchStatsBatch(
-  ids: string[],
-): Promise<Map<string, ReturnType<typeof extractCounters>>> {
-  const map = new Map<string, ReturnType<typeof extractCounters>>();
-  if (ids.length === 0) return map;
-
+async function fetchCampaignStats(campaignId: string): Promise<V1Counters | null> {
   try {
-    const res = await fetch(`${HS_BASE}/marketing/v3/emails/statistics/query`, {
-      method:  'POST',
-      headers: {
-        Authorization:  `Bearer ${getApiKey()}`,
-        'Content-Type': 'application/json',
+    const res = await fetch(
+      `${HS_BASE}/email/public/v1/campaigns/${campaignId}`,
+      {
+        headers: { Authorization: `Bearer ${getApiKey()}` },
+        next: { revalidate: 300 },
       },
-      body: JSON.stringify({ ids }),
-      next: { revalidate: 300 },
-    });
-
-    if (!res.ok) return map;
-
+    );
+    if (!res.ok) return null;
     const data = await res.json();
-    for (const item of (data.results ?? []) as Record<string, unknown>[]) {
-      if (typeof item.id === 'string') {
-        map.set(item.id, extractCounters(item));
-      }
-    }
+    return (data.counters as V1Counters) ?? null;
   } catch {
-    // Statistics unavailable — degrade gracefully
+    return null;
+  }
+}
+
+/**
+ * Batch-fetch stats for a set of email rows, 10 at a time in parallel.
+ * Returns a Map keyed by v3 email ID.
+ */
+async function fetchStatsForRows(
+  rows: HsEmailRow[],
+): Promise<Map<string, V1Counters>> {
+  const map = new Map<string, V1Counters>();
+  const BATCH = 10;
+
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const batch = rows.slice(i, i + BATCH);
+    const results = await Promise.all(
+      batch.map(async r => ({
+        id:       r.id,
+        counters: r.primaryEmailCampaignId
+          ? await fetchCampaignStats(r.primaryEmailCampaignId)
+          : null,
+      })),
+    );
+    for (const { id, counters } of results) {
+      if (counters) map.set(id, counters);
+    }
   }
 
   return map;
@@ -140,19 +152,20 @@ async function fetchStatsBatch(
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Fetch all marketing email campaigns, optionally filtered to a YYYY-MM month.
+ * Fetch all sent marketing email campaigns, optionally filtered to a YYYY-MM month.
+ * Statistics are fetched via the v1 email campaigns API (counters endpoint).
  */
 export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary> {
   if (!process.env.HUBSPOT_API_KEY) {
     return {
-      campaigns: [], connected: false, statsLoaded: false,
-      totalSends: 0, totalOpens: 0, totalClicks: 0,
+      campaigns:   [], connected: false, statsLoaded: false,
+      totalSends:  0, totalOpens: 0, totalClicks: 0,
       avgOpenRate: 0, avgClickRate: 0,
     };
   }
 
   try {
-    // ── Step 1: fetch email list (cached pages) ──────────────────────────────
+    // Step 1: fetch PUBLISHED email list (fast, cached)
     let after: string | undefined;
     const allRows: HsEmailRow[] = [];
     do {
@@ -161,36 +174,28 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
       after = page.next;
     } while (after && allRows.length < 500);
 
-    // ── Step 2: fetch statistics batch ───────────────────────────────────────
-    // Race against a 7-second timeout so a slow/uncached HubSpot response
-    // can't push the entire serverless function past Vercel's 10-second limit.
-    type StatsMap = Map<string, ReturnType<typeof extractCounters>>;
-    const emptyMap: StatsMap = new Map();
-    const statsTimeout = new Promise<StatsMap>(resolve =>
-      setTimeout(() => resolve(emptyMap), 20000),
-    );
-    const statsMap = await Promise.race([
-      fetchStatsBatch(allRows.map(r => r.id)),
-      statsTimeout,
-    ]);
-    const statsLoaded = statsMap.size > 0;
-
-    // ── Step 3: filter, sort, map ────────────────────────────────────────────
-    const rows = month
+    // Step 2: filter + sort
+    const filtered = month
       ? allRows.filter(r => r.publishDate?.startsWith(month))
       : allRows;
 
-    rows.sort((a, b) =>
+    filtered.sort((a, b) =>
       (b.publishDate ?? '').localeCompare(a.publishDate ?? ''),
     );
 
-    const campaigns: EmailCampaignStats[] = rows.map(r => {
-      const c      = statsMap.get(r.id) ?? { sent: 0, delivered: 0, open: 0, click: 0, unsubscribed: 0 };
-      const sends  = c.sent;
-      const deliv  = c.delivered || sends;
-      const opens  = c.open;
-      const clicks = c.click;
-      const unsubs = c.unsubscribed;
+    // Step 3: fetch stats — cap at 100 rows to stay within Edge Runtime timeout
+    const forStats = filtered.slice(0, 100);
+    const statsMap = await fetchStatsForRows(forStats);
+    const statsLoaded = statsMap.size > 0;
+
+    // Step 4: build campaign objects
+    const campaigns: EmailCampaignStats[] = filtered.map(r => {
+      const c      = statsMap.get(r.id) ?? {};
+      const sends  = c.sent        ?? 0;
+      const deliv  = c.delivered   ?? sends;
+      const opens  = c.open        ?? 0;
+      const clicks = c.click       ?? 0;
+      const unsubs = c.unsubscribed ?? 0;
 
       return {
         id:           r.id,
@@ -224,10 +229,10 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
       avgClickRate: safeDiv(totalClicks, totalSends),
     };
   } catch (err) {
-    console.error('[hubspot-email fetchEmailCampaigns]', err);
+    console.error('[hubspot-email]', err);
     return {
-      campaigns: [], connected: false, statsLoaded: false,
-      totalSends: 0, totalOpens: 0, totalClicks: 0,
+      campaigns:   [], connected: false, statsLoaded: false,
+      totalSends:  0, totalOpens: 0, totalClicks: 0,
       avgOpenRate: 0, avgClickRate: 0,
     };
   }
