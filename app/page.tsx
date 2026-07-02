@@ -441,7 +441,7 @@ export default function Home() {
         <div className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ${chatOpen ? 'mr-[420px]' : ''}`}>
 
           {/* Campaign views */}
-          {view !== 'finance' && (
+          {view !== 'finance' && view !== 'email' && (
             loading ? (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center">
