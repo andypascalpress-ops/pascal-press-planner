@@ -1,7 +1,7 @@
 /**
  * HubSpot Marketing Email API client
  * Requires: HUBSPOT_API_KEY (Private App token, pat-...)
- * Scopes needed: marketing-emails (read)
+ * Scopes needed: content, marketing-email (read)
  *
  * Docs: https://developers.hubspot.com/docs/api/marketing/marketing-emails
  */
@@ -33,13 +33,14 @@ export interface EmailCampaignStats {
 }
 
 export interface EmailSummary {
-  campaigns:   EmailCampaignStats[];
-  connected:   boolean;
-  totalSends:  number;
-  totalOpens:  number;
-  totalClicks: number;
-  avgOpenRate: number;
+  campaigns:    EmailCampaignStats[];
+  connected:    boolean;
+  totalSends:   number;
+  totalOpens:   number;
+  totalClicks:  number;
+  avgOpenRate:  number;
   avgClickRate: number;
+  statsLoaded:  boolean; // false if statistics endpoint failed
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -48,44 +49,49 @@ function safeDiv(a: number, b: number): number {
   return b > 0 ? Math.round((a / b) * 1000) / 1000 : 0;
 }
 
-// ─── API calls ───────────────────────────────────────────────────────────────
-
-interface HsEmailRow {
-  id:         string;
-  name?:      string;
-  subject?:   string;
-  fromName?:  string;
-  publishDate?: string;
-  sendOnPublish?: boolean;
-  statistics?: {
-    counters?: {
-      sent?:          number;
-      delivered?:     number;
-      open?:          number;
-      click?:         number;
-      unsubscribed?:  number;
-    };
+// Normalise counters from various possible HubSpot response shapes
+function extractCounters(item: Record<string, unknown>) {
+  // Try: item.statistics.counters, item.stats.counters, item.counters
+  const stats  = (item.statistics ?? item.stats ?? {}) as Record<string, unknown>;
+  const counters = (stats.counters ?? stats) as Record<string, unknown>;
+  return {
+    sent:          (counters.sent          as number) ?? 0,
+    delivered:     (counters.delivered     as number) ?? 0,
+    open:          (counters.open          as number) ?? 0,
+    click:         (counters.click         as number) ?? 0,
+    unsubscribed:  (counters.unsubscribed  as number) ?? 0,
   };
 }
 
-async function fetchEmailPage(after?: string): Promise<{ results: HsEmailRow[]; next?: string }> {
+// ─── API calls ───────────────────────────────────────────────────────────────
+
+interface HsEmailRow {
+  id:             string;
+  name?:          string;
+  subject?:       string;
+  fromName?:      string;
+  publishDate?:   string;
+  sendOnPublish?: boolean;
+}
+
+/** Fetch one page of email list (no statistics — keeps the call fast). */
+async function fetchEmailPage(
+  after?: string,
+): Promise<{ results: HsEmailRow[]; next?: string }> {
   const params = new URLSearchParams({
-    limit: '50',
-    properties: 'name,subject,fromName,publishDate,sendOnPublish,statistics',
+    limit:      '50',
+    properties: 'name,subject,fromName,publishDate,sendOnPublish',
   });
   if (after) params.set('after', after);
 
   const res = await fetch(`${HS_BASE}/marketing/v3/emails?${params}`, {
-    headers: {
-      Authorization: `Bearer ${getApiKey()}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { Authorization: `Bearer ${getApiKey()}` },
     next: { revalidate: 300 }, // 5-min server-side cache
   });
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`HubSpot API error (${res.status}): ${err.slice(0, 300)}`);
+    throw new Error(`HubSpot list error (${res.status}): ${err.slice(0, 300)}`);
   }
 
   const data = await res.json();
@@ -93,6 +99,40 @@ async function fetchEmailPage(after?: string): Promise<{ results: HsEmailRow[]; 
     results: data.results ?? [],
     next:    data.paging?.next?.after,
   };
+}
+
+/**
+ * Fetch statistics for a batch of email IDs via the v3 statistics/query endpoint.
+ * Returns a Map of { emailId → counters }.
+ */
+async function fetchStatsBatch(ids: string[]): Promise<Map<string, ReturnType<typeof extractCounters>>> {
+  const map = new Map<string, ReturnType<typeof extractCounters>>();
+  if (ids.length === 0) return map;
+
+  try {
+    const res = await fetch(`${HS_BASE}/marketing/v3/emails/statistics/query`, {
+      method:  'POST',
+      headers: {
+        Authorization:  `Bearer ${getApiKey()}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ids }),
+      next: { revalidate: 300 },
+    });
+
+    if (!res.ok) return map; // silently return empty — list still renders without stats
+
+    const data = await res.json();
+    for (const item of (data.results ?? []) as Record<string, unknown>[]) {
+      if (typeof item.id === 'string') {
+        map.set(item.id, extractCounters(item));
+      }
+    }
+  } catch {
+    // Statistics unavailable — gracefully degrade to 0s
+  }
+
+  return map;
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -103,14 +143,14 @@ async function fetchEmailPage(after?: string): Promise<{ results: HsEmailRow[]; 
 export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary> {
   if (!process.env.HUBSPOT_API_KEY) {
     return {
-      campaigns: [], connected: false,
-      totalSends: 0, totalOpens: 0, totalClicks: 0,
+      campaigns:   [], connected: false, statsLoaded: false,
+      totalSends:  0, totalOpens: 0, totalClicks: 0,
       avgOpenRate: 0, avgClickRate: 0,
     };
   }
 
   try {
-    // Fetch all pages (usually 1–3 pages for most accounts)
+    // ── Step 1: fetch email list (fast, cached) ──────────────────────────────
     let after: string | undefined;
     const allRows: HsEmailRow[] = [];
     do {
@@ -119,33 +159,31 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
       after = page.next;
     } while (after && allRows.length < 500);
 
-    // Filter to requested month if provided
+    // ── Step 2: fetch statistics batch (slower, also cached) ─────────────────
+    const statsMap = await fetchStatsBatch(allRows.map(r => r.id));
+    const statsLoaded = statsMap.size > 0;
+
+    // ── Step 3: filter + sort + map ──────────────────────────────────────────
     const rows = month
-      ? allRows.filter(r => {
-          const d = r.publishDate;
-          return d && d.startsWith(month);
-        })
+      ? allRows.filter(r => r.publishDate?.startsWith(month))
       : allRows;
 
-    // Sort newest first
-    rows.sort((a, b) => {
-      const da = a.publishDate ?? '';
-      const db = b.publishDate ?? '';
-      return db.localeCompare(da);
-    });
+    rows.sort((a, b) =>
+      (b.publishDate ?? '').localeCompare(a.publishDate ?? ''),
+    );
 
     const campaigns: EmailCampaignStats[] = rows.map(r => {
-      const c      = r.statistics?.counters ?? {};
-      const sends  = c.sent       ?? 0;
-      const deliv  = c.delivered  ?? sends;
-      const opens  = c.open       ?? 0;
-      const clicks = c.click      ?? 0;
-      const unsubs = c.unsubscribed ?? 0;
+      const c      = statsMap.get(r.id) ?? { sent: 0, delivered: 0, open: 0, click: 0, unsubscribed: 0 };
+      const sends  = c.sent;
+      const deliv  = c.delivered || sends;
+      const opens  = c.open;
+      const clicks = c.click;
+      const unsubs = c.unsubscribed;
 
       return {
         id:           r.id,
-        name:         r.name    ?? '(Untitled)',
-        subject:      r.subject ?? '',
+        name:         r.name     ?? '(Untitled)',
+        subject:      r.subject  ?? '',
         fromName:     r.fromName ?? '',
         sentAt:       r.publishDate ?? null,
         sends,
@@ -166,6 +204,7 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
     return {
       campaigns,
       connected:    true,
+      statsLoaded,
       totalSends,
       totalOpens,
       totalClicks,
@@ -175,8 +214,8 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
   } catch (err) {
     console.error('[hubspot-email fetchEmailCampaigns]', err);
     return {
-      campaigns: [], connected: false,
-      totalSends: 0, totalOpens: 0, totalClicks: 0,
+      campaigns:   [], connected: false, statsLoaded: false,
+      totalSends:  0, totalOpens: 0, totalClicks: 0,
       avgOpenRate: 0, avgClickRate: 0,
     };
   }
