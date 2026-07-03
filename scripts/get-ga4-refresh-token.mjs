@@ -1,18 +1,15 @@
 /**
  * One-time helper script to generate a Google OAuth2 refresh token
- * with Google Analytics read-only scope.
- *
- * Uses the same OAuth2 Desktop app client as Google Ads.
+ * for use as GA4_REFRESH_TOKEN in Vercel.
  *
  * Prerequisites:
- *   1. The same Google Cloud project / OAuth2 Desktop client used for Google Ads
+ *   1. The same Google Cloud OAuth2 "Desktop app" credential used for Google Ads
  *   2. Node.js 18+
  *
  * Usage:
  *   GOOGLE_CLIENT_ID=your-id GOOGLE_CLIENT_SECRET=your-secret node scripts/get-ga4-refresh-token.mjs
  *
- * Then copy the printed refresh_token into Vercel as GOOGLE_ANALYTICS_REFRESH_TOKEN.
- * (Keep your existing GOOGLE_ADS_REFRESH_TOKEN — it is separate and still needed.)
+ * Then copy the printed refresh_token into Vercel as GA4_REFRESH_TOKEN.
  */
 
 import http from 'http';
@@ -34,15 +31,12 @@ authUrl.searchParams.set('redirect_uri',  REDIRECT_URI);
 authUrl.searchParams.set('response_type', 'code');
 authUrl.searchParams.set('scope',         SCOPES);
 authUrl.searchParams.set('access_type',   'offline');
-authUrl.searchParams.set('prompt',        'consent'); // forces refresh_token to be returned
+authUrl.searchParams.set('prompt',        'consent');
 
-console.log('\n─── Google Analytics 4 OAuth2 Refresh Token Generator ───\n');
-console.log('Property: 153293282 (Pascal Press)');
-console.log('Scope:    analytics.readonly\n');
-console.log('1. Open this URL in your browser.');
-console.log('   Use the Google account that owns GA4 property 153293282:\n');
-console.log(authUrl.toString());
-console.log('\n2. Approve access, then wait for the redirect…\n');
+console.log('\n─── GA4 OAuth2 Refresh Token Generator ───\n');
+console.log('1. Open this URL in your browser (use the Google account that owns the Analytics property):');
+console.log('\n' + authUrl.toString() + '\n');
+console.log('2. Approve access, then wait for the redirect…\n');
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost:8080');
@@ -78,10 +72,8 @@ const server = http.createServer(async (req, res) => {
 
   console.log('─── SUCCESS ───\n');
   console.log('Add this to Vercel environment variables:\n');
-  console.log(`GOOGLE_ANALYTICS_REFRESH_TOKEN=${tokens.refresh_token}\n`);
-  console.log('Keep your existing GOOGLE_ADS_REFRESH_TOKEN — it is a separate token.\n');
-  console.log('(Access token for reference — not needed in Vercel):');
-  console.log(tokens.access_token?.slice(0, 20) + '…');
+  console.log(`GA4_REFRESH_TOKEN=${tokens.refresh_token}\n`);
+  console.log('(Also add GOOGLE_ANALYTICS_PROPERTY_ID — the numeric ID from GA4 Admin → Property Settings)');
 });
 
 server.listen(8080, () => {

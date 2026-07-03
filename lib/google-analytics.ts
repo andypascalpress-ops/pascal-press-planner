@@ -1,273 +1,174 @@
 /**
  * Google Analytics 4 Data API client
- * Property: 354651290 (Pascal Press — pascalpress.com.au)
- *
- * Auth priority:
- *   1. GOOGLE_ANALYTICS_SERVICE_ACCOUNT_JSON  — base64-encoded service account JSON key
- *      (add the service account email as Viewer on the GA4 property)
- *   2. GOOGLE_ANALYTICS_CLIENT_ID/SECRET + GOOGLE_ANALYTICS_REFRESH_TOKEN  — OAuth user token
- *   3. Falls back to GOOGLE_ADS_CLIENT_ID/SECRET + GOOGLE_ADS_REFRESH_TOKEN
- *
- * Channel attribution uses GA4's sessionMedium dimension:
- *   medium = "cpc"     → all Google Ads (Search, Shopping, Display, PMax, etc.)
- *   medium = "organic" → organic search traffic
+ * Requires env vars:
+ *   GOOGLE_ANALYTICS_PROPERTY_ID  — numeric property ID (e.g. "123456789"), NOT "G-XXXXXXXX"
+ *   GA4_REFRESH_TOKEN             — OAuth refresh token with analytics.readonly scope
+ *   GOOGLE_ADS_CLIENT_ID          — reused from Google Ads setup
+ *   GOOGLE_ADS_CLIENT_SECRET      — reused from Google Ads setup
  */
 
-import crypto from 'crypto';
+const GA4_BASE = 'https://analyticsdata.googleapis.com/v1beta';
+const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
-const GA4_PROPERTY_ID = '354651290'; // Pascal Press (pascalpress.com.au)
-const GA4_BASE        = `https://analyticsdata.googleapis.com/v1beta/properties/${GA4_PROPERTY_ID}`;
-const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+// ─── Auth ─────────────────────────────────────────────────────────────────────
 
-// ---------------------------------------------------------------------------
-// Service account JWT auth (preferred — no user OAuth needed)
-// ---------------------------------------------------------------------------
-
-function base64urlEncode(input: string | Buffer): string {
-  const buf = typeof input === 'string' ? Buffer.from(input) : input;
-  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-
-async function getServiceAccountAccessToken(): Promise<string> {
-  const raw = Buffer.from(
-    process.env.GOOGLE_ANALYTICS_SERVICE_ACCOUNT_JSON!,
-    'base64',
-  ).toString('utf8');
-  const { client_email, private_key } = JSON.parse(raw) as {
-    client_email: string;
-    private_key:  string;
-  };
-
-  const now     = Math.floor(Date.now() / 1000);
-  const header  = base64urlEncode(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-  const payload = base64urlEncode(
-    JSON.stringify({
-      iss:   client_email,
-      scope: 'https://www.googleapis.com/auth/analytics.readonly',
-      aud:   OAUTH_TOKEN_URL,
-      iat:   now,
-      exp:   now + 3600,
-    }),
-  );
-
-  const signer = crypto.createSign('RSA-SHA256');
-  signer.update(`${header}.${payload}`);
-  const signature = base64urlEncode(signer.sign(private_key));
-
-  const jwt = `${header}.${payload}.${signature}`;
-
-  const res = await fetch(OAUTH_TOKEN_URL, {
-    method:  'POST',
+async function getAccessToken(): Promise<string> {
+  const res = await fetch(TOKEN_URL, {
+    method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion:  jwt,
-    }),
-  });
-
-  const data = await res.json();
-  if (!data.access_token) {
-    throw new Error(
-      `GA4 service account auth failed: ${data.error_description ?? data.error ?? JSON.stringify(data)}`,
-    );
-  }
-  return data.access_token as string;
-}
-
-// ---------------------------------------------------------------------------
-// OAuth refresh token auth (fallback)
-// ---------------------------------------------------------------------------
-
-async function getOAuthAccessToken(): Promise<string> {
-  const clientId     = process.env.GOOGLE_ANALYTICS_CLIENT_ID
-                    ?? process.env.GOOGLE_ADS_CLIENT_ID
-                    ?? '';
-  const clientSecret = process.env.GOOGLE_ANALYTICS_CLIENT_SECRET
-                    ?? process.env.GOOGLE_ADS_CLIENT_SECRET
-                    ?? '';
-  const refreshToken = process.env.GOOGLE_ANALYTICS_REFRESH_TOKEN
-                    ?? process.env.GOOGLE_ADS_REFRESH_TOKEN
-                    ?? '';
-
-  if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error(
-      'Missing env vars for GA4 OAuth: need CLIENT_ID, CLIENT_SECRET, and REFRESH_TOKEN',
-    );
-  }
-
-  const res = await fetch(OAUTH_TOKEN_URL, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id:     clientId,
-      client_secret: clientSecret,
-      refresh_token: refreshToken,
+      client_id:     process.env.GOOGLE_ADS_CLIENT_ID     ?? '',
+      client_secret: process.env.GOOGLE_ADS_CLIENT_SECRET ?? '',
+      refresh_token: process.env.GA4_REFRESH_TOKEN        ?? '',
       grant_type:    'refresh_token',
     }),
   });
-
-  const data = await res.json();
-  if (!data.access_token) {
-    throw new Error(
-      `GA4 OAuth failed: ${data.error_description ?? data.error ?? JSON.stringify(data)}`,
-    );
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`GA4 token error (${res.status}): ${err.slice(0, 200)}`);
   }
+  const data = await res.json();
   return data.access_token as string;
 }
 
-// ---------------------------------------------------------------------------
-// Unified access token getter
-// ---------------------------------------------------------------------------
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-async function getAccessToken(): Promise<string> {
-  if (process.env.GOOGLE_ANALYTICS_SERVICE_ACCOUNT_JSON) {
-    return getServiceAccountAccessToken();
-  }
-  return getOAuthAccessToken();
+export interface CampaignRevenue {
+  campaignName: string;
+  revenue:      number;
+  transactions: number;
 }
 
-// ---------------------------------------------------------------------------
-// GA4 report runner
-// ---------------------------------------------------------------------------
+export interface EmailRevenueData {
+  byCampaign:   CampaignRevenue[];
+  totalRevenue: number;
+  totalTx:      number;
+  connected:    boolean;
+}
 
-async function runReport(accessToken: string, body: object): Promise<any> {
-  const res = await fetch(`${GA4_BASE}:runReport`, {
-    method:  'POST',
-    headers: {
-      Authorization:  `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
+// ─── API call ─────────────────────────────────────────────────────────────────
+
+/**
+ * Run a GA4 report for email-attributed revenue.
+ * startDate / endDate: GA4 date strings, e.g. "2023-01-01" or "today"
+ */
+export async function fetchEmailRevenue(
+  startDate = '2022-01-01',
+  endDate   = 'today',
+): Promise<EmailRevenueData> {
+  const propertyId = process.env.GOOGLE_ANALYTICS_PROPERTY_ID;
+  if (!propertyId || !process.env.GA4_REFRESH_TOKEN) {
+    return { byCampaign: [], totalRevenue: 0, totalTx: 0, connected: false };
+  }
+
+  try {
+    const token = await getAccessToken();
+
+    // ── Per-campaign revenue (medium = email) ───────────────────────────────
+    const campaignReport = await runReport(token, propertyId, {
+      dimensions: [{ name: 'sessionCampaignName' }],
+      metrics:    [{ name: 'purchaseRevenue' }, { name: 'transactions' }],
+      dateRanges: [{ startDate, endDate }],
+      dimensionFilter: {
+        filter: {
+          fieldName:    'sessionMedium',
+          stringFilter: { matchType: 'EXACT', value: 'email' },
+        },
+      },
+      limit: 500,
+    });
+
+    const byCampaign: CampaignRevenue[] = (campaignReport.rows ?? []).map(
+      (row: GA4Row) => ({
+        campaignName: row.dimensionValues[0]?.value ?? '',
+        revenue:      parseFloat(row.metricValues[0]?.value ?? '0'),
+        transactions: parseInt(row.metricValues[1]?.value  ?? '0', 10),
+      }),
+    );
+
+    // ── Total email channel revenue ─────────────────────────────────────────
+    const totalReport = await runReport(token, propertyId, {
+      dimensions: [{ name: 'sessionMedium' }],
+      metrics:    [{ name: 'purchaseRevenue' }, { name: 'transactions' }],
+      dateRanges: [{ startDate, endDate }],
+      dimensionFilter: {
+        filter: {
+          fieldName:    'sessionMedium',
+          stringFilter: { matchType: 'EXACT', value: 'email' },
+        },
+      },
+      limit: 1,
+    });
+
+    const totRow       = totalReport.rows?.[0];
+    const totalRevenue = totRow ? parseFloat(totRow.metricValues[0]?.value ?? '0') : 0;
+    const totalTx      = totRow ? parseInt(totRow.metricValues[1]?.value   ?? '0', 10) : 0;
+
+    return { byCampaign, totalRevenue, totalTx, connected: true };
+  } catch (err) {
+    console.error('[google-analytics]', err);
+    return { byCampaign: [], totalRevenue: 0, totalTx: 0, connected: false };
+  }
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+interface GA4Row {
+  dimensionValues: { value: string }[];
+  metricValues:    { value: string }[];
+}
+
+interface ReportRequest {
+  dimensions:       { name: string }[];
+  metrics:          { name: string }[];
+  dateRanges:       { startDate: string; endDate: string }[];
+  dimensionFilter?: unknown;
+  limit?:           number;
+}
+
+async function runReport(
+  token:      string,
+  propertyId: string,
+  body:       ReportRequest,
+): Promise<{ rows?: GA4Row[] }> {
+  const res = await fetch(
+    `${GA4_BASE}/properties/${propertyId}:runReport`,
+    {
+      method:  'POST',
+      headers: {
+        Authorization:  `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      next: { revalidate: 3600 }, // cache GA4 data for 1 hour
     },
-    body: JSON.stringify(body),
-  });
-
+  );
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`GA4 API error (${res.status}): ${err.slice(0, 500)}`);
+    throw new Error(`GA4 report error (${res.status}): ${err.slice(0, 300)}`);
   }
   return res.json();
 }
 
-// ---------------------------------------------------------------------------
-// Public interfaces
-// ---------------------------------------------------------------------------
-
-export interface GA4ChannelRevenue {
-  /** Revenue attributed to Paid Search (Google Ads) sessions */
-  paidSearchRevenue:    number;
-  /** Revenue attributed to Organic Search sessions */
-  organicSearchRevenue: number;
-  connected: boolean;
-}
-
-export interface GA4MonthlyRevenue {
-  month: string; // 'YYYY-MM'
-  pp: {
-    paid:    number; // Paid Search revenue
-    organic: number; // Organic Search revenue
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Exported functions
-// ---------------------------------------------------------------------------
-
 /**
- * Fetch PP revenue by channel (Paid Search vs Organic Search) for a single month.
+ * Match a HubSpot email name to a GA4 campaign name.
+ * Normalises both to lowercase with spaces→underscores for comparison.
  */
-export async function fetchGA4Revenue(month: string): Promise<GA4ChannelRevenue> {
-  const hasServiceAccount = !!process.env.GOOGLE_ANALYTICS_SERVICE_ACCOUNT_JSON;
-  const hasOAuth =
-    !!(process.env.GOOGLE_ANALYTICS_REFRESH_TOKEN ?? process.env.GOOGLE_ADS_REFRESH_TOKEN);
+export function matchRevenue(
+  emailName:  string,
+  byCampaign: CampaignRevenue[],
+): CampaignRevenue | null {
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '_');
+  const target = norm(emailName);
 
-  if (!hasServiceAccount && !hasOAuth) {
-    return { paidSearchRevenue: 0, organicSearchRevenue: 0, connected: false };
-  }
+  // 1. Exact match after normalisation
+  const exact = byCampaign.find(c => norm(c.campaignName) === target);
+  if (exact) return exact;
 
-  try {
-    const accessToken = await getAccessToken();
-    const [year, mon] = month.split('-');
-    const lastDay     = new Date(parseInt(year!), parseInt(mon!), 0).getDate();
-    const startDate   = `${year}-${mon}-01`;
-    const endDate     = `${year}-${mon}-${String(lastDay).padStart(2, '0')}`;
-
-    const data = await runReport(accessToken, {
-      dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: 'sessionMedium' }],
-      metrics:    [{ name: 'totalRevenue' }],
-    });
-
-    let paidSearchRevenue    = 0;
-    let organicSearchRevenue = 0;
-
-    for (const row of data.rows ?? []) {
-      const medium = (row.dimensionValues?.[0]?.value ?? '').toLowerCase() as string;
-      const rev    = parseFloat(row.metricValues?.[0]?.value ?? '0');
-      if (medium === 'cpc')     paidSearchRevenue    += rev;
-      if (medium === 'organic') organicSearchRevenue += rev;
-    }
-
-    return {
-      paidSearchRevenue:    Math.round(paidSearchRevenue    * 100) / 100,
-      organicSearchRevenue: Math.round(organicSearchRevenue * 100) / 100,
-      connected: true,
-    };
-  } catch (err) {
-    console.error('[google-analytics fetchGA4Revenue]', err);
-    return { paidSearchRevenue: 0, organicSearchRevenue: 0, connected: false };
-  }
-}
-
-/**
- * Fetch PP revenue by channel for a date range, aggregated by calendar month.
- */
-export async function fetchGA4RevenueHistory(
-  startDate: string, // 'YYYY-MM-DD'
-  endDate:   string, // 'YYYY-MM-DD'
-): Promise<GA4MonthlyRevenue[]> {
-  const hasServiceAccount = !!process.env.GOOGLE_ANALYTICS_SERVICE_ACCOUNT_JSON;
-  const hasOAuth =
-    !!(process.env.GOOGLE_ANALYTICS_REFRESH_TOKEN ?? process.env.GOOGLE_ADS_REFRESH_TOKEN);
-
-  if (!hasServiceAccount && !hasOAuth) return [];
-
-  try {
-    const accessToken = await getAccessToken();
-
-    const data = await runReport(accessToken, {
-      dateRanges: [{ startDate, endDate }],
-      dimensions: [
-        { name: 'yearMonth' },
-        { name: 'sessionMedium' },
-      ],
-      metrics: [{ name: 'totalRevenue' }],
-    });
-
-    const byMonth: Record<string, { paid: number; organic: number }> = {};
-
-    for (const row of data.rows ?? []) {
-      const yearMonth = (row.dimensionValues?.[0]?.value ?? '') as string; // "202601"
-      const medium    = (row.dimensionValues?.[1]?.value ?? '').toLowerCase() as string;
-      const rev       = parseFloat(row.metricValues?.[0]?.value ?? '0');
-
-      if (yearMonth.length !== 6) continue;
-      const ym = `${yearMonth.slice(0, 4)}-${yearMonth.slice(4, 6)}`; // "2026-01"
-
-      if (!byMonth[ym]) byMonth[ym] = { paid: 0, organic: 0 };
-      if (medium === 'cpc')     byMonth[ym]!.paid    += rev;
-      if (medium === 'organic') byMonth[ym]!.organic += rev;
-    }
-
-    return Object.entries(byMonth)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([month, { paid, organic }]) => ({
-        month,
-        pp: {
-          paid:    Math.round(paid    * 100) / 100,
-          organic: Math.round(organic * 100) / 100,
-        },
-      }));
-  } catch (err) {
-    console.error('[google-analytics fetchGA4RevenueHistory]', err);
-    return [];
-  }
+  // 2. Partial: GA4 name contains email name or vice versa
+  const partial = byCampaign.find(c => {
+    const n = norm(c.campaignName);
+    return n.includes(target) || target.includes(n);
+  });
+  return partial ?? null;
 }

@@ -31,6 +31,19 @@ interface EmailData {
   avgClickRate: number;
 }
 
+interface CampaignRevenue {
+  campaignName: string;
+  revenue:      number;
+  transactions: number;
+}
+
+interface RevenueData {
+  byCampaign:   CampaignRevenue[];
+  totalRevenue: number;
+  totalTx:      number;
+  connected:    boolean;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const MONTH_NAMES = [
@@ -46,14 +59,13 @@ function fmt(n: number): string {
   return n.toLocaleString('en-AU');
 }
 
-function defaultYearMonth(): string {
-  const d = new Date();
-  d.setDate(1);
-  d.setMonth(d.getMonth() - 1);
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+function fmtAUD(n: number): string {
+  if (n === 0) return '—';
+  return '$' + n.toLocaleString('en-AU', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
 function monthLabel(ym: string): string {
+  if (!ym) return 'All time';
   const [y, m] = ym.split('-');
   return (MONTH_NAMES[parseInt(m ?? '1') - 1] ?? '') + ' ' + y;
 }
@@ -73,6 +85,37 @@ function sentDate(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
   return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/** Normalise a campaign name for fuzzy matching: lowercase, spaces → underscores */
+function normName(s: string): string {
+  return s.toLowerCase().replace(/[\s-]+/g, '_').replace(/[^a-z0-9_]/g, '');
+}
+
+/** Build a revenue lookup map from GA4 data (keyed by normalised campaign name) */
+function buildRevenueMap(byCampaign: CampaignRevenue[]): Map<string, CampaignRevenue> {
+  const map = new Map<string, CampaignRevenue>();
+  for (const c of byCampaign) {
+    map.set(normName(c.campaignName), c);
+  }
+  return map;
+}
+
+/** Look up revenue for a HubSpot email name against the GA4 map */
+function lookupRevenue(
+  emailName:  string,
+  revenueMap: Map<string, CampaignRevenue>,
+): CampaignRevenue | null {
+  const target = normName(emailName);
+
+  // 1. Exact match
+  if (revenueMap.has(target)) return revenueMap.get(target)!;
+
+  // 2. Partial match
+  for (const [key, val] of revenueMap) {
+    if (key.includes(target) || target.includes(key)) return val;
+  }
+  return null;
 }
 
 // ─── Stat card ───────────────────────────────────────────────────────────────
@@ -104,14 +147,18 @@ export default function EmailTab() {
   const [selectedMonth, setSelectedMonth] = useState<string>('');
   const [showAll,       setShowAll]       = useState(false);
   const [data,          setData]          = useState<EmailData | null>(null);
+  const [revenueData,   setRevenueData]   = useState<RevenueData | null>(null);
   const [loading,       setLoading]       = useState(false);
 
   const monthOptions = buildMonthOptions();
 
+  // Fetch HubSpot email data
   useEffect(() => {
     setLoading(true);
     setData(null);
-    const url = selectedMonth ? `/api/hubspot-email?month=${selectedMonth}` : '/api/hubspot-email';
+    const url = selectedMonth
+      ? `/api/hubspot-email?month=${selectedMonth}`
+      : '/api/hubspot-email';
     fetch(url)
       .then(r => r.json())
       .then((d: EmailData) => setData(d))
@@ -119,8 +166,26 @@ export default function EmailTab() {
       .finally(() => setLoading(false));
   }, [selectedMonth]);
 
-  const campaigns = data?.campaigns ?? [];
-  const visible   = showAll ? campaigns : campaigns.slice(0, 10);
+  // Fetch GA4 revenue data — scoped to the selected month if set
+  useEffect(() => {
+    let start = '2022-01-01';
+    let end   = 'today';
+    if (selectedMonth) {
+      const [y, m] = selectedMonth.split('-').map(Number);
+      const lastDay = new Date(y, m, 0).getDate();
+      start = `${selectedMonth}-01`;
+      end   = `${selectedMonth}-${String(lastDay).padStart(2, '0')}`;
+    }
+    fetch(`/api/ga-email-revenue?start=${start}&end=${end}`)
+      .then(r => r.json())
+      .then((d: RevenueData) => setRevenueData(d))
+      .catch(() => setRevenueData(null));
+  }, [selectedMonth]);
+
+  const campaigns  = data?.campaigns ?? [];
+  const visible    = showAll ? campaigns : campaigns.slice(0, 10);
+  const revenueMap = buildRevenueMap(revenueData?.byCampaign ?? []);
+  const gaConnected = revenueData?.connected ?? false;
 
   return (
     <div className="flex-1 overflow-y-auto bg-gray-50 px-6 py-6">
@@ -129,7 +194,7 @@ export default function EmailTab() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Email Marketing</h2>
-          <p className="text-sm text-gray-500">HubSpot campaign performance</p>
+          <p className="text-sm text-gray-500">HubSpot performance · GA4 revenue</p>
         </div>
         <div className="flex items-center gap-3">
           <label className="text-sm text-gray-600">Month</label>
@@ -166,11 +231,11 @@ export default function EmailTab() {
       {/* -- Summary cards -- */}
       {!loading && data?.connected && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
             <StatCard
               label="Sends"
               value={fmt(data.totalSends)}
-              sub={`${monthLabel(selectedMonth)}`}
+              sub={monthLabel(selectedMonth)}
             />
             <StatCard
               label="Opens"
@@ -183,11 +248,28 @@ export default function EmailTab() {
               sub={pct(data.avgClickRate) + ' click rate'}
             />
             <StatCard
+              label="Revenue (GA4)"
+              value={gaConnected ? fmtAUD(revenueData?.totalRevenue ?? 0) : '—'}
+              sub={gaConnected ? `${fmt(revenueData?.totalTx ?? 0)} transactions` : 'GA4 not connected'}
+            />
+            <StatCard
               label="Campaigns"
               value={String(campaigns.length)}
-              sub="sent this month"
+              sub="in period"
             />
           </div>
+
+          {/* -- GA4 not connected notice -- */}
+          {!gaConnected && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl px-5 py-3 mb-5 flex items-center gap-3">
+              <span className="text-blue-500 text-lg">ℹ</span>
+              <div className="text-sm text-blue-700">
+                <span className="font-medium">GA4 revenue not connected.</span> Add{' '}
+                <code className="bg-blue-100 px-1 rounded">GOOGLE_ANALYTICS_PROPERTY_ID</code> and{' '}
+                <code className="bg-blue-100 px-1 rounded">GA4_REFRESH_TOKEN</code> to Vercel to show per-campaign revenue.
+              </div>
+            </div>
+          )}
 
           {/* -- Campaign table -- */}
           {campaigns.length === 0 ? (
@@ -213,46 +295,57 @@ export default function EmailTab() {
                       <th className="text-right px-4 py-2.5 font-medium">Opens</th>
                       <th className="px-4 py-2.5 font-medium min-w-[130px]">Open rate</th>
                       <th className="text-right px-4 py-2.5 font-medium">Clicks</th>
-                      <th className="px-4 py-2.5 font-medium min-w-[130px]">Click rate</th>
+                      <th className="px-4 py-2.5 font-medium min-w-[120px]">Click rate</th>
+                      {gaConnected && (
+                        <th className="text-right px-4 py-2.5 font-medium">Revenue</th>
+                      )}
                       <th className="text-right px-5 py-2.5 font-medium">Unsubs</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {visible.map(c => (
-                      <tr key={c.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-5 py-3 max-w-xs">
-                          <div className="font-medium text-gray-800 truncate" title={c.name}>{c.name}</div>
-                          {c.subject && (
-                            <div className="text-xs text-gray-400 truncate mt-0.5" title={c.subject}>{c.subject}</div>
+                    {visible.map(c => {
+                      const rev = gaConnected ? lookupRevenue(c.name, revenueMap) : null;
+                      return (
+                        <tr key={c.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-5 py-3 max-w-xs">
+                            <div className="font-medium text-gray-800 truncate" title={c.name}>{c.name}</div>
+                            {c.subject && (
+                              <div className="text-xs text-gray-400 truncate mt-0.5" title={c.subject}>{c.subject}</div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{sentDate(c.sentAt)}</td>
+                          <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.sends)}</td>
+                          <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.opens)}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <span className={`font-medium tabular-nums ${c.openRate >= 0.2 ? 'text-green-600' : c.openRate >= 0.15 ? 'text-yellow-600' : 'text-red-500'}`}>
+                                {pct(c.openRate)}
+                              </span>
+                              <div className="flex-1 min-w-[60px]">
+                                <RateBar value={c.openRate} color={c.openRate >= 0.2 ? 'bg-green-400' : c.openRate >= 0.15 ? 'bg-yellow-400' : 'bg-red-400'} />
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.clicks)}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <span className={`font-medium tabular-nums ${c.clickRate >= 0.03 ? 'text-green-600' : c.clickRate >= 0.015 ? 'text-yellow-600' : 'text-red-500'}`}>
+                                {pct(c.clickRate)}
+                              </span>
+                              <div className="flex-1 min-w-[60px]">
+                                <RateBar value={c.clickRate * 10} color={c.clickRate >= 0.03 ? 'bg-green-400' : c.clickRate >= 0.015 ? 'bg-yellow-400' : 'bg-red-400'} />
+                              </div>
+                            </div>
+                          </td>
+                          {gaConnected && (
+                            <td className="px-4 py-3 text-right font-mono text-emerald-700 font-medium">
+                              {rev ? fmtAUD(rev.revenue) : <span className="text-gray-300">—</span>}
+                            </td>
                           )}
-                        </td>
-                        <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{sentDate(c.sentAt)}</td>
-                        <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.sends)}</td>
-                        <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.opens)}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className={`font-medium tabular-nums ${c.openRate >= 0.2 ? 'text-green-600' : c.openRate >= 0.15 ? 'text-yellow-600' : 'text-red-500'}`}>
-                              {pct(c.openRate)}
-                            </span>
-                            <div className="flex-1 min-w-[60px]">
-                              <RateBar value={c.openRate} color={c.openRate >= 0.2 ? 'bg-green-400' : c.openRate >= 0.15 ? 'bg-yellow-400' : 'bg-red-400'} />
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.clicks)}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className={`font-medium tabular-nums ${c.clickRate >= 0.03 ? 'text-green-600' : c.clickRate >= 0.015 ? 'text-yellow-600' : 'text-red-500'}`}>
-                              {pct(c.clickRate)}
-                            </span>
-                            <div className="flex-1 min-w-[60px]">
-                              <RateBar value={c.clickRate * 10} color={c.clickRate >= 0.03 ? 'bg-green-400' : c.clickRate >= 0.015 ? 'bg-yellow-400' : 'bg-red-400'} />
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-5 py-3 text-right text-gray-500 font-mono">{fmt(c.unsubscribes)}</td>
-                      </tr>
-                    ))}
+                          <td className="px-5 py-3 text-right text-gray-500 font-mono">{fmt(c.unsubscribes)}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
