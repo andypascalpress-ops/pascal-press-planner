@@ -236,3 +236,16 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
       statsLoaded,
       totalSends,
       totalOpens,
+      totalClicks,
+      avgOpenRate:  safeDiv(totalOpens,  totalSends),
+      avgClickRate: safeDiv(totalClicks, totalSends),
+    };
+  } catch (err) {
+    console.error('[hubspot-email]', err);
+    return {
+      campaigns:   [], connected: false, statsLoaded: false,
+      totalSends:  0, totalOpens: 0, totalClicks: 0,
+      avgOpenRate: 0, avgClickRate: 0,
+    };
+  }
+}
