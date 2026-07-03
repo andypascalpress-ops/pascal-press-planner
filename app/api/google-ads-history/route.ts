@@ -4,11 +4,11 @@
  * GET /api/google-ads-history
  * Returns: Array<{ month: 'YYYY-MM', pp: number, etz: number }>
  *
- * ETZ account (GOOGLE_ADS_ETZ_CUSTOMER_ID) started July 2026.
- * Months before 2026-07 always return 0 for ETZ regardless of account data.
+ * Before July 2026: both brands pulled from PP account, split by campaign name.
+ * July 2026+: ETZ pulled from its own account (GOOGLE_ADS_ETZ_CUSTOMER_ID).
  */
 import { NextResponse } from 'next/server';
-import { fetchMonthlySpend, buildConfig, etzHasOwnAccount } from '@/lib/google-ads';
+import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
 
 const ETZ_START_MONTH = '2026-07';
 
@@ -30,43 +30,50 @@ function buildMonths(): string[] {
   return result;
 }
 
+function toYm(monthName: string): string | null {
+  const num = MONTH_TO_NUM[monthName];
+  return num ? `2026-${num}` : null;
+}
+
 export async function GET() {
   const CHART_MONTHS = buildMonths();
-  const startDate = '2026-01-01';
   const now = new Date();
   const endDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()).padStart(2, '0')}`;
 
-  // ETZ only queried from its start month onwards
-  const etzStartDate = `${ETZ_START_MONTH}-01`;
+  const ppCfg  = buildConfig('pp');
+  const etzCfg = buildConfig('etz'); // uses ETZ account if GOOGLE_ADS_ETZ_CUSTOMER_ID is set
+
+  const ppByMonth:  Record<string, number> = {};
+  const etzByMonth: Record<string, number> = {};
 
   try {
-    const ppCfg = buildConfig('pp');
+    // ── Pre-July: pull both from PP account, split by campaign name ──────────
+    const preStart = '2026-01-01';
+    const preEnd   = '2026-06-30';
 
-    const [ppRows, etzRows] = await Promise.all([
-      fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' }),
-      etzHasOwnAccount()
-        ? fetchMonthlySpend(buildConfig('etz'), etzStartDate, endDate)
-        : fetchMonthlySpend(ppCfg, startDate, endDate, { contains: 'ETZ' }),
+    const [ppPreRows, etzPreRows] = await Promise.all([
+      fetchMonthlySpend(ppCfg, preStart, preEnd, { excludes: 'ETZ' }),
+      fetchMonthlySpend(ppCfg, preStart, preEnd, { contains: 'ETZ' }),
     ]);
+    for (const r of ppPreRows)  { const ym = toYm(r.month); if (ym) ppByMonth[ym]  = Math.round(r.actualSpend * 100) / 100; }
+    for (const r of etzPreRows) { const ym = toYm(r.month); if (ym) etzByMonth[ym] = Math.round(r.actualSpend * 100) / 100; }
 
-    const ppByMonth:  Record<string, number> = {};
-    const etzByMonth: Record<string, number> = {};
-
-    for (const r of ppRows) {
-      const num = MONTH_TO_NUM[r.month];
-      if (num) ppByMonth[`2026-${num}`] = Math.round(r.actualSpend * 100) / 100;
-    }
-    for (const r of etzRows) {
-      const num = MONTH_TO_NUM[r.month];
-      if (num) etzByMonth[`2026-${num}`] = Math.round(r.actualSpend * 100) / 100;
+    // ── July onwards: PP account (excl ETZ) + ETZ own account ────────────────
+    const postStart = `${ETZ_START_MONTH}-01`;
+    if (postStart <= endDate) {
+      const [ppPostRows, etzPostRows] = await Promise.all([
+        fetchMonthlySpend(ppCfg,  postStart, endDate, { excludes: 'ETZ' }),
+        fetchMonthlySpend(etzCfg, postStart, endDate),
+      ]);
+      for (const r of ppPostRows)  { const ym = toYm(r.month); if (ym) ppByMonth[ym]  = Math.round(r.actualSpend * 100) / 100; }
+      for (const r of etzPostRows) { const ym = toYm(r.month); if (ym) etzByMonth[ym] = Math.round(r.actualSpend * 100) / 100; }
     }
 
     return NextResponse.json(
       CHART_MONTHS.map(ym => ({
         month: ym,
-        pp:  ppByMonth[ym] ?? 0,
-        // Hard cutoff: ETZ always 0 before its start month
-        etz: ym >= ETZ_START_MONTH ? (etzByMonth[ym] ?? 0) : 0,
+        pp:  ppByMonth[ym]  ?? 0,
+        etz: etzByMonth[ym] ?? 0,
       }))
     );
   } catch (err) {

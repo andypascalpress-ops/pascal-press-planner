@@ -3,12 +3,11 @@
  *
  * GET /api/google-ads-spend?month=YYYY-MM
  *
- * PP campaigns: all campaigns NOT containing 'ETZ' in the name
- * ETZ campaigns: separate account (GOOGLE_ADS_ETZ_CUSTOMER_ID) from 2026-07 onwards.
- *   Months before ETZ_START_MONTH always return 0 for ETZ.
+ * Before July 2026: both brands from PP account, split by campaign name containing/excluding 'ETZ'.
+ * July 2026+: ETZ from its own account (GOOGLE_ADS_ETZ_CUSTOMER_ID), PP from PP account excl ETZ.
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchMonthlySpend, buildConfig, etzHasOwnAccount } from '@/lib/google-ads';
+import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
 
 const ETZ_START_MONTH = '2026-07';
 
@@ -26,19 +25,19 @@ export async function GET(req: NextRequest) {
   const startDate = `${month}-01`;
   const endDate   = `${month}-${String(lastDay).padStart(2, '0')}`;
 
-  // ETZ account only has data from July 2026
-  const etzBeforeStart = month < ETZ_START_MONTH;
+  const ppCfg  = buildConfig('pp');
+  const etzCfg = buildConfig('etz');
+
+  // Before July: both come from PP account, split by campaign name
+  // July+: PP account (excl ETZ) and ETZ own account
+  const useOwnEtzAccount = month >= ETZ_START_MONTH;
 
   try {
-    const ppCfg = buildConfig('pp');
-
     const [ppRows, etzRows] = await Promise.all([
       fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' }),
-      etzBeforeStart
-        ? Promise.resolve([])
-        : etzHasOwnAccount()
-          ? fetchMonthlySpend(buildConfig('etz'), startDate, endDate)
-          : fetchMonthlySpend(ppCfg, startDate, endDate, { contains: 'ETZ' }),
+      useOwnEtzAccount
+        ? fetchMonthlySpend(etzCfg, startDate, endDate)
+        : fetchMonthlySpend(ppCfg,  startDate, endDate, { contains: 'ETZ' }),
     ]);
 
     const ppSpend  = Math.round(ppRows.reduce( (s, r) => s + r.actualSpend, 0) * 100) / 100;
