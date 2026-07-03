@@ -10,6 +10,7 @@ import CampaignModal from '@/components/CampaignModal';
 import FinanceTab from '@/components/FinanceTab';
 import SpendModal from '@/components/SpendModal';
 import EmailTab from '@/components/EmailTab';
+import OverviewTab from '@/components/OverviewTab';
 
 export default function Home() {
   // ── Campaign state ──
@@ -24,7 +25,7 @@ export default function Home() {
 
   // ── UI state ──
   const [selectedFY, setSelectedFY] = useState<FYFilter>('FY26');
-  const [view, setView] = useState<ViewMode>('calendar');
+  const [view, setView] = useState<ViewMode>('overview');
   const [chatOpen, setChatOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -317,6 +318,20 @@ export default function Home() {
             {/* View Toggle */}
             <div className="flex rounded-lg border border-gray-300 overflow-hidden">
               <button
+                onClick={() => setView('overview')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
+                  view === 'overview' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="1" y="1" width="5" height="5" rx="1"/>
+                  <rect x="8" y="1" width="5" height="5" rx="1"/>
+                  <rect x="1" y="8" width="5" height="5" rx="1"/>
+                  <rect x="8" y="8" width="5" height="5" rx="1"/>
+                </svg>
+                <span className="hidden sm:inline">Overview</span>
+              </button>
+              <button
                 onClick={() => setView('calendar')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
                   view === 'calendar' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'
@@ -372,7 +387,7 @@ export default function Home() {
             </div>
 
             {/* Add Campaign (hidden on Finance and Email tabs) */}
-            {view !== 'finance' && view !== 'email' && (
+            {view !== 'finance' && view !== 'email' && view !== 'overview' && (
               <button
                 onClick={() => openAddModal()}
                 disabled={saving}
@@ -413,7 +428,7 @@ export default function Home() {
         </div>
 
         {/* ── Sub-stats bar (campaign views only) ── */}
-        {view !== 'finance' && view !== 'email' && !loading && !error && (
+        {view !== 'finance' && view !== 'email' && view !== 'overview' && !loading && !error && (
           <div className="flex items-center gap-5 px-6 py-2 border-t border-gray-100 text-sm text-gray-600 flex-wrap">
             <span><strong className="text-gray-900">{filteredCampaigns.length}</strong> campaigns</span>
             <span><strong className="text-gray-900">{completeCount}</strong> complete</span>
@@ -441,7 +456,7 @@ export default function Home() {
         <div className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ${chatOpen ? 'mr-[420px]' : ''}`}>
 
           {/* Campaign views */}
-          {view !== 'finance' && view !== 'email' && (
+          {view !== 'finance' && view !== 'email' && view !== 'overview' && (
             loading ? (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center">
@@ -479,6 +494,11 @@ export default function Home() {
                 onMarkComplete={handleMarkComplete}
               />
             )
+          )}
+
+          {/* Overview view */}
+          {view === 'overview' && (
+            <OverviewTab onNavigate={(v) => setView(v)} />
           )}
 
           {/* Finance view */}
