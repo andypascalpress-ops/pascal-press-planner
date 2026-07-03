@@ -303,7 +303,7 @@ export async function fetchEmailRevenue(
     const campaignData = await runReport(accessToken, {
       dateRanges: [{ startDate, endDate }],
       dimensions: [{ name: 'sessionCampaignName' }],
-      metrics:    [{ name: 'purchaseRevenue' }, { name: 'transactions' }],
+      metrics:    [{ name: 'totalRevenue' }, { name: 'transactions' }],
       dimensionFilter: {
         filter: {
           fieldName:    'sessionMedium',
@@ -326,7 +326,7 @@ export async function fetchEmailRevenue(
     const totalData = await runReport(accessToken, {
       dateRanges: [{ startDate, endDate }],
       dimensions: [{ name: 'sessionMedium' }],
-      metrics:    [{ name: 'purchaseRevenue' }, { name: 'transactions' }],
+      metrics:    [{ name: 'totalRevenue' }, { name: 'transactions' }],
       dimensionFilter: {
         filter: {
           fieldName:    'sessionMedium',
@@ -371,3 +371,4 @@ export function matchRevenue(
   });
   return partial ?? null;
 }
+      

@@ -321,14 +321,20 @@ export default function EmailTab() {
                       <th className="text-right px-4 py-2.5 font-medium">Clicks</th>
                       <th className="px-4 py-2.5 font-medium min-w-[120px]">Click rate</th>
                       {gaConnected && (
-                        <th className="text-right px-4 py-2.5 font-medium">Revenue</th>
+                        <th className="text-right px-4 py-2.5 font-medium" title="Campaign-level revenue from GA4. Shows once per campaign group — multiple sends share the same figure.">Cmpgn Rev.</th>
                       )}
                       <th className="text-right px-5 py-2.5 font-medium">Unsubs</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {visible.map(c => {
+                    {(() => {
+                      const shownCampaigns = new Set<string>();
+                      return visible.map(c => {
                       const rev = gaConnected ? lookupRevenue(c.name, revenueMap) : null;
+                      const isFirstForCampaign = rev
+                        ? !shownCampaigns.has(rev.campaignName)
+                        : false;
+                      if (isFirstForCampaign && rev) shownCampaigns.add(rev.campaignName);
                       return (
                         <tr key={c.id} className="hover:bg-gray-50 transition-colors">
                           <td className="px-5 py-3 max-w-xs">
@@ -363,13 +369,16 @@ export default function EmailTab() {
                           </td>
                           {gaConnected && (
                             <td className="px-4 py-3 text-right font-mono text-emerald-700 font-medium">
-                              {rev ? fmtAUD(rev.revenue) : <span className="text-gray-300">—</span>}
+                              {rev && isFirstForCampaign
+                                ? fmtAUD(rev.revenue)
+                                : <span className="text-gray-300">—</span>}
                             </td>
                           )}
                           <td className="px-5 py-3 text-right text-gray-500 font-mono">{fmt(c.unsubscribes)}</td>
                         </tr>
                       );
-                    })}
+                    });
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -388,12 +397,4 @@ export default function EmailTab() {
           )}
 
           {/* -- Benchmark legend -- */}
-          <div className="mt-4 flex gap-6 text-xs text-gray-500">
-            <span>Open rate: <span className="text-green-600 font-medium">≥20% good</span> · <span className="text-yellow-600 font-medium">15–20% avg</span> · <span className="text-red-500 font-medium">&lt;15% low</span></span>
-            <span>Click rate: <span className="text-green-600 font-medium">≥3% good</span> · <span className="text-yellow-600 font-medium">1.5–3% avg</span> · <span className="text-red-500 font-medium">&lt;1.5% low</span></span>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
+          <div class
