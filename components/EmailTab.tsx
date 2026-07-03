@@ -429,10 +429,10 @@ export default function EmailTab() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex-1 overflow-y-auto bg-gray-50 px-6 py-6">
+    <div className="flex-1 overflow-y-auto bg-gray-50 px-3 md:px-6 py-4 md:py-6">
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Email Marketing</h2>
           <p className="text-sm text-gray-500">
@@ -491,7 +491,7 @@ export default function EmailTab() {
 
           {/* ── Top Performers ── */}
           {campaigns.length > 0 && (bestOpenRate || bestCtor || (gaConnected && topRevCampaign)) && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
               {bestOpenRate && (
                 <div className="bg-white border border-gray-200 rounded-xl px-5 py-4">
                   <div className="text-xs text-gray-400 uppercase tracking-wide mb-2 font-medium">&#x1F3C6; Best Open Rate</div>
@@ -520,7 +520,7 @@ export default function EmailTab() {
           )}
 
           {/* ── Stat cards row 1 ── */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
             <StatCard label="Sends" value={fmt(totalSends)} sub={monthLabel(selectedMonth)}
               delta={hasMoM ? <MomDelta curr={totalSends} prev={prevSends} /> : undefined} />
             <StatCard label="Delivery Rate" value={pct(deliveryRate)} sub={`${fmt(totalDelivered)} delivered`}
@@ -533,7 +533,7 @@ export default function EmailTab() {
           </div>
 
           {/* ── Stat cards row 2 ── */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
             <StatCard label="Click-to-Open Rate" value={pct(avgCtor)} sub="content engagement quality"
               delta={hasMoM ? <MomDelta curr={avgCtor} prev={prevCtor} /> : undefined} />
             <StatCard label="Unsubscribe Rate" value={pct(unsubRate)} sub={`${fmt(totalUnsubs)} unsubscribes`}
@@ -600,7 +600,7 @@ export default function EmailTab() {
                   {campaigns.length} emails{groups ? ` · ${groups.filter(g => g.key !== '__unmatched__').length} GA4 matched` : ''}
                 </span>
               </div>
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto w-full">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
