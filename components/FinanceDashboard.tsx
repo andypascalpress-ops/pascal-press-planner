@@ -80,7 +80,18 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-const CHART_YMS    = ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06'];
+function buildChartYMs(): string[] {
+  const start = new Date(2026, 0, 1); // Jan 2026
+  const now   = new Date(); now.setDate(1);
+  const result: string[] = [];
+  const d = new Date(start);
+  while (d <= now) {
+    result.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    d.setMonth(d.getMonth() + 1);
+  }
+  return result;
+}
+const CHART_YMS = buildChartYMs();
 const CHART_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

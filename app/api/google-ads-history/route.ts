@@ -1,25 +1,41 @@
 /**
- * Live Google Ads spend history for FY26 Jan–Jun — queried directly from Google Ads API.
+ * Live Google Ads spend history from Jan 2026 to current month.
  *
  * GET /api/google-ads-history
  * Returns: Array<{ month: 'YYYY-MM', pp: number, etz: number }>
+ *
+ * ETZ data uses GOOGLE_ADS_ETZ_CUSTOMER_ID if set (account started July 2026).
+ * Months before July will return 0 for ETZ naturally — no special handling needed.
  */
 import { NextResponse } from 'next/server';
 import { fetchMonthlySpend, buildConfig, etzHasOwnAccount } from '@/lib/google-ads';
 
-const CHART_MONTHS = ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06'];
-
 const MONTH_TO_NUM: Record<string, string> = {
-  January: '01', February: '02', March: '03',   April:    '04',
-  May:     '05', June:     '06', July:  '07',   August:   '08',
+  January: '01', February: '02', March:     '03', April:    '04',
+  May:     '05', June:     '06', July:      '07', August:   '08',
   September: '09', October: '10', November: '11', December: '12',
 };
 
+function buildMonths(): string[] {
+  const start = new Date(2026, 0, 1);
+  const now   = new Date(); now.setDate(1);
+  const result: string[] = [];
+  const d = new Date(start);
+  while (d <= now) {
+    result.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    d.setMonth(d.getMonth() + 1);
+  }
+  return result;
+}
+
 export async function GET() {
+  const CHART_MONTHS = buildMonths();
+  const startDate = '2026-01-01';
+  const now = new Date();
+  const endDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()).padStart(2, '0')}`;
+
   try {
-    const ppCfg     = buildConfig('pp');
-    const startDate = '2026-01-01';
-    const endDate   = '2026-06-30';
+    const ppCfg = buildConfig('pp');
 
     const [ppRows, etzRows] = await Promise.all([
       fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' }),
