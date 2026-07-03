@@ -147,7 +147,8 @@ async function runReport(accessToken: string, body: object): Promise<any> {
       Authorization:  `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(body),
+    body:  JSON.stringify(body),
+    cache: 'no-store', // always fetch fresh — never serve stale zeros from edge cache
   });
 
   if (!res.ok) {

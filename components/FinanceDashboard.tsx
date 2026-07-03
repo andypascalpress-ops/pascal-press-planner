@@ -931,12 +931,20 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const etzRev   = revenue?.etz ?? null;
 
   // Overlay GA4 channel revenue on top of BC's total revenue data.
+  // Priority: (1) ga4Revenue direct fetch, (2) ga4History for this month, (3) BC referral_source fallback.
   // GA4 is the source of truth for paid vs organic split; BC is the source of truth for totals.
+  const ga4PaidForMonth    = ga4Revenue?.pp.connected
+    ? ga4Revenue.pp.paidSearchRevenue
+    : (ga4History?.find(h => h.month === selectedMonth)?.pp.paid ?? null);
+  const ga4OrganicForMonth = ga4Revenue?.pp.connected
+    ? ga4Revenue.pp.organicSearchRevenue
+    : (ga4History?.find(h => h.month === selectedMonth)?.pp.organic ?? null);
+
   const ppRev: typeof ppRevRaw = ppRevRaw
     ? {
         ...ppRevRaw,
-        googlePaidRevenue:    ga4Revenue?.pp.connected ? ga4Revenue.pp.paidSearchRevenue    : ppRevRaw.googlePaidRevenue,
-        googleOrganicRevenue: ga4Revenue?.pp.connected ? ga4Revenue.pp.organicSearchRevenue : ppRevRaw.googleOrganicRevenue,
+        googlePaidRevenue:    ga4PaidForMonth    ?? ppRevRaw.googlePaidRevenue,
+        googleOrganicRevenue: ga4OrganicForMonth ?? ppRevRaw.googleOrganicRevenue,
       }
     : null;
 
