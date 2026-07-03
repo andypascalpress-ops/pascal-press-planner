@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 
 type SortKey = 'sentAt' | 'sends' | 'opens' | 'openRate' | 'clicks' | 'clickRate' | 'revenue';
+type SortDir = 'asc' | 'desc';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -175,8 +176,8 @@ export default function EmailTab() {
   const [data,          setData]          = useState<EmailData | null>(null);
   const [revenueData,   setRevenueData]   = useState<RevenueData | null>(null);
   const [loading,       setLoading]       = useState(false);
-  const [sortKey,       setSortKey]       = useState<SortKey>('sentAt');
-  const [sortDir,       setSortDir]       = useState<'asc' | 'desc'>('desc');
+  const [sortKey,       setSortKey]       = useState('sentAt' as SortKey);
+  const [sortDir,       setSortDir]       = useState('desc' as SortDir);
 
   const monthOptions = buildMonthOptions();
 
@@ -215,8 +216,8 @@ export default function EmailTab() {
   const gaConnected = revenueData?.connected ?? false;
 
   const handleSort = (col: SortKey) => {
-    if (sortKey === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    else { setSortKey(col); setSortDir('desc'); }
+    if (sortKey === col) setSortDir((d: SortDir) => (d === 'asc' ? 'desc' : 'asc') as SortDir);
+    else { setSortKey(col); setSortDir('desc' as SortDir); }
   };
   const sortArrow = (col: SortKey) =>
     sortKey === col ? (sortDir === 'desc' ? ' ↓' : ' ↑') : '';
@@ -357,7 +358,7 @@ export default function EmailTab() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {(() => {
-                      const shownCampaigns = new Set<string>();
+                      const shownCampaigns = new Set();
                       return visible.map(c => {
                       const rev = gaConnected ? lookupRevenue(c.name, revenueMap) : null;
                       const isFirstForCampaign = rev
@@ -386,5 +387,4 @@ export default function EmailTab() {
                             </div>
                           </td>
                           <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.clicks)}</td>
-                          <td className="px-4 py-3">
-                            <div c
+                          <td cl
