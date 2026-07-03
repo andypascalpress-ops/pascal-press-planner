@@ -1,25 +1,25 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 
 type SortKey = 'sentAt' | 'sends' | 'opens' | 'openRate' | 'clicks' | 'clickRate' | 'revenue';
 type SortDir = 'asc' | 'desc';
 
 interface EmailCampaign {
-  id:               string;
-  name:             string;
-  subject:          string;
-  fromName:         string;
-  sentAt:           string | null;
-  sends:            number;
-  delivered:        number;
-  opens:            number;
-  clicks:           number;
-  unsubscribes:     number;
-  openRate:         number;
-  clickRate:        number;
-  clickToOpen:      number;
-  hsCampaignName:   string; // v1 campaign name = utm_campaign in GA4
+  id:             string;
+  name:           string;
+  subject:        string;
+  fromName:       string;
+  sentAt:         string | null;
+  sends:          number;
+  delivered:      number;
+  opens:          number;
+  clicks:         number;
+  unsubscribes:   number;
+  openRate:       number;
+  clickRate:      number;
+  clickToOpen:    number;
+  hsCampaignName: string; // v1 campaign name = utm_campaign in GA4
 }
 
 interface EmailData {
@@ -46,13 +46,20 @@ interface RevenueData {
   connected:    boolean;
 }
 
+interface CampaignGroup {
+  key:    string;
+  label:  string;
+  rev:    CampaignRevenue | null;
+  emails: EmailCampaign[];
+}
+
 const MONTH_NAMES = [
   'January','February','March','April','May','June',
   'July','August','September','October','November','December',
 ];
 
-function pct(n: number): string  { return (n * 100).toFixed(1) + '%'; }
-function fmt(n: number): string  { return n.toLocaleString('en-AU'); }
+function pct(n: number): string { return (n * 100).toFixed(1) + '%'; }
+function fmt(n: number): string { return n.toLocaleString('en-AU'); }
 
 function fmtAUD(n: number): string {
   if (n === 0) return '—';
@@ -100,27 +107,22 @@ function buildRevenueMap(byCampaign: CampaignRevenue[]): Map<string, CampaignRev
   return map;
 }
 
-/**
- * Look up GA4 revenue for a HubSpot email.
- * Tries hsCampaignName first (direct utm_campaign match), then falls back to email name.
- */
 function lookupRevenue(
   emailName:      string,
   hsCampaignName: string,
   revenueMap:     Map<string, CampaignRevenue>,
 ): CampaignRevenue | null {
-  // 1. Direct match by HubSpot campaign name (= utm_campaign value in GA4)
+  // 1. Match by HubSpot v1 campaign name (= utm_campaign in GA4)
   if (hsCampaignName) {
     const ckey = normName(stripNumericPrefix(hsCampaignName));
     if (ckey.length > 3) {
       if (revenueMap.has(ckey)) return revenueMap.get(ckey)!;
-      for (const [mapKey, val] of revenueMap) {
-        if (mapKey === ckey || mapKey.startsWith(ckey + '_') || ckey.startsWith(mapKey + '_')) return val;
+      for (const [mk, val] of revenueMap) {
+        if (mk === ckey || mk.startsWith(ckey + '_') || ckey.startsWith(mk + '_')) return val;
       }
     }
   }
-
-  // 2. Match by email display name
+  // 2. Fallback: match by email display name
   const target = normName(emailName);
   if (revenueMap.has(target)) return revenueMap.get(target)!;
   for (const [key, val] of revenueMap) {
@@ -130,6 +132,59 @@ function lookupRevenue(
     if (key.length > 8 && (key.includes(target) || target.includes(key))) return val;
   }
   return null;
+}
+
+/**
+ * Group sorted emails by their matched GA4 session campaign.
+ * Revenue is shown once per group (campaign), not per email.
+ */
+function buildGroups(
+  sorted:     EmailCampaign[],
+  revenueMap: Map<string, CampaignRevenue>,
+  sortKey:    SortKey,
+): CampaignGroup[] {
+  const groupMap   = new Map<string, CampaignGroup>();
+  const groupOrder: string[] = [];
+
+  for (const c of sorted) {
+    const rev = lookupRevenue(c.name, c.hsCampaignName, revenueMap);
+    const key = rev ? rev.campaignName : '__unmatched__';
+    if (!groupMap.has(key)) {
+      groupOrder.push(key);
+      groupMap.set(key, {
+        key,
+        label: rev ? stripNumericPrefix(rev.campaignName) : 'Other (no GA4 match)',
+        rev,
+        emails: [],
+      });
+    }
+    groupMap.get(key)!.emails.push(c);
+  }
+
+  // When sorting by revenue, reorder groups by revenue desc; unmatched always last
+  if (sortKey === 'revenue') {
+    groupOrder.sort((a, b) => {
+      if (a === '__unmatched__') return 1;
+      if (b === '__unmatched__') return -1;
+      return (groupMap.get(b)?.rev?.revenue ?? 0) - (groupMap.get(a)?.rev?.revenue ?? 0);
+    });
+  }
+
+  return groupOrder.map(k => groupMap.get(k)!);
+}
+
+function getSortNum(c: EmailCampaign, key: SortKey, revMap: Map<string, CampaignRevenue>): number {
+  if (key === 'sentAt')    return c.sentAt ? new Date(c.sentAt).getTime() : 0;
+  if (key === 'sends')     return c.sends;
+  if (key === 'opens')     return c.opens;
+  if (key === 'openRate')  return c.openRate;
+  if (key === 'clicks')    return c.clicks;
+  if (key === 'clickRate') return c.clickRate;
+  if (key === 'revenue') {
+    const r = lookupRevenue(c.name, c.hsCampaignName, revMap);
+    return r ? r.revenue : 0;
+  }
+  return 0;
 }
 
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -151,20 +206,6 @@ function RateBar({ value, color }: { value: number; color: string }) {
   );
 }
 
-function getSortNum(c: EmailCampaign, key: SortKey, revMap: Map<string, CampaignRevenue>): number {
-  if (key === 'sentAt')    return c.sentAt ? new Date(c.sentAt).getTime() : 0;
-  if (key === 'sends')     return c.sends;
-  if (key === 'opens')     return c.opens;
-  if (key === 'openRate')  return c.openRate;
-  if (key === 'clicks')    return c.clicks;
-  if (key === 'clickRate') return c.clickRate;
-  if (key === 'revenue') {
-    const r = lookupRevenue(c.name, c.hsCampaignName, revMap);
-    return r ? r.revenue : 0;
-  }
-  return 0;
-}
-
 export default function EmailTab() {
   const [selectedMonth, setSelectedMonth] = useState<string>('');
   const [showAll,       setShowAll]       = useState(false);
@@ -172,8 +213,8 @@ export default function EmailTab() {
   const [revenueData,   setRevenueData]   = useState<RevenueData | null>(null);
   const [loading,       setLoading]       = useState(false);
   const [revLoading,    setRevLoading]    = useState(false);
-  const [sortKey,       setSortKey]       = useState('sentAt' as SortKey);
-  const [sortDir,       setSortDir]       = useState('desc' as SortDir);
+  const [sortKey,       setSortKey]       = useState<SortKey>('sentAt');
+  const [sortDir,       setSortDir]       = useState<SortDir>('desc');
 
   const monthOptions = buildMonthOptions();
 
@@ -213,46 +254,33 @@ export default function EmailTab() {
   const gaConnected = revenueData?.connected ?? false;
 
   const handleSort = (col: SortKey) => {
-    if (sortKey === col) {
-      setSortDir(sortDir === 'asc' ? 'desc' as SortDir : 'asc' as SortDir);
-    } else {
-      setSortKey(col);
-      setSortDir('desc' as SortDir);
-    }
+    if (sortKey === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortKey(col); setSortDir('desc'); }
   };
+
+  const arw = (col: SortKey) => sortKey === col ? (sortDir === 'desc' ? ' ↓' : ' ↑') : '';
 
   const sorted = [...campaigns].sort((a, b) => {
     const diff = getSortNum(a, sortKey, revenueMap) - getSortNum(b, sortKey, revenueMap);
     return sortDir === 'asc' ? diff : -diff;
   });
 
+  // Grouped mode when GA4 is loaded; flat mode when loading or no GA4
+  const groups = (gaConnected && !revLoading) ? buildGroups(sorted, revenueMap, sortKey) : null;
+
+  // Flat mode pagination (only used when no GA4)
   const visible = showAll ? sorted : sorted.slice(0, 10);
 
-  const rows = visible.map(c => {
-    const rev = gaConnected ? lookupRevenue(c.name, c.hsCampaignName, revenueMap) : null;
-    return { c, rev };
-  });
-
-  let matchedTotal = 0;
-  if (gaConnected) {
-    const seenForTotal: string[] = [];
-    for (const c of campaigns) {
-      const r = lookupRevenue(c.name, c.hsCampaignName, revenueMap);
-      if (r && seenForTotal.indexOf(r.campaignName) === -1) {
-        seenForTotal.push(r.campaignName);
-        matchedTotal += r.revenue;
-      }
-    }
-  }
-  const unmatchedRevenue = gaConnected ? (revenueData?.totalRevenue ?? 0) - matchedTotal : 0;
+  const COL_COUNT = gaConnected ? 9 : 8; // +1 for revenue column
 
   return (
     <div className="flex-1 overflow-y-auto bg-gray-50 px-6 py-6">
 
+      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Email Marketing</h2>
-          <p className="text-sm text-gray-500">HubSpot performance · GA4 revenue</p>
+          <p className="text-sm text-gray-500">HubSpot performance · GA4 revenue by campaign</p>
         </div>
         <div className="flex items-center gap-3">
           <label className="text-sm text-gray-600">Month</label>
@@ -273,7 +301,7 @@ export default function EmailTab() {
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center mb-6">
           <div className="text-amber-700 font-medium mb-1">HubSpot not connected</div>
           <div className="text-sm text-amber-600">
-            Add <code className="bg-amber-100 px-1 rounded">HUBSPOT_API_KEY</code> to Vercel to pull live email data.
+            Add <code className="bg-amber-100 px-1 rounded">HUBSPOT_API_KEY</code> to Vercel.
           </div>
         </div>
       )}
@@ -284,6 +312,7 @@ export default function EmailTab() {
 
       {!loading && data?.connected && (
         <>
+          {/* Stat cards */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
             <StatCard label="Sends"  value={fmt(data.totalSends)}  sub={monthLabel(selectedMonth)} />
             <StatCard label="Opens"  value={fmt(data.totalOpens)}  sub={pct(data.avgOpenRate) + ' open rate'} />
@@ -291,7 +320,7 @@ export default function EmailTab() {
             <StatCard
               label="Revenue (GA4)"
               value={revLoading ? '…' : gaConnected ? fmtAUD(revenueData?.totalRevenue ?? 0) : '—'}
-              sub={revLoading ? 'loading' : gaConnected ? `${fmt(revenueData?.totalTx ?? 0)} transactions` : 'GA4 not connected'}
+              sub={revLoading ? 'loading…' : gaConnected ? `${fmt(revenueData?.totalTx ?? 0)} transactions` : 'GA4 not connected'}
             />
             <StatCard label="Campaigns" value={String(campaigns.length)} sub="in period" />
           </div>
@@ -314,114 +343,146 @@ export default function EmailTab() {
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
                 <span className="text-sm font-medium text-gray-700">Campaigns — {monthLabel(selectedMonth)}</span>
-                <span className="text-xs text-gray-400">{campaigns.length} total</span>
+                <span className="text-xs text-gray-400">{campaigns.length} emails{groups ? `, ${groups.length} GA4 campaigns` : ''}</span>
               </div>
 
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
-                      <th className="text-left px-5 py-2.5 font-medium">Campaign</th>
-                      <th className="text-left px-4 py-2.5 font-medium cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('sentAt')}>
-                        Sent {sortKey === 'sentAt' && (sortDir === 'desc' ? 'v' : '^')}
-                      </th>
-                      <th className="text-right px-4 py-2.5 font-medium cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('sends')}>
-                        Sends {sortKey === 'sends' && (sortDir === 'desc' ? 'v' : '^')}
-                      </th>
-                      <th className="text-right px-4 py-2.5 font-medium cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('opens')}>
-                        Opens {sortKey === 'opens' && (sortDir === 'desc' ? 'v' : '^')}
-                      </th>
-                      <th className="px-4 py-2.5 font-medium min-w-[130px] cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('openRate')}>
-                        Open rate {sortKey === 'openRate' && (sortDir === 'desc' ? 'v' : '^')}
-                      </th>
-                      <th className="text-right px-4 py-2.5 font-medium cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('clicks')}>
-                        Clicks {sortKey === 'clicks' && (sortDir === 'desc' ? 'v' : '^')}
-                      </th>
-                      <th className="px-4 py-2.5 font-medium min-w-[120px] cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('clickRate')}>
-                        Click rate {sortKey === 'clickRate' && (sortDir === 'desc' ? 'v' : '^')}
-                      </th>
+                      <th className="text-left px-5 py-2.5 font-medium">Email</th>
+                      <th className="text-left px-4 py-2.5 font-medium cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('sentAt')}>Sent{arw('sentAt')}</th>
+                      <th className="text-right px-4 py-2.5 font-medium cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('sends')}>Sends{arw('sends')}</th>
+                      <th className="text-right px-4 py-2.5 font-medium cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('opens')}>Opens{arw('opens')}</th>
+                      <th className="px-4 py-2.5 font-medium min-w-[130px] cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('openRate')}>Open rate{arw('openRate')}</th>
+                      <th className="text-right px-4 py-2.5 font-medium cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('clicks')}>Clicks{arw('clicks')}</th>
+                      <th className="px-4 py-2.5 font-medium min-w-[120px] cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('clickRate')}>Click rate{arw('clickRate')}</th>
                       {gaConnected && (
-                        <th className="text-right px-4 py-2.5 font-medium cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('revenue')} title="GA4 revenue attributed to this email campaign">
-                          Cmpgn Rev. {sortKey === 'revenue' && (sortDir === 'desc' ? 'v' : '^')}
-                        </th>
+                        <th className="text-right px-4 py-2.5 font-medium cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('revenue')}>GA4 Revenue{arw('revenue')}</th>
                       )}
                       <th className="text-right px-5 py-2.5 font-medium">Unsubs</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {rows.map(({ c, rev }) => {
-                      const openColor = c.openRate >= 0.2 ? 'text-green-600' : c.openRate >= 0.15 ? 'text-yellow-600' : 'text-red-500';
-                      const openBar   = c.openRate >= 0.2 ? 'bg-green-400'  : c.openRate >= 0.15 ? 'bg-yellow-400'  : 'bg-red-400';
-                      const clkColor  = c.clickRate >= 0.03 ? 'text-green-600' : c.clickRate >= 0.015 ? 'text-yellow-600' : 'text-red-500';
-                      const clkBar    = c.clickRate >= 0.03 ? 'bg-green-400'  : c.clickRate >= 0.015 ? 'bg-yellow-400'  : 'bg-red-400';
-                      return (
-                        <tr key={c.id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-5 py-3 max-w-xs">
-                            <div className="font-medium text-gray-800 truncate" title={c.name}>{c.name}</div>
-                            {c.subject && (
-                              <div className="text-xs text-gray-400 truncate mt-0.5" title={c.subject}>{c.subject}</div>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{sentDate(c.sentAt)}</td>
-                          <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.sends)}</td>
-                          <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.opens)}</td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <span className={`font-medium tabular-nums ${openColor}`}>{pct(c.openRate)}</span>
-                              <div className="flex-1 min-w-[60px]"><RateBar value={c.openRate} color={openBar} /></div>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.clicks)}</td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <span className={`font-medium tabular-nums ${clkColor}`}>{pct(c.clickRate)}</span>
-                              <div className="flex-1 min-w-[60px]"><RateBar value={c.clickRate * 10} color={clkBar} /></div>
-                            </div>
-                          </td>
-                          {gaConnected && (
-                            <td className="px-4 py-3 text-right font-mono text-emerald-700 font-medium">
-                              {revLoading ? <span className="text-gray-300">…</span> : rev ? fmtAUD(rev.revenue) : <span className="text-gray-300">-</span>}
+                  <tbody>
+                    {groups ? (
+                      // ── Grouped mode: one revenue row per GA4 campaign ──
+                      groups.map(group => (
+                        <Fragment key={group.key}>
+                          {/* Campaign group header */}
+                          <tr className="bg-slate-50 border-t-2 border-slate-200">
+                            <td colSpan={7} className="px-5 py-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                                  {group.label}
+                                </span>
+                                <span className="text-xs text-slate-400">
+                                  · {group.emails.length} email{group.emails.length !== 1 ? 's' : ''}
+                                </span>
+                              </div>
                             </td>
-                          )}
-                          <td className="px-5 py-3 text-right text-gray-500 font-mono">{fmt(c.unsubscribes)}</td>
-                        </tr>
-                      );
-                    })}
-                    {gaConnected && !revLoading && unmatchedRevenue > 0.5 && (
-                      <tr className="bg-gray-50 border-t-2 border-gray-200">
-                        <td colSpan={7} className="px-5 py-2 text-xs text-gray-400 italic">
-                          Other email revenue (GA4 campaigns not matched to a HubSpot campaign name)
-                        </td>
-                        <td className="px-4 py-2 text-right font-mono text-gray-400 text-xs font-medium">
-                          {fmtAUD(unmatchedRevenue)}
-                        </td>
-                        <td />
-                      </tr>
+                            <td className="px-4 py-2 text-right font-mono font-bold text-emerald-700">
+                              {group.rev ? fmtAUD(group.rev.revenue) : <span className="text-gray-300">—</span>}
+                            </td>
+                            <td className="px-5 py-2 text-right text-xs text-slate-400">
+                              {group.rev && group.rev.transactions > 0 ? `${fmt(group.rev.transactions)} tx` : ''}
+                            </td>
+                          </tr>
+                          {/* Individual emails in this campaign */}
+                          {group.emails.map(c => {
+                            const openColor = c.openRate >= 0.2 ? 'text-green-600' : c.openRate >= 0.15 ? 'text-yellow-600' : 'text-red-500';
+                            const openBar   = c.openRate >= 0.2 ? 'bg-green-400'  : c.openRate >= 0.15 ? 'bg-yellow-400'  : 'bg-red-400';
+                            const clkColor  = c.clickRate >= 0.03 ? 'text-green-600' : c.clickRate >= 0.015 ? 'text-yellow-600' : 'text-red-500';
+                            const clkBar    = c.clickRate >= 0.03 ? 'bg-green-400'  : c.clickRate >= 0.015 ? 'bg-yellow-400'  : 'bg-red-400';
+                            return (
+                              <tr key={c.id} className="hover:bg-gray-50 transition-colors border-t border-gray-50">
+                                <td className="pl-8 pr-5 py-2.5 max-w-xs">
+                                  <div className="font-medium text-gray-800 truncate text-sm" title={c.name}>{c.name}</div>
+                                  {c.subject && <div className="text-xs text-gray-400 truncate mt-0.5" title={c.subject}>{c.subject}</div>}
+                                </td>
+                                <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">{sentDate(c.sentAt)}</td>
+                                <td className="px-4 py-2.5 text-right text-gray-700 font-mono">{fmt(c.sends)}</td>
+                                <td className="px-4 py-2.5 text-right text-gray-700 font-mono">{fmt(c.opens)}</td>
+                                <td className="px-4 py-2.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`font-medium tabular-nums ${openColor}`}>{pct(c.openRate)}</span>
+                                    <div className="flex-1 min-w-[60px]"><RateBar value={c.openRate} color={openBar} /></div>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-2.5 text-right text-gray-700 font-mono">{fmt(c.clicks)}</td>
+                                <td className="px-4 py-2.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`font-medium tabular-nums ${clkColor}`}>{pct(c.clickRate)}</span>
+                                    <div className="flex-1 min-w-[60px]"><RateBar value={c.clickRate * 10} color={clkBar} /></div>
+                                  </div>
+                                </td>
+                                <td /> {/* revenue shown in group header only */}
+                                <td className="px-5 py-2.5 text-right text-gray-500 font-mono">{fmt(c.unsubscribes)}</td>
+                              </tr>
+                            );
+                          })}
+                        </Fragment>
+                      ))
+                    ) : (
+                      // ── Flat mode: no GA4 data yet ──
+                      <>
+                        {visible.map(c => {
+                          const openColor = c.openRate >= 0.2 ? 'text-green-600' : c.openRate >= 0.15 ? 'text-yellow-600' : 'text-red-500';
+                          const openBar   = c.openRate >= 0.2 ? 'bg-green-400'  : c.openRate >= 0.15 ? 'bg-yellow-400'  : 'bg-red-400';
+                          const clkColor  = c.clickRate >= 0.03 ? 'text-green-600' : c.clickRate >= 0.015 ? 'text-yellow-600' : 'text-red-500';
+                          const clkBar    = c.clickRate >= 0.03 ? 'bg-green-400'  : c.clickRate >= 0.015 ? 'bg-yellow-400'  : 'bg-red-400';
+                          return (
+                            <tr key={c.id} className="hover:bg-gray-50 transition-colors border-t border-gray-50">
+                              <td className="px-5 py-3 max-w-xs">
+                                <div className="font-medium text-gray-800 truncate" title={c.name}>{c.name}</div>
+                                {c.subject && <div className="text-xs text-gray-400 truncate mt-0.5" title={c.subject}>{c.subject}</div>}
+                              </td>
+                              <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{sentDate(c.sentAt)}</td>
+                              <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.sends)}</td>
+                              <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.opens)}</td>
+                              <td className="px-4 py-3">
+                                <div className="flex items-center gap-2">
+                                  <span className={`font-medium tabular-nums ${openColor}`}>{pct(c.openRate)}</span>
+                                  <div className="flex-1 min-w-[60px]"><RateBar value={c.openRate} color={openBar} /></div>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.clicks)}</td>
+                              <td className="px-4 py-3">
+                                <div className="flex items-center gap-2">
+                                  <span className={`font-medium tabular-nums ${clkColor}`}>{pct(c.clickRate)}</span>
+                                  <div className="flex-1 min-w-[60px]"><RateBar value={c.clickRate * 10} color={clkBar} /></div>
+                                </div>
+                              </td>
+                              {gaConnected && <td className="px-4 py-3 text-right text-gray-300 text-xs">…</td>}
+                              <td className="px-5 py-3 text-right text-gray-500 font-mono">{fmt(c.unsubscribes)}</td>
+                            </tr>
+                          );
+                        })}
+                        {campaigns.length > 10 && (
+                          <tr>
+                            <td colSpan={COL_COUNT} className="px-5 py-3 text-center">
+                              <button
+                                onClick={() => setShowAll(v => !v)}
+                                className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                              >
+                                {showAll ? 'Show less' : `Show all ${campaigns.length} campaigns`}
+                              </button>
+                            </td>
+                          </tr>
+                        )}
+                      </>
                     )}
                   </tbody>
                 </table>
               </div>
-
-              {campaigns.length > 10 && (
-                <div className="px-5 py-3 border-t border-gray-100 text-center">
-                  <button
-                    onClick={() => setShowAll(v => !v)}
-                    className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-                  >
-                    {showAll ? 'Show less' : `Show all ${campaigns.length} campaigns`}
-                  </button>
-                </div>
-              )}
             </div>
           )}
 
           <div className="mt-4 flex gap-6 text-xs text-gray-500">
-            <span>Open rate: <span className="text-green-600 font-medium">20%+ good</span> · <span className="text-yellow-600 font-medium">15-20% avg</span> · <span className="text-red-500 font-medium">under 15% low</span></span>
-            <span>Click rate: <span className="text-green-600 font-medium">3%+ good</span> · <span className="text-yellow-600 font-medium">1.5-3% avg</span> · <span className="text-red-500 font-medium">under 1.5% low</span></span>
+            <span>Open rate: <span className="text-green-600 font-medium">20%+ good</span> · <span className="text-yellow-600 font-medium">15–20% avg</span> · <span className="text-red-500 font-medium">under 15% low</span></span>
+            <span>Click rate: <span className="text-green-600 font-medium">3%+ good</span> · <span className="text-yellow-600 font-medium">1.5–3% avg</span> · <span className="text-red-500 font-medium">under 1.5% low</span></span>
           </div>
         </>
       )}
     </div>
   );
 }
-                                                                                                                                                                                                                                 
