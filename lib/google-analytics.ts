@@ -16,8 +16,10 @@
 
 import crypto from 'crypto';
 
-const GA4_PROPERTY_ID = '354651290'; // Pascal Press (pascalpress.com.au)
-const GA4_BASE        = `https://analyticsdata.googleapis.com/v1beta/properties/${GA4_PROPERTY_ID}`;
+const GA4_PROPERTY_ID     = '354651290'; // Pascal Press (pascalpress.com.au)
+const GA4_BASE            = `https://analyticsdata.googleapis.com/v1beta/properties/${GA4_PROPERTY_ID}`;
+const GA4_ETZ_PROPERTY_ID = process.env.GOOGLE_ANALYTICS_ETZ_PROPERTY_ID ?? '';
+const GA4_ETZ_BASE        = `https://analyticsdata.googleapis.com/v1beta/properties/${GA4_ETZ_PROPERTY_ID}`;
 const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
 // ---------------------------------------------------------------------------
@@ -135,6 +137,10 @@ function isConnected(): boolean {
   );
 }
 
+function isETZConnected(): boolean {
+  return !!(GA4_ETZ_PROPERTY_ID && isConnected());
+}
+
 // ---------------------------------------------------------------------------
 // GA4 report runner
 // ---------------------------------------------------------------------------
@@ -171,6 +177,10 @@ export interface GA4ChannelRevenue {
 export interface GA4MonthlyRevenue {
   month: string; // 'YYYY-MM'
   pp: {
+    paid:    number;
+    organic: number;
+  };
+  etz?: {
     paid:    number;
     organic: number;
   };
@@ -355,26 +365,14 @@ export async function fetchEmailRevenue(
 }
 
 // ---------------------------------------------------------------------------
-// Match helper (used client-side in EmailTab)
+// ETZ (Excel Test Zone) GA4 functions — uses GOOGLE_ANALYTICS_ETZ_PROPERTY_ID
+// Same auth credentials as PP; separate GA4 property in a different GA account.
 // ---------------------------------------------------------------------------
 
-/** Normalise a name for fuzzy matching: lowercase, punctuation → underscore */
-export function normName(s: string): string {
-  return s.toLowerCase().replace(/[\s\-]+/g, '_').replace(/[^a-z0-9_]/g, '');
-}
+export async function fetchETZGA4Revenue(month: string): Promise<GA4ChannelRevenue> {
+  if (!isETZConnected()) {
+    return { paidSearchRevenue: 0, organicSearchRevenue: 0, connected: false };
+  }
 
-/** Look up a HubSpot email name in a GA4 campaign revenue map */
-export function matchRevenue(
-  emailName:  string,
-  byCampaign: CampaignRevenue[],
-): CampaignRevenue | null {
-  const target = normName(emailName);
-  const exact  = byCampaign.find(c => normName(c.campaignName) === target);
-  if (exact) return exact;
-  const partial = byCampaign.find(c => {
-    const n = normName(c.campaignName);
-    return n.includes(target) || target.includes(n);
-  });
-  return partial ?? null;
-}
-      
+  try {
+    const accessToken = await getAcce

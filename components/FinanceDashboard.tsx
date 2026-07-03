@@ -52,11 +52,20 @@ interface GA4RevenueResponse {
     organicSearchRevenue: number;
     connected: boolean;
   };
+  etz?: {
+    paidSearchRevenue:    number;
+    organicSearchRevenue: number;
+    connected: boolean;
+  };
 }
 
 interface GA4HistoryItem {
   month: string; // YYYY-MM
   pp: {
+    paid:    number;
+    organic: number;
+  };
+  etz?: {
     paid:    number;
     organic: number;
   };
@@ -923,16 +932,18 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
                       .filter(r => r.channel === 'Google Ads')
                       .reduce((s, r) => s + (r.actualSpend ?? 0), 0),
     revenue:      revenueHistory?.find(h => h.month === ym)?.etz.totalRevenue     ?? 0,
-    googlePaidRev: revenueHistory?.find(h => h.month === ym)?.etz.googlePaidRevenue ?? 0,
+    googlePaidRev: ga4History?.find(h => h.month === ym)?.etz?.paid
+                  ?? revenueHistory?.find(h => h.month === ym)?.etz.googlePaidRevenue
+                  ?? 0,
   }));
 
   const ppPrev = revenue?.ppPrev ?? null;
   const ppRevRaw = revenue?.pp ?? null;
-  const etzRev   = revenue?.etz ?? null;
+  const etzRevRaw = revenue?.etz ?? null;
 
   // Overlay GA4 channel revenue on top of BC's total revenue data.
-  // Priority: (1) ga4Revenue direct fetch, (2) ga4History for this month, (3) BC referral_source fallback.
-  // GA4 is the source of truth for paid vs organic split; BC is the source of truth for totals.
+  // Priority: (1) ga4Revenue direct fetch, (2) ga4History for this month, (3) BC/Stripe referral_source fallback.
+  // GA4 is the source of truth for paid vs organic split; BC/Stripe is the source of truth for totals.
   const ga4PaidForMonth    = ga4Revenue?.pp.connected
     ? ga4Revenue.pp.paidSearchRevenue
     : (ga4History?.find(h => h.month === selectedMonth)?.pp.paid ?? null);
@@ -945,6 +956,22 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
         ...ppRevRaw,
         googlePaidRevenue:    ga4PaidForMonth    ?? ppRevRaw.googlePaidRevenue,
         googleOrganicRevenue: ga4OrganicForMonth ?? ppRevRaw.googleOrganicRevenue,
+      }
+    : null;
+
+  // ETZ GA4 overlay — same pattern as PP above.
+  const etzGa4PaidForMonth    = ga4Revenue?.etz?.connected
+    ? ga4Revenue.etz.paidSearchRevenue
+    : (ga4History?.find(h => h.month === selectedMonth)?.etz?.paid ?? null);
+  const etzGa4OrganicForMonth = ga4Revenue?.etz?.connected
+    ? ga4Revenue.etz.organicSearchRevenue
+    : (ga4History?.find(h => h.month === selectedMonth)?.etz?.organic ?? null);
+
+  const etzRev: typeof etzRevRaw = etzRevRaw
+    ? {
+        ...etzRevRaw,
+        googlePaidRevenue:    etzGa4PaidForMonth    ?? etzRevRaw.googlePaidRevenue,
+        googleOrganicRevenue: etzGa4OrganicForMonth ?? etzRevRaw.googleOrganicRevenue,
       }
     : null;
 
@@ -1225,29 +1252,4 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
               <div className="text-xs text-blue-700 mt-0.5">Google Ads budget: {AUD.format(MONTHLY_GOOGLE_BUDGETS['Pascal Press'] ?? 0)}/mo</div>
             </div>
             <BudgetBreakdownTable
-              brand="Pascal Press"
-              records={records}
-              accentBg="bg-blue-50"
-              accentText="text-blue-800"
-            />
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 bg-emerald-50 border-b border-gray-200">
-              <div className="text-xs font-semibold text-emerald-900 uppercase tracking-wide">
-                Excel Test Zone &middot; Budget vs Spend by Month
-              </div>
-              <div className="text-xs text-emerald-700 mt-0.5">Google Ads budget: {AUD.format(MONTHLY_GOOGLE_BUDGETS['Excel Test Zone'] ?? 0)}/mo</div>
-            </div>
-            <BudgetBreakdownTable
-              brand="Excel Test Zone"
-              records={records}
-              accentBg="bg-emerald-50"
-              accentText="text-emerald-800"
-            />
-          </div>
-        </div>
-
-      </div>
-    </div>
-  );
-}
+              brand="Pascal P
