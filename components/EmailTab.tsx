@@ -150,11 +150,13 @@ export default function EmailTab() {
   const [data,          setData]          = useState<EmailData | null>(null);
   const [revenueData,   setRevenueData]   = useState<RevenueData | null>(null);
   const [loading,       setLoading]       = useState(false);
+  const [revLoading,    setRevLoading]    = useState(false);
   const [sortKey,       setSortKey]       = useState('sentAt' as SortKey);
   const [sortDir,       setSortDir]       = useState('desc' as SortDir);
 
   const monthOptions = buildMonthOptions();
 
+  // HubSpot email data
   useEffect(() => {
     setLoading(true);
     setData(null);
@@ -166,7 +168,11 @@ export default function EmailTab() {
       .finally(() => setLoading(false));
   }, [selectedMonth]);
 
+  // GA4 revenue — abort previous request when month changes to prevent stale overwrites
   useEffect(() => {
+    const controller = new AbortController();
+    setRevenueData(null);
+    setRevLoading(true);
     let start = '2022-01-01';
     let end   = 'today';
     if (selectedMonth) {
@@ -175,10 +181,12 @@ export default function EmailTab() {
       start = `${selectedMonth}-01`;
       end   = `${selectedMonth}-${String(lastDay).padStart(2, '0')}`;
     }
-    fetch(`/api/ga-email-revenue?start=${start}&end=${end}`)
+    fetch(`/api/ga-email-revenue?start=${start}&end=${end}`, { signal: controller.signal })
       .then(r => r.json())
       .then((d: RevenueData) => setRevenueData(d))
-      .catch(() => setRevenueData(null));
+      .catch(err => { if ((err as Error).name !== 'AbortError') setRevenueData(null); })
+      .finally(() => setRevLoading(false));
+    return () => controller.abort();
   }, [selectedMonth]);
 
   const campaigns   = data?.campaigns ?? [];
@@ -209,7 +217,7 @@ export default function EmailTab() {
     return { c, rev, showRev };
   });
 
-  // Sum matched revenue across ALL campaigns (deduped), compute unmatched remainder
+  // Unmatched GA4 revenue = total - sum of matched campaigns
   let matchedTotal = 0;
   if (gaConnected) {
     const seenForTotal: string[] = [];
@@ -262,18 +270,18 @@ export default function EmailTab() {
       {!loading && data?.connected && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-            <StatCard label="Sends"        value={fmt(data.totalSends)}   sub={monthLabel(selectedMonth)} />
-            <StatCard label="Opens"        value={fmt(data.totalOpens)}   sub={pct(data.avgOpenRate) + ' open rate'} />
-            <StatCard label="Clicks"       value={fmt(data.totalClicks)}  sub={pct(data.avgClickRate) + ' click rate'} />
+            <StatCard label="Sends"  value={fmt(data.totalSends)}  sub={monthLabel(selectedMonth)} />
+            <StatCard label="Opens"  value={fmt(data.totalOpens)}  sub={pct(data.avgOpenRate) + ' open rate'} />
+            <StatCard label="Clicks" value={fmt(data.totalClicks)} sub={pct(data.avgClickRate) + ' click rate'} />
             <StatCard
               label="Revenue (GA4)"
-              value={gaConnected ? fmtAUD(revenueData?.totalRevenue ?? 0) : '—'}
-              sub={gaConnected ? `${fmt(revenueData?.totalTx ?? 0)} transactions` : 'GA4 not connected'}
+              value={revLoading ? '…' : gaConnected ? fmtAUD(revenueData?.totalRevenue ?? 0) : '—'}
+              sub={revLoading ? 'loading' : gaConnected ? `${fmt(revenueData?.totalTx ?? 0)} transactions` : 'GA4 not connected'}
             />
-            <StatCard label="Campaigns"    value={String(campaigns.length)} sub="in period" />
+            <StatCard label="Campaigns" value={String(campaigns.length)} sub="in period" />
           </div>
 
-          {!gaConnected && (
+          {!gaConnected && !revLoading && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl px-5 py-3 mb-5 flex items-center gap-3">
               <span className="text-blue-500 text-lg">i</span>
               <div className="text-sm text-blue-700">
@@ -357,14 +365,14 @@ export default function EmailTab() {
                           </td>
                           {gaConnected && (
                             <td className="px-4 py-3 text-right font-mono text-emerald-700 font-medium">
-                              {showRev && rev ? fmtAUD(rev.revenue) : <span className="text-gray-300">-</span>}
+                              {revLoading ? <span className="text-gray-300">…</span> : showRev && rev ? fmtAUD(rev.revenue) : <span className="text-gray-300">-</span>}
                             </td>
                           )}
                           <td className="px-5 py-3 text-right text-gray-500 font-mono">{fmt(c.unsubscribes)}</td>
                         </tr>
                       );
                     })}
-                    {gaConnected && unmatchedRevenue > 0.5 && (
+                    {gaConnected && !revLoading && unmatchedRevenue > 0.5 && (
                       <tr className="bg-gray-50 border-t-2 border-gray-200">
                         <td colSpan={7} className="px-5 py-2 text-xs text-gray-400 italic">
                           Other email revenue (GA4 campaigns not matched to a HubSpot campaign name)
