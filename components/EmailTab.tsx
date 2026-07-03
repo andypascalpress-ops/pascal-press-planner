@@ -19,7 +19,7 @@ interface EmailCampaign {
   openRate:       number;
   clickRate:      number;
   clickToOpen:    number;
-  hsCampaignName: string; // v1 campaign name = utm_campaign in GA4
+  hsCampaignName: string;
 }
 
 interface EmailData {
@@ -60,18 +60,15 @@ const MONTH_NAMES = [
 
 function pct(n: number): string { return (n * 100).toFixed(1) + '%'; }
 function fmt(n: number): string { return n.toLocaleString('en-AU'); }
-
 function fmtAUD(n: number): string {
   if (n === 0) return '—';
   return '$' + n.toLocaleString('en-AU', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
-
 function monthLabel(ym: string): string {
   if (!ym) return 'All time';
   const [y, m] = ym.split('-');
   return (MONTH_NAMES[parseInt(m ?? '1') - 1] ?? '') + ' ' + y;
 }
-
 function buildMonthOptions(): string[] {
   const opts: string[] = [];
   const d = new Date();
@@ -82,17 +79,13 @@ function buildMonthOptions(): string[] {
   }
   return opts;
 }
-
 function sentDate(iso: string | null): string {
   if (!iso) return '—';
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+  return new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
 }
-
 function normName(s: string): string {
   return s.toLowerCase().replace(/[\s\-]+/g, '_').replace(/[^a-z0-9_]/g, '');
 }
-
 function stripNumericPrefix(s: string): string {
   return s.replace(/^\d+[-_]/, '');
 }
@@ -112,7 +105,6 @@ function lookupRevenue(
   hsCampaignName: string,
   revenueMap:     Map<string, CampaignRevenue>,
 ): CampaignRevenue | null {
-  // 1. Match by HubSpot v1 campaign name (= utm_campaign in GA4)
   if (hsCampaignName) {
     const ckey = normName(stripNumericPrefix(hsCampaignName));
     if (ckey.length > 3) {
@@ -122,7 +114,6 @@ function lookupRevenue(
       }
     }
   }
-  // 2. Fallback: match by email display name
   const target = normName(emailName);
   if (revenueMap.has(target)) return revenueMap.get(target)!;
   for (const [key, val] of revenueMap) {
@@ -134,10 +125,6 @@ function lookupRevenue(
   return null;
 }
 
-/**
- * Group sorted emails by their matched GA4 session campaign.
- * Revenue is shown once per group (campaign), not per email.
- */
 function buildGroups(
   sorted:     EmailCampaign[],
   revenueMap: Map<string, CampaignRevenue>,
@@ -145,7 +132,6 @@ function buildGroups(
 ): CampaignGroup[] {
   const groupMap   = new Map<string, CampaignGroup>();
   const groupOrder: string[] = [];
-
   for (const c of sorted) {
     const rev = lookupRevenue(c.name, c.hsCampaignName, revenueMap);
     const key = rev ? rev.campaignName : '__unmatched__';
@@ -160,8 +146,6 @@ function buildGroups(
     }
     groupMap.get(key)!.emails.push(c);
   }
-
-  // When sorting by revenue, reorder groups by revenue desc; unmatched always last
   if (sortKey === 'revenue') {
     groupOrder.sort((a, b) => {
       if (a === '__unmatched__') return 1;
@@ -169,7 +153,6 @@ function buildGroups(
       return (groupMap.get(b)?.rev?.revenue ?? 0) - (groupMap.get(a)?.rev?.revenue ?? 0);
     });
   }
-
   return groupOrder.map(k => groupMap.get(k)!);
 }
 
@@ -209,6 +192,7 @@ function RateBar({ value, color }: { value: number; color: string }) {
 export default function EmailTab() {
   const [selectedMonth, setSelectedMonth] = useState<string>('');
   const [showAll,       setShowAll]       = useState(false);
+  const [showGa4Panel,  setShowGa4Panel]  = useState(false);
   const [data,          setData]          = useState<EmailData | null>(null);
   const [revenueData,   setRevenueData]   = useState<RevenueData | null>(null);
   const [loading,       setLoading]       = useState(false);
@@ -254,10 +238,9 @@ export default function EmailTab() {
   const gaConnected = revenueData?.connected ?? false;
 
   const handleSort = (col: SortKey) => {
-    if (sortKey === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    if (sortKey === col) setSortDir((d: SortDir) => d === 'asc' ? 'desc' : 'asc');
     else { setSortKey(col); setSortDir('desc'); }
   };
-
   const arw = (col: SortKey) => sortKey === col ? (sortDir === 'desc' ? ' ↓' : ' ↑') : '';
 
   const sorted = [...campaigns].sort((a, b) => {
@@ -265,18 +248,23 @@ export default function EmailTab() {
     return sortDir === 'asc' ? diff : -diff;
   });
 
-  // Grouped mode when GA4 is loaded; flat mode when loading or no GA4
-  const groups = (gaConnected && !revLoading) ? buildGroups(sorted, revenueMap, sortKey) : null;
-
-  // Flat mode pagination (only used when no GA4)
+  const groups  = (gaConnected && !revLoading) ? buildGroups(sorted, revenueMap, sortKey) : null;
   const visible = showAll ? sorted : sorted.slice(0, 10);
 
-  const COL_COUNT = gaConnected ? 9 : 8; // +1 for revenue column
+  // Figure out which GA4 campaigns are unmatched (no HubSpot emails)
+  const matchedGa4Keys = new Set<string>();
+  if (groups) {
+    for (const g of groups) {
+      if (g.key !== '__unmatched__') matchedGa4Keys.add(g.key);
+    }
+  }
+  const unmatchedGa4 = (revenueData?.byCampaign ?? []).filter(
+    c => !matchedGa4Keys.has(c.campaignName) && c.campaignName !== '(not set)',
+  );
 
   return (
     <div className="flex-1 overflow-y-auto bg-gray-50 px-6 py-6">
 
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Email Marketing</h2>
@@ -313,7 +301,7 @@ export default function EmailTab() {
       {!loading && data?.connected && (
         <>
           {/* Stat cards */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-5">
             <StatCard label="Sends"  value={fmt(data.totalSends)}  sub={monthLabel(selectedMonth)} />
             <StatCard label="Opens"  value={fmt(data.totalOpens)}  sub={pct(data.avgOpenRate) + ' open rate'} />
             <StatCard label="Clicks" value={fmt(data.totalClicks)} sub={pct(data.avgClickRate) + ' click rate'} />
@@ -325,11 +313,52 @@ export default function EmailTab() {
             <StatCard label="Campaigns" value={String(campaigns.length)} sub="in period" />
           </div>
 
+          {/* GA4 campaign breakdown panel */}
+          {gaConnected && !revLoading && (revenueData?.byCampaign ?? []).length > 0 && (
+            <div className="bg-white border border-gray-200 rounded-xl mb-5 overflow-hidden">
+              <button
+                className="w-full flex items-center justify-between px-5 py-3 text-left"
+                onClick={() => setShowGa4Panel(v => !v)}
+              >
+                <span className="text-sm font-medium text-gray-700">
+                  GA4 Session Campaigns — {monthLabel(selectedMonth)}
+                </span>
+                <span className="text-xs text-gray-400">
+                  {(revenueData?.byCampaign ?? []).length} campaigns · {showGa4Panel ? 'hide ↑' : 'show ↓'}
+                </span>
+              </button>
+              {showGa4Panel && (
+                <div className="border-t border-gray-100 divide-y divide-gray-50">
+                  {(revenueData?.byCampaign ?? [])
+                    .slice()
+                    .sort((a, b) => b.revenue - a.revenue)
+                    .map(c => {
+                      const isMatched = matchedGa4Keys.has(c.campaignName);
+                      const label = stripNumericPrefix(c.campaignName);
+                      return (
+                        <div key={c.campaignName} className="flex items-center justify-between px-5 py-2.5">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isMatched ? 'bg-emerald-400' : 'bg-gray-300'}`} />
+                            <span className="text-sm text-gray-700 truncate" title={c.campaignName}>{label}</span>
+                            {!isMatched && <span className="text-xs text-gray-400 flex-shrink-0">no HubSpot match</span>}
+                          </div>
+                          <div className="flex items-center gap-4 flex-shrink-0 ml-4">
+                            <span className="text-xs text-gray-400">{fmt(c.transactions)} tx</span>
+                            <span className="font-mono font-semibold text-emerald-700 text-sm">{fmtAUD(c.revenue)}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+          )}
+
           {!gaConnected && !revLoading && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl px-5 py-3 mb-5 flex items-center gap-3">
               <span className="text-blue-500 text-lg">i</span>
               <div className="text-sm text-blue-700">
-                <span className="font-medium">GA4 revenue not connected.</span>{' '}
+                <span className="font-medium">GA4 not connected.</span>{' '}
                 Add <code className="bg-blue-100 px-1 rounded">GOOGLE_ANALYTICS_SERVICE_ACCOUNT_JSON</code> to Vercel.
               </div>
             </div>
@@ -342,8 +371,12 @@ export default function EmailTab() {
           ) : (
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
-                <span className="text-sm font-medium text-gray-700">Campaigns — {monthLabel(selectedMonth)}</span>
-                <span className="text-xs text-gray-400">{campaigns.length} emails{groups ? `, ${groups.length} GA4 campaigns` : ''}</span>
+                <span className="text-sm font-medium text-gray-700">
+                  Emails — {monthLabel(selectedMonth)}
+                </span>
+                <span className="text-xs text-gray-400">
+                  {campaigns.length} emails{groups ? ` · ${groups.filter(g => g.key !== '__unmatched__').length} GA4 campaigns matched` : ''}
+                </span>
               </div>
 
               <div className="overflow-x-auto">
@@ -365,19 +398,13 @@ export default function EmailTab() {
                   </thead>
                   <tbody>
                     {groups ? (
-                      // ── Grouped mode: one revenue row per GA4 campaign ──
                       groups.map(group => (
                         <Fragment key={group.key}>
-                          {/* Campaign group header */}
                           <tr className="bg-slate-50 border-t-2 border-slate-200">
                             <td colSpan={7} className="px-5 py-2">
                               <div className="flex items-center gap-2">
-                                <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                                  {group.label}
-                                </span>
-                                <span className="text-xs text-slate-400">
-                                  · {group.emails.length} email{group.emails.length !== 1 ? 's' : ''}
-                                </span>
+                                <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">{group.label}</span>
+                                <span className="text-xs text-slate-400">· {group.emails.length} email{group.emails.length !== 1 ? 's' : ''}</span>
                               </div>
                             </td>
                             <td className="px-4 py-2 text-right font-mono font-bold text-emerald-700">
@@ -387,7 +414,6 @@ export default function EmailTab() {
                               {group.rev && group.rev.transactions > 0 ? `${fmt(group.rev.transactions)} tx` : ''}
                             </td>
                           </tr>
-                          {/* Individual emails in this campaign */}
                           {group.emails.map(c => {
                             const openColor = c.openRate >= 0.2 ? 'text-green-600' : c.openRate >= 0.15 ? 'text-yellow-600' : 'text-red-500';
                             const openBar   = c.openRate >= 0.2 ? 'bg-green-400'  : c.openRate >= 0.15 ? 'bg-yellow-400'  : 'bg-red-400';
@@ -415,7 +441,7 @@ export default function EmailTab() {
                                     <div className="flex-1 min-w-[60px]"><RateBar value={c.clickRate * 10} color={clkBar} /></div>
                                   </div>
                                 </td>
-                                <td /> {/* revenue shown in group header only */}
+                                <td />
                                 <td className="px-5 py-2.5 text-right text-gray-500 font-mono">{fmt(c.unsubscribes)}</td>
                               </tr>
                             );
@@ -423,7 +449,6 @@ export default function EmailTab() {
                         </Fragment>
                       ))
                     ) : (
-                      // ── Flat mode: no GA4 data yet ──
                       <>
                         {visible.map(c => {
                           const openColor = c.openRate >= 0.2 ? 'text-green-600' : c.openRate >= 0.15 ? 'text-yellow-600' : 'text-red-500';
@@ -459,11 +484,8 @@ export default function EmailTab() {
                         })}
                         {campaigns.length > 10 && (
                           <tr>
-                            <td colSpan={COL_COUNT} className="px-5 py-3 text-center">
-                              <button
-                                onClick={() => setShowAll(v => !v)}
-                                className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-                              >
+                            <td colSpan={gaConnected ? 9 : 8} className="px-5 py-3 text-center border-t border-gray-100">
+                              <button onClick={() => setShowAll(v => !v)} className="text-sm text-blue-600 hover:text-blue-800 font-medium">
                                 {showAll ? 'Show less' : `Show all ${campaigns.length} campaigns`}
                               </button>
                             </td>
