@@ -92,7 +92,8 @@ function buildChartYMs(): string[] {
   return result;
 }
 const CHART_YMS = buildChartYMs();
-const CHART_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const CHART_LABELS = CHART_YMS.map(ym => MONTH_ABBR[parseInt(ym.split('-')[1]!) - 1] ?? ym);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -707,7 +708,7 @@ function BrandPanel({
 
 // ─── Monthly budget breakdown table ──────────────────────────────────────────
 
-const FY26_YMS = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06'];
+const FY26_YMS = CHART_YMS; // dynamic: Jan 2026 → current month
 
 interface BudgetRow {
   channel: string;
