@@ -6,19 +6,20 @@ type SortKey = 'sentAt' | 'sends' | 'opens' | 'openRate' | 'clicks' | 'clickRate
 type SortDir = 'asc' | 'desc';
 
 interface EmailCampaign {
-  id:           string;
-  name:         string;
-  subject:      string;
-  fromName:     string;
-  sentAt:       string | null;
-  sends:        number;
-  delivered:    number;
-  opens:        number;
-  clicks:       number;
-  unsubscribes: number;
-  openRate:     number;
-  clickRate:    number;
-  clickToOpen:  number;
+  id:               string;
+  name:             string;
+  subject:          string;
+  fromName:         string;
+  sentAt:           string | null;
+  sends:            number;
+  delivered:        number;
+  opens:            number;
+  clicks:           number;
+  unsubscribes:     number;
+  openRate:         number;
+  clickRate:        number;
+  clickToOpen:      number;
+  hsCampaignName:   string; // v1 campaign name = utm_campaign in GA4
 }
 
 interface EmailData {
@@ -99,7 +100,27 @@ function buildRevenueMap(byCampaign: CampaignRevenue[]): Map<string, CampaignRev
   return map;
 }
 
-function lookupRevenue(emailName: string, revenueMap: Map<string, CampaignRevenue>): CampaignRevenue | null {
+/**
+ * Look up GA4 revenue for a HubSpot email.
+ * Tries hsCampaignName first (direct utm_campaign match), then falls back to email name.
+ */
+function lookupRevenue(
+  emailName:      string,
+  hsCampaignName: string,
+  revenueMap:     Map<string, CampaignRevenue>,
+): CampaignRevenue | null {
+  // 1. Direct match by HubSpot campaign name (= utm_campaign value in GA4)
+  if (hsCampaignName) {
+    const ckey = normName(stripNumericPrefix(hsCampaignName));
+    if (ckey.length > 3) {
+      if (revenueMap.has(ckey)) return revenueMap.get(ckey)!;
+      for (const [mapKey, val] of revenueMap) {
+        if (mapKey === ckey || mapKey.startsWith(ckey + '_') || ckey.startsWith(mapKey + '_')) return val;
+      }
+    }
+  }
+
+  // 2. Match by email display name
   const target = normName(emailName);
   if (revenueMap.has(target)) return revenueMap.get(target)!;
   for (const [key, val] of revenueMap) {
@@ -138,7 +159,7 @@ function getSortNum(c: EmailCampaign, key: SortKey, revMap: Map<string, Campaign
   if (key === 'clicks')    return c.clicks;
   if (key === 'clickRate') return c.clickRate;
   if (key === 'revenue') {
-    const r = lookupRevenue(c.name, revMap);
+    const r = lookupRevenue(c.name, c.hsCampaignName, revMap);
     return r ? r.revenue : 0;
   }
   return 0;
@@ -156,7 +177,6 @@ export default function EmailTab() {
 
   const monthOptions = buildMonthOptions();
 
-  // HubSpot email data
   useEffect(() => {
     setLoading(true);
     setData(null);
@@ -168,7 +188,6 @@ export default function EmailTab() {
       .finally(() => setLoading(false));
   }, [selectedMonth]);
 
-  // GA4 revenue — abort previous request when month changes to prevent stale overwrites
   useEffect(() => {
     const controller = new AbortController();
     setRevenueData(null);
@@ -211,18 +230,17 @@ export default function EmailTab() {
 
   const seenCampaignNames: string[] = [];
   const rows = visible.map(c => {
-    const rev = gaConnected ? lookupRevenue(c.name, revenueMap) : null;
+    const rev = gaConnected ? lookupRevenue(c.name, c.hsCampaignName, revenueMap) : null;
     const showRev = rev !== null && seenCampaignNames.indexOf(rev.campaignName) === -1;
     if (showRev && rev) seenCampaignNames.push(rev.campaignName);
     return { c, rev, showRev };
   });
 
-  // Unmatched GA4 revenue = total - sum of matched campaigns
   let matchedTotal = 0;
   if (gaConnected) {
     const seenForTotal: string[] = [];
     for (const c of campaigns) {
-      const r = lookupRevenue(c.name, revenueMap);
+      const r = lookupRevenue(c.name, c.hsCampaignName, revenueMap);
       if (r && seenForTotal.indexOf(r.campaignName) === -1) {
         seenForTotal.push(r.campaignName);
         matchedTotal += r.revenue;
@@ -326,7 +344,7 @@ export default function EmailTab() {
                         Click rate {sortKey === 'clickRate' && (sortDir === 'desc' ? 'v' : '^')}
                       </th>
                       {gaConnected && (
-                        <th className="text-right px-4 py-2.5 font-medium cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('revenue')} title="Campaign revenue from GA4">
+                        <th className="text-right px-4 py-2.5 font-medium cursor-pointer select-none hover:text-gray-700" onClick={() => handleSort('revenue')} title="GA4 revenue attributed to this email campaign">
                           Cmpgn Rev. {sortKey === 'revenue' && (sortDir === 'desc' ? 'v' : '^')}
                         </th>
                       )}

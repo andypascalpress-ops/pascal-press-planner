@@ -18,19 +18,20 @@ function getApiKey(): string {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface EmailCampaignStats {
-  id:           string;
-  name:         string;
-  subject:      string;
-  fromName:     string;
-  sentAt:       string | null;
-  sends:        number;
-  delivered:    number;
-  opens:        number;
-  clicks:       number;
-  unsubscribes: number;
-  openRate:     number; // 0–1
-  clickRate:    number; // 0–1
-  clickToOpen:  number; // 0–1
+  id:               string;
+  name:             string;
+  subject:          string;
+  fromName:         string;
+  sentAt:           string | null;
+  sends:            number;
+  delivered:        number;
+  opens:            number;
+  clicks:           number;
+  unsubscribes:     number;
+  openRate:         number; // 0–1
+  clickRate:        number; // 0–1
+  clickToOpen:      number; // 0–1
+  hsCampaignName:   string; // v1 campaign name — matches GA4 utm_campaign
 }
 
 export interface EmailSummary {
@@ -69,6 +70,11 @@ interface V1Counters {
   unsubscribed?: number;
 }
 
+interface V1CampaignData {
+  name?:     string;
+  counters?: V1Counters;
+}
+
 // ─── API calls ───────────────────────────────────────────────────────────────
 
 /** Fetch one page of PUBLISHED marketing emails. */
@@ -105,7 +111,7 @@ async function fetchEmailPage(
  * Uses GET /email/public/v1/campaigns/{primaryEmailCampaignId}
  * Returns counters or null on failure.
  */
-async function fetchCampaignStats(campaignId: string): Promise<V1Counters | null> {
+async function fetchCampaignStats(campaignId: string): Promise<V1CampaignData | null> {
   try {
     const res = await fetch(
       `${HS_BASE}/email/public/v1/campaigns/${campaignId}`,
@@ -116,7 +122,10 @@ async function fetchCampaignStats(campaignId: string): Promise<V1Counters | null
     );
     if (!res.ok) return null;
     const data = await res.json();
-    return (data.counters as V1Counters) ?? null;
+    return {
+      name:     data.name     as string | undefined,
+      counters: data.counters as V1Counters | undefined,
+    };
   } catch {
     return null;
   }
@@ -128,22 +137,22 @@ async function fetchCampaignStats(campaignId: string): Promise<V1Counters | null
  */
 async function fetchStatsForRows(
   rows: HsEmailRow[],
-): Promise<Map<string, V1Counters>> {
-  const map = new Map<string, V1Counters>();
+): Promise<Map<string, V1CampaignData>> {
+  const map = new Map<string, V1CampaignData>();
   const BATCH = 10;
 
   for (let i = 0; i < rows.length; i += BATCH) {
     const batch = rows.slice(i, i + BATCH);
     const results = await Promise.all(
       batch.map(async r => ({
-        id:       r.id,
-        counters: r.primaryEmailCampaignId
+        id:   r.id,
+        data: r.primaryEmailCampaignId
           ? await fetchCampaignStats(r.primaryEmailCampaignId)
           : null,
       })),
     );
-    for (const { id, counters } of results) {
-      if (counters) map.set(id, counters);
+    for (const { id, data } of results) {
+      if (data) map.set(id, data);
     }
   }
 
@@ -191,7 +200,8 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
 
     // Step 4: build campaign objects
     const campaigns: EmailCampaignStats[] = filtered.map(r => {
-      const c      = statsMap.get(r.id) ?? {};
+      const d      = statsMap.get(r.id) ?? {};
+      const c      = d.counters ?? {};
       const sends  = c.sent        ?? 0;
       const deliv  = c.delivered   ?? sends;
       const opens  = c.open        ?? 0;
@@ -199,19 +209,20 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
       const unsubs = c.unsubscribed ?? 0;
 
       return {
-        id:           r.id,
-        name:         r.name     ?? '(Untitled)',
-        subject:      r.subject  ?? '',
-        fromName:     r.fromName ?? '',
-        sentAt:       r.publishDate ?? null,
+        id:             r.id,
+        name:           r.name     ?? '(Untitled)',
+        subject:        r.subject  ?? '',
+        fromName:       r.fromName ?? '',
+        sentAt:         r.publishDate ?? null,
         sends,
-        delivered:    deliv,
+        delivered:      deliv,
         opens,
         clicks,
-        unsubscribes: unsubs,
-        openRate:     safeDiv(opens,  deliv),
-        clickRate:    safeDiv(clicks, deliv),
-        clickToOpen:  safeDiv(clicks, opens),
+        unsubscribes:   unsubs,
+        openRate:       safeDiv(opens,  deliv),
+        clickRate:      safeDiv(clicks, deliv),
+        clickToOpen:    safeDiv(clicks, opens),
+        hsCampaignName: d.name ?? '',
       };
     });
 
@@ -225,16 +236,3 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
       statsLoaded,
       totalSends,
       totalOpens,
-      totalClicks,
-      avgOpenRate:  safeDiv(totalOpens,  totalSends),
-      avgClickRate: safeDiv(totalClicks, totalSends),
-    };
-  } catch (err) {
-    console.error('[hubspot-email]', err);
-    return {
-      campaigns:   [], connected: false, statsLoaded: false,
-      totalSends:  0, totalOpens: 0, totalClicks: 0,
-      avgOpenRate: 0, avgClickRate: 0,
-    };
-  }
-}
