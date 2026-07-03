@@ -168,6 +168,18 @@ function RateBar({ value, color }: { value: number; color: string }) {
   );
 }
 
+/** Numeric sort key for a campaign row (used to sort the table) */
+function getSortNum(c: EmailCampaign, key: SortKey, revMap: Map<string, CampaignRevenue>): number {
+  if (key === 'sentAt')    return c.sentAt ? new Date(c.sentAt).getTime() : 0;
+  if (key === 'sends')     return c.sends;
+  if (key === 'opens')     return c.opens;
+  if (key === 'openRate')  return c.openRate;
+  if (key === 'clicks')    return c.clicks;
+  if (key === 'clickRate') return c.clickRate;
+  if (key === 'revenue')   { const r = lookupRevenue(c.name, revMap); return r ? r.revenue : 0; }
+  return 0;
+}
+
 // ─── Main component ──────────────────────────────────────────────────────────
 
 export default function EmailTab() {
@@ -216,30 +228,29 @@ export default function EmailTab() {
   const gaConnected = revenueData?.connected ?? false;
 
   const handleSort = (col: SortKey) => {
-    if (sortKey === col) setSortDir((d: SortDir) => (d === 'asc' ? 'desc' : 'asc') as SortDir);
-    else { setSortKey(col); setSortDir('desc' as SortDir); }
+    if (sortKey === col) {
+      setSortDir(sortDir === 'asc' ? 'desc' as SortDir : 'asc' as SortDir);
+    } else {
+      setSortKey(col);
+      setSortDir('desc' as SortDir);
+    }
   };
-  const sortArrow = (col: SortKey) =>
-    sortKey === col ? (sortDir === 'desc' ? ' ↓' : ' ↑') : '';
 
   const sorted = [...campaigns].sort((a, b) => {
-    const num = (c: EmailCampaign): number => {
-      switch (sortKey) {
-        case 'sentAt':    return c.sentAt ? new Date(c.sentAt).getTime() : 0;
-        case 'sends':     return c.sends;
-        case 'opens':     return c.opens;
-        case 'openRate':  return c.openRate;
-        case 'clicks':    return c.clicks;
-        case 'clickRate': return c.clickRate;
-        case 'revenue':   return lookupRevenue(c.name, revenueMap)?.revenue ?? 0;
-        default:          return 0;
-      }
-    };
-    const diff = num(a) - num(b);
+    const diff = getSortNum(a, sortKey, revenueMap) - getSortNum(b, sortKey, revenueMap);
     return sortDir === 'asc' ? diff : -diff;
   });
 
   const visible = showAll ? sorted : sorted.slice(0, 10);
+
+  // Pre-compute revenue per row (dedup: same GA4 campaign shown only once)
+  const seenCampaignNames: string[] = [];
+  const rows = visible.map(c => {
+    const rev = gaConnected ? lookupRevenue(c.name, revenueMap) : null;
+    const showRev = rev !== null && seenCampaignNames.indexOf(rev.campaignName) === -1;
+    if (showRev && rev) seenCampaignNames.push(rev.campaignName);
+    return { c, rev, showRev };
+  });
 
   return (
     <div className="flex-1 overflow-y-auto bg-gray-50 px-6 py-6">
@@ -344,47 +355,34 @@ export default function EmailTab() {
                   <thead>
                     <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
                       <th className="text-left px-5 py-2.5 font-medium">Campaign</th>
-                      <th className="text-left px-4 py-2.5 font-medium cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('sentAt')}>Sent{sortArrow('sentAt')}</th>
-                      <th className="text-right px-4 py-2.5 font-medium cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('sends')}>Sends{sortArrow('sends')}</th>
-                      <th className="text-right px-4 py-2.5 font-medium cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('opens')}>Opens{sortArrow('opens')}</th>
-                      <th className="px-4 py-2.5 font-medium min-w-[130px] cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('openRate')}>Open rate{sortArrow('openRate')}</th>
-                      <th className="text-right px-4 py-2.5 font-medium cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('clicks')}>Clicks{sortArrow('clicks')}</th>
-                      <th className="px-4 py-2.5 font-medium min-w-[120px] cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('clickRate')}>Click rate{sortArrow('clickRate')}</th>
+                      <th className="text-left px-4 py-2.5 font-medium cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('sentAt')}>Sent {sortKey === 'sentAt' ? (sortDir === 'desc' ? 'v' : '^') : ''}</th>
+                      <th className="text-right px-4 py-2.5 font-medium cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('sends')}>Sends {sortKey === 'sends' ? (sortDir === 'desc' ? 'v' : '^') : ''}</th>
+                      <th className="text-right px-4 py-2.5 font-medium cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('opens')}>Opens {sortKey === 'opens' ? (sortDir === 'desc' ? 'v' : '^') : ''}</th>
+                      <th className="px-4 py-2.5 font-medium min-w-[130px] cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('openRate')}>Open rate {sortKey === 'openRate' ? (sortDir === 'desc' ? 'v' : '^') : ''}</th>
+                      <th className="text-right px-4 py-2.5 font-medium cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('clicks')}>Clicks {sortKey === 'clicks' ? (sortDir === 'desc' ? 'v' : '^') : ''}</th>
+                      <th className="px-4 py-2.5 font-medium min-w-[120px] cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('clickRate')}>Click rate {sortKey === 'clickRate' ? (sortDir === 'desc' ? 'v' : '^') : ''}</th>
                       {gaConnected && (
-                        <th className="text-right px-4 py-2.5 font-medium cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('revenue')} title="Campaign-level revenue from GA4. Click to sort. Multiple sends from the same campaign share the same figure.">Cmpgn Rev.{sortArrow('revenue')}</th>
+                        <th className="text-right px-4 py-2.5 font-medium cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('revenue')} title="Campaign-level revenue from GA4. Shows once per campaign group.">Cmpgn Rev. {sortKey === 'revenue' ? (sortDir === 'desc' ? 'v' : '^') : ''}</th>
                       )}
                       <th className="text-right px-5 py-2.5 font-medium">Unsubs</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {(() => {
-                      const shownCampaigns = new Set();
-                      return visible.map(c => {
-                      const rev = gaConnected ? lookupRevenue(c.name, revenueMap) : null;
-                      const isFirstForCampaign = rev
-                        ? !shownCampaigns.has(rev.campaignName)
-                        : false;
-                      if (isFirstForCampaign && rev) shownCampaigns.add(rev.campaignName);
-                      return (
-                        <tr key={c.id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-5 py-3 max-w-xs">
-                            <div className="font-medium text-gray-800 truncate" title={c.name}>{c.name}</div>
-                            {c.subject && (
-                              <div className="text-xs text-gray-400 truncate mt-0.5" title={c.subject}>{c.subject}</div>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{sentDate(c.sentAt)}</td>
-                          <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.sends)}</td>
-                          <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.opens)}</td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <span className={`font-medium tabular-nums ${c.openRate >= 0.2 ? 'text-green-600' : c.openRate >= 0.15 ? 'text-yellow-600' : 'text-red-500'}`}>
-                                {pct(c.openRate)}
-                              </span>
-                              <div className="flex-1 min-w-[60px]">
-                                <RateBar value={c.openRate} color={c.openRate >= 0.2 ? 'bg-green-400' : c.openRate >= 0.15 ? 'bg-yellow-400' : 'bg-red-400'} />
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.clicks)}</td>
-                          <td cl
+                    {rows.map(({ c, rev, showRev }) => (
+                      <tr key={c.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-5 py-3 max-w-xs">
+                          <div className="font-medium text-gray-800 truncate" title={c.name}>{c.name}</div>
+                          {c.subject && (
+                            <div className="text-xs text-gray-400 truncate mt-0.5" title={c.subject}>{c.subject}</div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{sentDate(c.sentAt)}</td>
+                        <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.sends)}</td>
+                        <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.opens)}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className={`font-medium tabular-nums ${c.openRate >= 0.2 ? 'text-green-600' : c.openRate >= 0.15 ? 'text-yellow-600' : 'text-red-500'}`}>
+                              {pct(c.openRate)}
+                            </span>
+                            <div className="flex-1 min-w-[60px]">
+                              <RateBar value={c.openRate} color={c.openRate >= 0.2 ? 'bg-green-400' : c.openRate >= 0.15 ? 'bg-yellow-400' : 'bg-red-400
