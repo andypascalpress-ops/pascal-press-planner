@@ -21,42 +21,20 @@ interface EmailCampaign {
   clickToOpen:    number;
   hsCampaignName: string;
 }
-
 interface EmailData {
-  month:        string | null;
-  campaigns:    EmailCampaign[];
-  connected:    boolean;
-  totalSends:   number;
-  totalOpens:   number;
-  totalClicks:  number;
-  avgOpenRate:  number;
-  avgClickRate: number;
+  month: string | null; campaigns: EmailCampaign[]; connected: boolean;
+  totalSends: number; totalOpens: number; totalClicks: number;
+  avgOpenRate: number; avgClickRate: number;
+}
+interface CampaignRevenue { campaignName: string; revenue: number; transactions: number; }
+interface RevenueData { byCampaign: CampaignRevenue[]; totalRevenue: number; totalTx: number; connected: boolean; }
+interface CampaignGroup { key: string; label: string; rev: CampaignRevenue | null; emails: EmailCampaign[]; }
+interface TrendPoint {
+  month: string; avgOpenRate: number; avgClickRate: number;
+  avgCtor: number; unsubRate: number; totalSends: number; campaigns: number;
 }
 
-interface CampaignRevenue {
-  campaignName: string;
-  revenue:      number;
-  transactions: number;
-}
-
-interface RevenueData {
-  byCampaign:   CampaignRevenue[];
-  totalRevenue: number;
-  totalTx:      number;
-  connected:    boolean;
-}
-
-interface CampaignGroup {
-  key:    string;
-  label:  string;
-  rev:    CampaignRevenue | null;
-  emails: EmailCampaign[];
-}
-
-const MONTH_NAMES = [
-  'January','February','March','April','May','June',
-  'July','August','September','October','November','December',
-];
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 function pct(n: number): string { return (n * 100).toFixed(1) + '%'; }
 function fmt(n: number): string { return n.toLocaleString('en-AU'); }
@@ -83,29 +61,22 @@ function sentDate(iso: string | null): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
 }
-function normName(s: string): string {
-  return s.toLowerCase().replace(/[\s\-]+/g, '_').replace(/[^a-z0-9_]/g, '');
-}
+function normName(s: string): string { return s.toLowerCase().replace(/[\s\-]+/g, '_').replace(/[^a-z0-9_]/g, ''); }
 function stripNumericPrefix(s: string): string { return s.replace(/^\d+[-_]/, ''); }
 function getPrevMonth(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
   const d = new Date(y, m - 2, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
-
 function buildRevenueMap(byCampaign: CampaignRevenue[]): Map<string, CampaignRevenue> {
   const map = new Map<string, CampaignRevenue>();
   for (const c of byCampaign) {
-    const base = stripNumericPrefix(c.campaignName);
-    map.set(normName(base), c);
+    map.set(normName(stripNumericPrefix(c.campaignName)), c);
     map.set(normName(c.campaignName), c);
   }
   return map;
 }
-
-function lookupRevenue(
-  emailName: string, hsCampaignName: string, revenueMap: Map<string, CampaignRevenue>,
-): CampaignRevenue | null {
+function lookupRevenue(emailName: string, hsCampaignName: string, revenueMap: Map<string, CampaignRevenue>): CampaignRevenue | null {
   if (hsCampaignName) {
     const ckey = normName(stripNumericPrefix(hsCampaignName));
     if (ckey.length > 3) {
@@ -125,7 +96,6 @@ function lookupRevenue(
   }
   return null;
 }
-
 function buildGroups(sorted: EmailCampaign[], revenueMap: Map<string, CampaignRevenue>, sortKey: SortKey): CampaignGroup[] {
   const groupMap = new Map<string, CampaignGroup>();
   const groupOrder: string[] = [];
@@ -147,7 +117,6 @@ function buildGroups(sorted: EmailCampaign[], revenueMap: Map<string, CampaignRe
   }
   return groupOrder.map(k => groupMap.get(k)!);
 }
-
 function getSortNum(c: EmailCampaign, key: SortKey, revMap: Map<string, CampaignRevenue>): number {
   if (key === 'sentAt')    return c.sentAt ? new Date(c.sentAt).getTime() : 0;
   if (key === 'sends')     return c.sends;
@@ -161,11 +130,9 @@ function getSortNum(c: EmailCampaign, key: SortKey, revMap: Map<string, Campaign
   return 0;
 }
 
-// ── Sub-components ───────────────────────────────────────────────────────────
+// ── Sub-components ────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, sub, delta, warn }: {
-  label: string; value: string; sub?: string; delta?: ReactNode; warn?: boolean;
-}) {
+function StatCard({ label, value, sub, delta, warn }: { label: string; value: string; sub?: string; delta?: ReactNode; warn?: boolean }) {
   return (
     <div className={`rounded-xl border shadow-sm px-5 py-4 ${warn ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'}`}>
       <div className="text-xs text-gray-500 mb-1">{label}</div>
@@ -177,76 +144,210 @@ function StatCard({ label, value, sub, delta, warn }: {
     </div>
   );
 }
-
 function MomDelta({ curr, prev, invert = false }: { curr: number; prev: number; invert?: boolean }) {
   if (prev === 0) return null;
   const change = ((curr - prev) / prev) * 100;
   if (Math.abs(change) < 0.5) return null;
   const isGood = invert ? change < 0 : change > 0;
-  return (
-    <span className={`text-xs font-semibold ${isGood ? 'text-green-600' : 'text-red-500'}`}>
-      {change > 0 ? '↑' : '↓'}{Math.abs(change).toFixed(1)}%
-    </span>
-  );
+  return <span className={`text-xs font-semibold ${isGood ? 'text-green-600' : 'text-red-500'}`}>{change > 0 ? '↑' : '↓'}{Math.abs(change).toFixed(1)}%</span>;
 }
-
 function RateBar({ value, color }: { value: number; color: string }) {
-  const w = Math.min(value * 100, 100).toFixed(1);
   return (
     <div className="w-full bg-gray-100 rounded-full h-1.5 mt-1">
-      <div className={`h-1.5 rounded-full ${color}`} style={{ width: `${w}%` }} />
+      <div className={`h-1.5 rounded-full ${color}`} style={{ width: `${Math.min(value * 100, 100).toFixed(1)}%` }} />
+    </div>
+  );
+}
+function openColors(r: number) {
+  return r >= 0.2 ? { text: 'text-green-600', bar: 'bg-green-400' } : r >= 0.15 ? { text: 'text-yellow-600', bar: 'bg-yellow-400' } : { text: 'text-red-500', bar: 'bg-red-400' };
+}
+function clkColors(r: number) {
+  return r >= 0.03 ? { text: 'text-green-600', bar: 'bg-green-400' } : r >= 0.015 ? { text: 'text-yellow-600', bar: 'bg-yellow-400' } : { text: 'text-red-500', bar: 'bg-red-400' };
+}
+function ctorColor(r: number): string { return r >= 0.15 ? 'text-green-600' : r >= 0.08 ? 'text-yellow-600' : 'text-red-500'; }
+function unsubColor(r: number): string { return r <= 0.002 ? 'text-green-600' : r <= 0.005 ? 'text-yellow-600' : 'text-red-500'; }
+
+// ── Trend Chart ───────────────────────────────────────────────────────────────
+
+function TrendChart({ data, selectedMonth }: { data: TrendPoint[]; selectedMonth: string }) {
+  const [hovered, setHovered] = useState<number | null>(null);
+
+  // Filter to months with sends
+  const pts = data.filter(d => d.totalSends > 0);
+  if (pts.length < 2) {
+    return <div className="text-sm text-gray-400 text-center py-8">Not enough data yet — needs at least 2 months with sends.</div>;
+  }
+
+  const W = 760, H = 210;
+  const PAD = { top: 20, right: 54, bottom: 36, left: 46 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top - PAD.bottom;
+
+  // Left axis scale: open rate + click rate
+  const maxLeft = Math.max(...pts.map(d => d.avgOpenRate), 0.30);
+  const leftCeil  = Math.ceil(maxLeft / 0.1) * 0.1; // round up to nearest 10%
+
+  // Right axis scale: unsubscribe rate
+  const maxRight = Math.max(...pts.map(d => d.unsubRate), 0.005);
+  const rightCeil = Math.ceil(maxRight / 0.001) * 0.001; // round up to nearest 0.1%
+
+  const xOf   = (i: number) => PAD.left + (i / (pts.length - 1)) * chartW;
+  const yL    = (v: number) => PAD.top + chartH * (1 - v / leftCeil);
+  const yR    = (v: number) => PAD.top + chartH * (1 - v / rightCeil);
+
+  const openPts  = pts.map((d, i) => `${xOf(i).toFixed(1)},${yL(d.avgOpenRate).toFixed(1)}`).join(' ');
+  const clickPts = pts.map((d, i) => `${xOf(i).toFixed(1)},${yL(d.avgClickRate).toFixed(1)}`).join(' ');
+  const unsubPts = pts.map((d, i) => `${xOf(i).toFixed(1)},${yR(d.unsubRate).toFixed(1)}`).join(' ');
+
+  const leftGrids: number[] = [];
+  for (let v = 0; v <= leftCeil + 0.001; v += 0.1) leftGrids.push(Math.round(v * 100) / 100);
+
+  const rightGridVals = [0, rightCeil / 2, rightCeil];
+
+  const monthAbbr = (ym: string) => {
+    const [yr, mo] = ym.split('-');
+    const abbr = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(mo) - 1] ?? '';
+    return parseInt(mo) === 1 ? `${abbr} '${yr.slice(2)}` : abbr;
+  };
+
+  const hlIdx = pts.findIndex(d => d.month === selectedMonth);
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 230 }}>
+        {/* Left grid lines */}
+        {leftGrids.map(v => (
+          <g key={v}>
+            <line x1={PAD.left} y1={yL(v)} x2={W - PAD.right} y2={yL(v)} stroke="#f3f4f6" strokeWidth={1} />
+            <text x={PAD.left - 6} y={yL(v) + 4} textAnchor="end" fontSize={10} fill="#9ca3af">{(v * 100).toFixed(0)}%</text>
+          </g>
+        ))}
+
+        {/* Right axis labels (unsub) */}
+        {rightGridVals.map((v, i) => (
+          <text key={i} x={W - PAD.right + 6} y={yR(v) + 4} textAnchor="start" fontSize={9} fill="#ef4444" opacity={0.65}>
+            {(v * 100).toFixed(2)}%
+          </text>
+        ))}
+
+        {/* Axis border lines */}
+        <line x1={PAD.left} y1={PAD.top} x2={PAD.left} y2={H - PAD.bottom} stroke="#e5e7eb" strokeWidth={1} />
+        <line x1={W - PAD.right} y1={PAD.top} x2={W - PAD.right} y2={H - PAD.bottom} stroke="#fca5a5" strokeWidth={1} opacity={0.5} />
+
+        {/* Selected month highlight */}
+        {hlIdx >= 0 && (
+          <line x1={xOf(hlIdx)} y1={PAD.top} x2={xOf(hlIdx)} y2={H - PAD.bottom} stroke="#6366f1" strokeWidth={1.5} strokeDasharray="4,3" opacity={0.5} />
+        )}
+
+        {/* Unsubscribe rate (dashed red, right axis) */}
+        <polyline points={unsubPts} fill="none" stroke="#ef4444" strokeWidth={1.5} strokeDasharray="5,3" strokeLinecap="round" strokeLinejoin="round" />
+
+        {/* Open rate */}
+        <polyline points={openPts} fill="none" stroke="#3b82f6" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+
+        {/* Click rate */}
+        <polyline points={clickPts} fill="none" stroke="#10b981" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+
+        {/* Data points + hover areas */}
+        {pts.map((d, i) => (
+          <g key={i}>
+            <circle cx={xOf(i)} cy={yL(d.avgOpenRate)} r={hovered === i ? 5 : 3.5} fill="#3b82f6" />
+            <circle cx={xOf(i)} cy={yL(d.avgClickRate)} r={hovered === i ? 4 : 2.5} fill="#10b981" />
+            <circle cx={xOf(i)} cy={yR(d.unsubRate)} r={hovered === i ? 4 : 2.5} fill="#ef4444" />
+            <rect
+              x={i === 0 ? xOf(i) : (xOf(i) + xOf(i - 1)) / 2}
+              y={PAD.top}
+              width={pts.length === 1 ? chartW : i === 0 || i === pts.length - 1 ? chartW / (pts.length - 1) / 2 : (xOf(i + 1 < pts.length ? i + 1 : i) - xOf(i - 1)) / 2}
+              height={chartH}
+              fill="transparent"
+              style={{ cursor: 'crosshair' }}
+              onMouseEnter={() => setHovered(i)}
+              onMouseLeave={() => setHovered(null)}
+            />
+          </g>
+        ))}
+
+        {/* X axis labels */}
+        {pts.map((d, i) => (
+          <text key={i} x={xOf(i)} y={H - 6} textAnchor="middle" fontSize={10} fill={d.month === selectedMonth ? '#6366f1' : '#9ca3af'} fontWeight={d.month === selectedMonth ? 600 : 400}>
+            {monthAbbr(d.month)}
+          </text>
+        ))}
+
+        {/* Hover tooltip */}
+        {hovered !== null && (() => {
+          const d = pts[hovered];
+          const x = xOf(hovered);
+          const tw = 158, th = 84;
+          const tx = x + tw + 14 > W - PAD.right ? x - tw - 10 : x + 10;
+          const ty = Math.max(PAD.top, Math.min(PAD.top + chartH - th, yL(d.avgOpenRate) - th / 2));
+          return (
+            <g pointerEvents="none">
+              <rect x={tx} y={ty} width={tw} height={th} rx={6} fill="white" stroke="#e5e7eb" strokeWidth={1} />
+              <text x={tx + tw / 2} y={ty + 15} textAnchor="middle" fontSize={11} fontWeight={600} fill="#374151">{monthLabel(d.month)}</text>
+              <text x={tx + tw / 2} y={ty + 27} textAnchor="middle" fontSize={9} fill="#9ca3af">{fmt(d.totalSends)} sends &middot; {d.campaigns} emails</text>
+              <circle cx={tx + 13} cy={ty + 42} r={4} fill="#3b82f6" />
+              <text x={tx + 22} y={ty + 46} fontSize={10} fill="#374151">Open rate: {pct(d.avgOpenRate)}</text>
+              <circle cx={tx + 13} cy={ty + 57} r={3.5} fill="#10b981" />
+              <text x={tx + 22} y={ty + 61} fontSize={10} fill="#374151">Click rate: {pct(d.avgClickRate)}</text>
+              <circle cx={tx + 13} cy={ty + 71} r={3} fill="#ef4444" />
+              <text x={tx + 22} y={ty + 75} fontSize={10} fill="#374151">Unsub rate: {pct(d.unsubRate)}</text>
+            </g>
+          );
+        })()}
+      </svg>
+
+      {/* Legend */}
+      <div className="flex items-center justify-center gap-6 text-xs text-gray-500 -mt-1">
+        <span className="flex items-center gap-1.5">
+          <svg width="18" height="6"><line x1="0" y1="3" x2="18" y2="3" stroke="#3b82f6" strokeWidth="2.5" /></svg>
+          Open Rate (left axis)
+        </span>
+        <span className="flex items-center gap-1.5">
+          <svg width="18" height="6"><line x1="0" y1="3" x2="18" y2="3" stroke="#10b981" strokeWidth="2" /></svg>
+          Click Rate (left axis)
+        </span>
+        <span className="flex items-center gap-1.5">
+          <svg width="18" height="6"><line x1="0" y1="3" x2="18" y2="3" stroke="#ef4444" strokeWidth="1.5" strokeDasharray="5,3" /></svg>
+          Unsub Rate (right axis)
+        </span>
+      </div>
     </div>
   );
 }
 
-function openColors(r: number) {
-  return r >= 0.2  ? { text: 'text-green-600',  bar: 'bg-green-400'  }
-       : r >= 0.15 ? { text: 'text-yellow-600', bar: 'bg-yellow-400' }
-       :             { text: 'text-red-500',     bar: 'bg-red-400'    };
-}
-function clkColors(r: number) {
-  return r >= 0.03  ? { text: 'text-green-600',  bar: 'bg-green-400'  }
-       : r >= 0.015 ? { text: 'text-yellow-600', bar: 'bg-yellow-400' }
-       :              { text: 'text-red-500',     bar: 'bg-red-400'    };
-}
-function ctorColor(r: number): string {
-  return r >= 0.15 ? 'text-green-600' : r >= 0.08 ? 'text-yellow-600' : 'text-red-500';
-}
-function unsubColor(r: number): string {
-  return r <= 0.002 ? 'text-green-600' : r <= 0.005 ? 'text-yellow-600' : 'text-red-500';
-}
-
-// ── Main component ───────────────────────────────────────────────────────────
+// ── Main component ────────────────────────────────────────────────────────────
 
 export default function EmailTab() {
   const [selectedMonth, setSelectedMonth] = useState<string>('');
-  const [showAll,      setShowAll]        = useState(false);
-  const [showGa4Panel, setShowGa4Panel]   = useState(false);
-  const [data,         setData]           = useState<EmailData | null>(null);
-  const [prevData,     setPrevData]       = useState<EmailData | null>(null);
-  const [revenueData,  setRevenueData]    = useState<RevenueData | null>(null);
-  const [prevRevData,  setPrevRevData]    = useState<RevenueData | null>(null);
-  const [loading,      setLoading]        = useState(false);
-  const [revLoading,   setRevLoading]     = useState(false);
-  const [sortKey,      setSortKey]        = useState<SortKey>('sentAt');
-  const [sortDir,      setSortDir]        = useState<SortDir>('desc');
+  const [showAll,       setShowAll]       = useState(false);
+  const [showGa4Panel,  setShowGa4Panel]  = useState(false);
+  const [showTrend,     setShowTrend]     = useState(false);
+  const [data,          setData]          = useState<EmailData | null>(null);
+  const [prevData,      setPrevData]      = useState<EmailData | null>(null);
+  const [revenueData,   setRevenueData]   = useState<RevenueData | null>(null);
+  const [prevRevData,   setPrevRevData]   = useState<RevenueData | null>(null);
+  const [trendData,     setTrendData]     = useState<TrendPoint[] | null>(null);
+  const [loading,       setLoading]       = useState(false);
+  const [revLoading,    setRevLoading]    = useState(false);
+  const [trendLoading,  setTrendLoading]  = useState(false);
+  const [sortKey,       setSortKey]       = useState<SortKey>('sentAt');
+  const [sortDir,       setSortDir]       = useState<SortDir>('desc');
 
   const monthOptions = buildMonthOptions();
 
-  // Fetch current month HubSpot data
+  // Current month HubSpot
   useEffect(() => {
     setLoading(true); setData(null);
     const url = selectedMonth ? `/api/hubspot-email?month=${selectedMonth}` : '/api/hubspot-email';
     fetch(url).then(r => r.json()).then((d: EmailData) => setData(d)).catch(() => setData(null)).finally(() => setLoading(false));
   }, [selectedMonth]);
 
-  // Fetch GA4 revenue + previous month data (all in parallel)
+  // GA4 revenue + previous month data (parallel)
   useEffect(() => {
     const ctrl = new AbortController();
     setRevenueData(null); setPrevData(null); setPrevRevData(null); setRevLoading(true);
-
-    let start = '2022-01-01', end = 'today';
-    let prevStart = '', prevEnd = '';
+    let start = '2022-01-01', end = 'today', prevStart = '', prevEnd = '';
     if (selectedMonth) {
       const [y, m] = selectedMonth.split('-').map(Number);
       start = `${selectedMonth}-01`;
@@ -256,7 +357,6 @@ export default function EmailTab() {
       prevStart = `${prev}-01`;
       prevEnd   = `${prev}-${String(new Date(py, pm, 0).getDate()).padStart(2, '0')}`;
     }
-
     const jobs: Promise<void>[] = [
       fetch(`/api/ga-email-revenue?start=${start}&end=${end}`, { signal: ctrl.signal })
         .then(r => r.json()).then((d: RevenueData) => setRevenueData(d))
@@ -274,7 +374,17 @@ export default function EmailTab() {
     return () => ctrl.abort();
   }, [selectedMonth]);
 
-  // ── Derived values ───────────────────────────────────────────────────────
+  // Trend data — lazy: only fetch when user opens the trend panel
+  useEffect(() => {
+    if (!showTrend || trendData) return;
+    setTrendLoading(true);
+    fetch('/api/hubspot-email-trend')
+      .then(r => r.json()).then((d: TrendPoint[]) => setTrendData(Array.isArray(d) ? d : null))
+      .catch(() => setTrendData(null))
+      .finally(() => setTrendLoading(false));
+  }, [showTrend, trendData]);
+
+  // ── Derived values ────────────────────────────────────────────────────────
 
   const campaigns    = data?.campaigns ?? [];
   const revenueMap   = buildRevenueMap(revenueData?.byCampaign ?? []);
@@ -298,14 +408,12 @@ export default function EmailTab() {
   const prevRevPerSend = safeDiv(prevRevenue, prevSends);
   const hasMoM         = !!selectedMonth && !!prevData?.connected;
 
-  // Top performers (meaningful sample sizes only)
   const bestOpenRate   = [...campaigns].filter(c => c.sends >= 100).sort((a, b) => b.openRate - a.openRate)[0] ?? null;
   const bestCtor       = [...campaigns].filter(c => c.opens >= 50).sort((a, b) => b.clickToOpen - a.clickToOpen)[0] ?? null;
   const topRevCampaign = (revenueData?.byCampaign ?? []).filter(c => c.campaignName !== '(not set)').sort((a, b) => b.revenue - a.revenue)[0] ?? null;
 
-  // Sorting
   const handleSort = (col: SortKey) => {
-    if (sortKey === col) setSortDir((d: SortDir) => d === 'asc' ? 'desc' : 'asc');
+    if (sortKey === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortKey(col); setSortDir('desc'); }
   };
   const arw = (col: SortKey) => sortKey === col ? (sortDir === 'desc' ? ' ↓' : ' ↑') : '';
@@ -315,11 +423,10 @@ export default function EmailTab() {
   });
   const groups  = (gaConnected && !revLoading) ? buildGroups(sorted, revenueMap, sortKey) : null;
   const visible = showAll ? sorted : sorted.slice(0, 10);
-
   const matchedGa4Keys = new Set<string>();
   if (groups) for (const g of groups) { if (g.key !== '__unmatched__') matchedGa4Keys.add(g.key); }
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex-1 overflow-y-auto bg-gray-50 px-6 py-6">
@@ -329,18 +436,30 @@ export default function EmailTab() {
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Email Marketing</h2>
           <p className="text-sm text-gray-500">
-            HubSpot performance &middot; GA4 revenue &middot;{' '}
-            {hasMoM ? `vs ${monthLabel(getPrevMonth(selectedMonth))}` : 'select a month for MoM'}
+            HubSpot &middot; GA4 revenue &middot; {hasMoM ? `vs ${monthLabel(getPrevMonth(selectedMonth))}` : 'select month for MoM'}
           </p>
         </div>
-        <select
-          value={selectedMonth}
-          onChange={e => { setSelectedMonth(e.target.value); setShowAll(false); }}
-          className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="">All time</option>
-          {monthOptions.map(ym => <option key={ym} value={ym}>{monthLabel(ym)}</option>)}
-        </select>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowTrend(v => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors ${
+              showTrend ? 'bg-indigo-600 text-white border-indigo-600' : 'text-indigo-600 border-indigo-300 hover:bg-indigo-50'
+            }`}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="1,11 4,6 7,8 10,3 13,5"/>
+            </svg>
+            12-Month Trend
+          </button>
+          <select
+            value={selectedMonth}
+            onChange={e => { setSelectedMonth(e.target.value); setShowAll(false); }}
+            className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">All time</option>
+            {monthOptions.map(ym => <option key={ym} value={ym}>{monthLabel(ym)}</option>)}
+          </select>
+        </div>
       </div>
 
       {/* HubSpot not connected */}
@@ -351,12 +470,25 @@ export default function EmailTab() {
         </div>
       )}
 
-      {loading && (
-        <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading campaigns&hellip;</div>
-      )}
+      {loading && <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading campaigns&hellip;</div>}
 
       {!loading && data?.connected && (
         <>
+          {/* ── 12-Month Trend Chart ── */}
+          {showTrend && (
+            <div className="bg-white border border-gray-200 rounded-xl p-5 mb-5">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <span className="text-sm font-medium text-gray-700">12-Month Performance Trend</span>
+                  {selectedMonth && <span className="ml-2 text-xs text-indigo-500">&#x2022; {monthLabel(selectedMonth)} highlighted</span>}
+                </div>
+              </div>
+              {trendLoading && <div className="flex items-center justify-center h-40 text-gray-400 text-sm">Loading 12 months of data&hellip; this takes a moment</div>}
+              {!trendLoading && trendData && <TrendChart data={trendData} selectedMonth={selectedMonth} />}
+              {!trendLoading && !trendData && <div className="text-sm text-red-500 text-center py-8">Could not load trend data.</div>}
+            </div>
+          )}
+
           {/* ── Top Performers ── */}
           {campaigns.length > 0 && (bestOpenRate || bestCtor || (gaConnected && topRevCampaign)) && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
@@ -387,7 +519,7 @@ export default function EmailTab() {
             </div>
           )}
 
-          {/* ── Stat cards: row 1 — volume & engagement ── */}
+          {/* ── Stat cards row 1 ── */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
             <StatCard label="Sends" value={fmt(totalSends)} sub={monthLabel(selectedMonth)}
               delta={hasMoM ? <MomDelta curr={totalSends} prev={prevSends} /> : undefined} />
@@ -400,26 +532,24 @@ export default function EmailTab() {
               delta={hasMoM ? <MomDelta curr={data.avgClickRate} prev={prevData?.avgClickRate ?? 0} /> : undefined} />
           </div>
 
-          {/* ── Stat cards: row 2 — quality & commercial ── */}
+          {/* ── Stat cards row 2 ── */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
             <StatCard label="Click-to-Open Rate" value={pct(avgCtor)} sub="content engagement quality"
               delta={hasMoM ? <MomDelta curr={avgCtor} prev={prevCtor} /> : undefined} />
             <StatCard label="Unsubscribe Rate" value={pct(unsubRate)} sub={`${fmt(totalUnsubs)} unsubscribes`}
               delta={hasMoM ? <MomDelta curr={unsubRate} prev={prevUnsubRate} invert /> : undefined}
               warn={unsubRate > 0.005} />
-            <StatCard
-              label="Revenue (GA4)"
+            <StatCard label="Revenue (GA4)"
               value={revLoading ? '…' : gaConnected ? fmtAUD(totalRevenue) : '—'}
               sub={revLoading ? 'loading…' : gaConnected ? `${fmt(revenueData?.totalTx ?? 0)} transactions` : 'GA4 not connected'}
               delta={hasMoM && gaConnected ? <MomDelta curr={totalRevenue} prev={prevRevenue} /> : undefined} />
-            <StatCard
-              label="Revenue per Send"
+            <StatCard label="Revenue per Send"
               value={revLoading ? '…' : gaConnected && revPerSend > 0 ? `$${revPerSend.toFixed(3)}` : '—'}
               sub={gaConnected ? 'avg value per email sent' : 'GA4 not connected'}
               delta={hasMoM && gaConnected ? <MomDelta curr={revPerSend} prev={prevRevPerSend} /> : undefined} />
           </div>
 
-          {/* ── GA4 campaign breakdown panel ── */}
+          {/* ── GA4 panel ── */}
           {gaConnected && !revLoading && (revenueData?.byCampaign ?? []).length > 0 && (
             <div className="bg-white border border-gray-200 rounded-xl mb-5 overflow-hidden">
               <button className="w-full flex items-center justify-between px-5 py-3 text-left" onClick={() => setShowGa4Panel(v => !v)}>
@@ -461,9 +591,7 @@ export default function EmailTab() {
 
           {/* ── Campaign Table ── */}
           {campaigns.length === 0 ? (
-            <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400 text-sm">
-              No campaigns sent in {monthLabel(selectedMonth)}
-            </div>
+            <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400 text-sm">No campaigns sent in {monthLabel(selectedMonth)}</div>
           ) : (
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
@@ -489,8 +617,8 @@ export default function EmailTab() {
                   <tbody>
                     {groups ? (
                       groups.map(group => {
-                        const groupSends = group.emails.reduce((s, c) => s + c.sends, 0);
-                        const rps = group.rev && groupSends > 0 ? safeDiv(group.rev.revenue, groupSends) : 0;
+                        const gs = group.emails.reduce((s, c) => s + c.sends, 0);
+                        const rps = group.rev && gs > 0 ? safeDiv(group.rev.revenue, gs) : 0;
                         return (
                           <Fragment key={group.key}>
                             <tr className="bg-slate-50 border-t-2 border-slate-200">
@@ -509,8 +637,7 @@ export default function EmailTab() {
                               )}
                             </tr>
                             {group.emails.map(c => {
-                              const oc = openColors(c.openRate);
-                              const cc = clkColors(c.clickRate);
+                              const oc = openColors(c.openRate), cc = clkColors(c.clickRate);
                               const ur = safeDiv(c.unsubscribes, c.sends);
                               return (
                                 <tr key={c.id} className="hover:bg-gray-50 transition-colors border-t border-gray-50">
@@ -520,24 +647,10 @@ export default function EmailTab() {
                                   </td>
                                   <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap text-xs">{sentDate(c.sentAt)}</td>
                                   <td className="px-4 py-2.5 text-right text-gray-700 font-mono text-xs">{fmt(c.sends)}</td>
-                                  <td className="px-4 py-2.5">
-                                    <div className="flex items-center gap-2">
-                                      <span className={`font-medium tabular-nums text-xs ${oc.text}`}>{pct(c.openRate)}</span>
-                                      <div className="flex-1 min-w-[50px]"><RateBar value={c.openRate} color={oc.bar} /></div>
-                                    </div>
-                                  </td>
-                                  <td className="px-4 py-2.5">
-                                    <div className="flex items-center gap-2">
-                                      <span className={`font-medium tabular-nums text-xs ${cc.text}`}>{pct(c.clickRate)}</span>
-                                      <div className="flex-1 min-w-[50px]"><RateBar value={c.clickRate * 10} color={cc.bar} /></div>
-                                    </div>
-                                  </td>
-                                  <td className={`px-4 py-2.5 text-right font-medium text-xs tabular-nums ${c.opens > 0 ? ctorColor(c.clickToOpen) : 'text-gray-300'}`}>
-                                    {c.opens > 0 ? pct(c.clickToOpen) : '—'}
-                                  </td>
-                                  <td className={`px-4 py-2.5 text-right font-medium text-xs tabular-nums ${c.sends > 0 ? unsubColor(ur) : 'text-gray-300'}`}>
-                                    {c.sends > 0 ? pct(ur) : '—'}
-                                  </td>
+                                  <td className="px-4 py-2.5"><div className="flex items-center gap-2"><span className={`font-medium tabular-nums text-xs ${oc.text}`}>{pct(c.openRate)}</span><div className="flex-1 min-w-[50px]"><RateBar value={c.openRate} color={oc.bar} /></div></div></td>
+                                  <td className="px-4 py-2.5"><div className="flex items-center gap-2"><span className={`font-medium tabular-nums text-xs ${cc.text}`}>{pct(c.clickRate)}</span><div className="flex-1 min-w-[50px]"><RateBar value={c.clickRate * 10} color={cc.bar} /></div></div></td>
+                                  <td className={`px-4 py-2.5 text-right font-medium text-xs tabular-nums ${c.opens > 0 ? ctorColor(c.clickToOpen) : 'text-gray-300'}`}>{c.opens > 0 ? pct(c.clickToOpen) : '—'}</td>
+                                  <td className={`px-4 py-2.5 text-right font-medium text-xs tabular-nums ${c.sends > 0 ? unsubColor(ur) : 'text-gray-300'}`}>{c.sends > 0 ? pct(ur) : '—'}</td>
                                   {gaConnected && <td />}
                                 </tr>
                               );
@@ -548,8 +661,7 @@ export default function EmailTab() {
                     ) : (
                       <>
                         {visible.map(c => {
-                          const oc = openColors(c.openRate);
-                          const cc = clkColors(c.clickRate);
+                          const oc = openColors(c.openRate), cc = clkColors(c.clickRate);
                           const ur = safeDiv(c.unsubscribes, c.sends);
                           return (
                             <tr key={c.id} className="hover:bg-gray-50 transition-colors border-t border-gray-50">
@@ -559,24 +671,10 @@ export default function EmailTab() {
                               </td>
                               <td className="px-4 py-3 text-gray-500 whitespace-nowrap text-xs">{sentDate(c.sentAt)}</td>
                               <td className="px-4 py-3 text-right text-gray-700 font-mono text-xs">{fmt(c.sends)}</td>
-                              <td className="px-4 py-3">
-                                <div className="flex items-center gap-2">
-                                  <span className={`font-medium tabular-nums text-xs ${oc.text}`}>{pct(c.openRate)}</span>
-                                  <div className="flex-1 min-w-[50px]"><RateBar value={c.openRate} color={oc.bar} /></div>
-                                </div>
-                              </td>
-                              <td className="px-4 py-3">
-                                <div className="flex items-center gap-2">
-                                  <span className={`font-medium tabular-nums text-xs ${cc.text}`}>{pct(c.clickRate)}</span>
-                                  <div className="flex-1 min-w-[50px]"><RateBar value={c.clickRate * 10} color={cc.bar} /></div>
-                                </div>
-                              </td>
-                              <td className={`px-4 py-3 text-right font-medium text-xs tabular-nums ${c.opens > 0 ? ctorColor(c.clickToOpen) : 'text-gray-300'}`}>
-                                {c.opens > 0 ? pct(c.clickToOpen) : '—'}
-                              </td>
-                              <td className={`px-4 py-3 text-right font-medium text-xs tabular-nums ${c.sends > 0 ? unsubColor(ur) : 'text-gray-300'}`}>
-                                {c.sends > 0 ? pct(ur) : '—'}
-                              </td>
+                              <td className="px-4 py-3"><div className="flex items-center gap-2"><span className={`font-medium tabular-nums text-xs ${oc.text}`}>{pct(c.openRate)}</span><div className="flex-1 min-w-[50px]"><RateBar value={c.openRate} color={oc.bar} /></div></div></td>
+                              <td className="px-4 py-3"><div className="flex items-center gap-2"><span className={`font-medium tabular-nums text-xs ${cc.text}`}>{pct(c.clickRate)}</span><div className="flex-1 min-w-[50px]"><RateBar value={c.clickRate * 10} color={cc.bar} /></div></div></td>
+                              <td className={`px-4 py-3 text-right font-medium text-xs tabular-nums ${c.opens > 0 ? ctorColor(c.clickToOpen) : 'text-gray-300'}`}>{c.opens > 0 ? pct(c.clickToOpen) : '—'}</td>
+                              <td className={`px-4 py-3 text-right font-medium text-xs tabular-nums ${c.sends > 0 ? unsubColor(ur) : 'text-gray-300'}`}>{c.sends > 0 ? pct(ur) : '—'}</td>
                               {gaConnected && <td className="px-4 py-3 text-right text-gray-300 text-xs">&hellip;</td>}
                             </tr>
                           );
@@ -598,7 +696,7 @@ export default function EmailTab() {
             </div>
           )}
 
-          {/* ── Benchmarks legend ── */}
+          {/* ── Benchmarks ── */}
           <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-500">
             <span>Open rate: <span className="text-green-600 font-medium">20%+</span> &middot; <span className="text-yellow-600 font-medium">15&ndash;20%</span> &middot; <span className="text-red-500 font-medium">&lt;15%</span></span>
             <span>Click rate: <span className="text-green-600 font-medium">3%+</span> &middot; <span className="text-yellow-600 font-medium">1.5&ndash;3%</span> &middot; <span className="text-red-500 font-medium">&lt;1.5%</span></span>
