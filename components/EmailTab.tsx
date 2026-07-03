@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 
+type SortKey = 'sentAt' | 'sends' | 'opens' | 'openRate' | 'clicks' | 'clickRate' | 'revenue';
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface EmailCampaign {
@@ -173,6 +175,8 @@ export default function EmailTab() {
   const [data,          setData]          = useState<EmailData | null>(null);
   const [revenueData,   setRevenueData]   = useState<RevenueData | null>(null);
   const [loading,       setLoading]       = useState(false);
+  const [sortKey,       setSortKey]       = useState<SortKey>('sentAt');
+  const [sortDir,       setSortDir]       = useState<'asc' | 'desc'>('desc');
 
   const monthOptions = buildMonthOptions();
 
@@ -206,10 +210,37 @@ export default function EmailTab() {
       .catch(() => setRevenueData(null));
   }, [selectedMonth]);
 
-  const campaigns  = data?.campaigns ?? [];
-  const visible    = showAll ? campaigns : campaigns.slice(0, 10);
-  const revenueMap = buildRevenueMap(revenueData?.byCampaign ?? []);
+  const campaigns   = data?.campaigns ?? [];
+  const revenueMap  = buildRevenueMap(revenueData?.byCampaign ?? []);
   const gaConnected = revenueData?.connected ?? false;
+
+  const handleSort = (col: SortKey) => {
+    if (sortKey === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortKey(col); setSortDir('desc'); }
+  };
+  const sortArrow = (col: SortKey) =>
+    sortKey === col ? (sortDir === 'desc' ? ' ↓' : ' ↑') : '';
+
+  const sorted = [...campaigns].sort((a, b) => {
+    const getVal = (c: EmailCampaign): number | string => {
+      switch (sortKey) {
+        case 'sentAt':    return c.sentAt ?? '';
+        case 'sends':     return c.sends;
+        case 'opens':     return c.opens;
+        case 'openRate':  return c.openRate;
+        case 'clicks':    return c.clicks;
+        case 'clickRate': return c.clickRate;
+        case 'revenue':   return lookupRevenue(c.name, revenueMap)?.revenue ?? 0;
+        default:          return 0;
+      }
+    };
+    const va = getVal(a), vb = getVal(b);
+    if (va < vb) return sortDir === 'asc' ? -1 : 1;
+    if (va > vb) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  const visible = showAll ? sorted : sorted.slice(0, 10);
 
   return (
     <div className="flex-1 overflow-y-auto bg-gray-50 px-6 py-6">
@@ -314,14 +345,14 @@ export default function EmailTab() {
                   <thead>
                     <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
                       <th className="text-left px-5 py-2.5 font-medium">Campaign</th>
-                      <th className="text-left px-4 py-2.5 font-medium">Sent</th>
-                      <th className="text-right px-4 py-2.5 font-medium">Sends</th>
-                      <th className="text-right px-4 py-2.5 font-medium">Opens</th>
-                      <th className="px-4 py-2.5 font-medium min-w-[130px]">Open rate</th>
-                      <th className="text-right px-4 py-2.5 font-medium">Clicks</th>
-                      <th className="px-4 py-2.5 font-medium min-w-[120px]">Click rate</th>
+                      <th className="text-left px-4 py-2.5 font-medium cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('sentAt')}>Sent{sortArrow('sentAt')}</th>
+                      <th className="text-right px-4 py-2.5 font-medium cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('sends')}>Sends{sortArrow('sends')}</th>
+                      <th className="text-right px-4 py-2.5 font-medium cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('opens')}>Opens{sortArrow('opens')}</th>
+                      <th className="px-4 py-2.5 font-medium min-w-[130px] cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('openRate')}>Open rate{sortArrow('openRate')}</th>
+                      <th className="text-right px-4 py-2.5 font-medium cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('clicks')}>Clicks{sortArrow('clicks')}</th>
+                      <th className="px-4 py-2.5 font-medium min-w-[120px] cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('clickRate')}>Click rate{sortArrow('clickRate')}</th>
                       {gaConnected && (
-                        <th className="text-right px-4 py-2.5 font-medium" title="Campaign-level revenue from GA4. Shows once per campaign group — multiple sends share the same figure.">Cmpgn Rev.</th>
+                        <th className="text-right px-4 py-2.5 font-medium cursor-pointer hover:text-gray-700 select-none" onClick={() => handleSort('revenue')} title="Campaign-level revenue from GA4. Click to sort. Multiple sends from the same campaign share the same figure.">Cmpgn Rev.{sortArrow('revenue')}</th>
                       )}
                       <th className="text-right px-5 py-2.5 font-medium">Unsubs</th>
                     </tr>
@@ -357,44 +388,4 @@ export default function EmailTab() {
                             </div>
                           </td>
                           <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.clicks)}</td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <span className={`font-medium tabular-nums ${c.clickRate >= 0.03 ? 'text-green-600' : c.clickRate >= 0.015 ? 'text-yellow-600' : 'text-red-500'}`}>
-                                {pct(c.clickRate)}
-                              </span>
-                              <div className="flex-1 min-w-[60px]">
-                                <RateBar value={c.clickRate * 10} color={c.clickRate >= 0.03 ? 'bg-green-400' : c.clickRate >= 0.015 ? 'bg-yellow-400' : 'bg-red-400'} />
-                              </div>
-                            </div>
-                          </td>
-                          {gaConnected && (
-                            <td className="px-4 py-3 text-right font-mono text-emerald-700 font-medium">
-                              {rev && isFirstForCampaign
-                                ? fmtAUD(rev.revenue)
-                                : <span className="text-gray-300">—</span>}
-                            </td>
-                          )}
-                          <td className="px-5 py-3 text-right text-gray-500 font-mono">{fmt(c.unsubscribes)}</td>
-                        </tr>
-                      );
-                    });
-                    })()}
-                  </tbody>
-                </table>
-              </div>
-
-              {campaigns.length > 10 && (
-                <div className="px-5 py-3 border-t border-gray-100 text-center">
-                  <button
-                    onClick={() => setShowAll(v => !v)}
-                    className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-                  >
-                    {showAll ? 'Show less' : `Show all ${campaigns.length} campaigns`}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* -- Benchmark legend -- */}
-          <div class
+                       
