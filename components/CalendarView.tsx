@@ -9,9 +9,10 @@ interface Props {
   selectedFY: string;
   onEdit: (campaign: Campaign) => void;
   onAddForMonth: (month: string) => void;
+  onDelete: (id: string) => void;
 }
 
-export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMonth }: Props) {
+export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMonth, onDelete }: Props) {
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const months = FY_MONTHS;
 
@@ -87,26 +88,37 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
                   <p className="text-xs text-gray-300 italic text-center mt-4">No campaigns</p>
                 ) : (
                   items.map(c => (
-                    <button
+                    <div
                       key={c.id}
-                      onClick={() => onEdit(c)}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium text-white transition-opacity hover:opacity-90 active:opacity-75"
+                      className="group relative w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium text-white"
                       style={{ backgroundColor: CAMPAIGN_COLORS[c.type] || CAMPAIGN_COLORS['Other'] }}
                     >
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="truncate">{c.name}</span>
-                        {c.status === 'Complete' && (
-                          <span className="shrink-0 text-white opacity-80">✓</span>
-                        )}
-                      </div>
-                      {(c.revenue > 0 || c.orders > 0) && (
-                        <div className="mt-0.5 text-white opacity-75 text-xs">
-                          {c.revenue > 0 && `$${c.revenue.toLocaleString()}`}
-                          {c.revenue > 0 && c.orders > 0 && ' · '}
-                          {c.orders > 0 && `${c.orders.toLocaleString()} orders`}
+                      <button
+                        className="w-full text-left"
+                        onClick={() => onEdit(c)}
+                      >
+                        <div className="flex items-center justify-between gap-1 pr-4">
+                          <span className="truncate">{c.name}</span>
+                          {c.status === 'Complete' && (
+                            <span className="shrink-0 text-white opacity-80">✓</span>
+                          )}
                         </div>
-                      )}
-                    </button>
+                        {(c.revenue > 0 || c.orders > 0) && (
+                          <div className="mt-0.5 text-white opacity-75 text-xs">
+                            {c.revenue > 0 && `$${c.revenue.toLocaleString()}`}
+                            {c.revenue > 0 && c.orders > 0 && ' · '}
+                            {c.orders > 0 && `${c.orders.toLocaleString()} orders`}
+                          </div>
+                        )}
+                      </button>
+                      <button
+                        onClick={e => { e.stopPropagation(); if (confirm(`Delete "${c.name}"?`)) onDelete(c.id); }}
+                        className="absolute top-1 right-1 w-4 h-4 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-black/20 transition-opacity text-white leading-none"
+                        title="Delete campaign"
+                      >
+                        ×
+                      </button>
+                    </div>
                   ))
                 )}
               </div>
@@ -125,23 +137,4 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
               <button
                 key={type}
                 onClick={() => setSelectedType(isActive ? null : type)}
-                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs text-white transition-all"
-                style={{
-                  backgroundColor: color,
-                  opacity: selectedType && !isActive ? 0.35 : 1,
-                  outline: isActive ? '2px solid white' : 'none',
-                  outlineOffset: '1px',
-                  boxShadow: isActive ? `0 0 0 3px ${color}` : 'none',
-                }}
-                title={isActive ? `Clear filter` : `Filter by ${type}`}
-              >
-                {type}
-                {isActive && <span className="ml-0.5 opacity-80">✕</span>}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs
