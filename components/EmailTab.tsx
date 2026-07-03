@@ -222,9 +222,9 @@ export default function EmailTab() {
     sortKey === col ? (sortDir === 'desc' ? ' ↓' : ' ↑') : '';
 
   const sorted = [...campaigns].sort((a, b) => {
-    const getVal = (c: EmailCampaign): number | string => {
+    const num = (c: EmailCampaign): number => {
       switch (sortKey) {
-        case 'sentAt':    return c.sentAt ?? '';
+        case 'sentAt':    return c.sentAt ? new Date(c.sentAt).getTime() : 0;
         case 'sends':     return c.sends;
         case 'opens':     return c.opens;
         case 'openRate':  return c.openRate;
@@ -234,10 +234,8 @@ export default function EmailTab() {
         default:          return 0;
       }
     };
-    const va = getVal(a), vb = getVal(b);
-    if (va < vb) return sortDir === 'asc' ? -1 : 1;
-    if (va > vb) return sortDir === 'asc' ? 1 : -1;
-    return 0;
+    const diff = num(a) - num(b);
+    return sortDir === 'asc' ? diff : -diff;
   });
 
   const visible = showAll ? sorted : sorted.slice(0, 10);
@@ -388,4 +386,5 @@ export default function EmailTab() {
                             </div>
                           </td>
                           <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.clicks)}</td>
-                       
+                          <td className="px-4 py-3">
+                            <div c
