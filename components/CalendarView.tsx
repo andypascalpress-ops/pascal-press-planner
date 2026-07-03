@@ -50,7 +50,7 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
             onClick={() => setSelectedType(null)}
             title="Clear filter"
           >
-            {selectedType} ✕
+            {selectedType} &#x2715;
           </span>
         )}
       </div>
@@ -59,7 +59,7 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
       <div className="p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {months.map(month => {
           const items = campaignsByMonth[month] || [];
-          const complete = items.filter(c => c.status === 'Complete').length;
+          const monthComplete = items.filter(c => c.status === 'Complete').length;
 
           return (
             <div key={month} className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow min-h-[160px] flex flex-col">
@@ -69,7 +69,7 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
                   <span className="font-semibold text-gray-800 text-sm">{month}</span>
                   {items.length > 0 && (
                     <span className="ml-2 text-xs text-gray-400">
-                      {complete}/{items.length}
+                      {monthComplete}/{items.length}
                     </span>
                   )}
                 </div>
@@ -100,7 +100,7 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
                         <div className="flex items-center justify-between gap-1 pr-4">
                           <span className="truncate">{c.name}</span>
                           {c.status === 'Complete' && (
-                            <span className="shrink-0 text-white opacity-80">✓</span>
+                            <span className="shrink-0 text-white opacity-80">&#x2713;</span>
                           )}
                         </div>
                         {(c.revenue > 0 || c.orders > 0) && (
@@ -116,7 +116,7 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
                         className="absolute top-1 right-1 w-4 h-4 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-black/20 transition-opacity text-white leading-none"
                         title="Delete campaign"
                       >
-                        ×
+                        &#xd7;
                       </button>
                     </div>
                   ))
@@ -137,4 +137,23 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
               <button
                 key={type}
                 onClick={() => setSelectedType(isActive ? null : type)}
-                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs text-white transition-all"
+                style={{
+                  backgroundColor: color,
+                  opacity: selectedType && !isActive ? 0.35 : 1,
+                  outline: isActive ? '2px solid white' : 'none',
+                  outlineOffset: '1px',
+                  boxShadow: isActive ? `0 0 0 3px ${color}` : 'none',
+                }}
+                title={isActive ? 'Clear filter' : `Filter by ${type}`}
+              >
+                {type}
+                {isActive && <span className="ml-0.5 opacity-80">&#x2715;</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
