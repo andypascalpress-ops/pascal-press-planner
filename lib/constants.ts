@@ -108,7 +108,7 @@ export const SPEND_COLUMNS_TO_CREATE = [
   { title: 'Actual Spend',        type: 'numbers'   },
   { title: 'Attributed Revenue',  type: 'numbers'   },
   { title: 'Indirect Revenue',    type: 'numbers'   },
-  { title: 'Notes',               type: 'long_text' },
+  { title: 'Notes',        type: 'long_text' },
 ] as const;
 
 export const COLUMNS_TO_CREATE = [
@@ -122,4 +122,5 @@ export const COLUMNS_TO_CREATE = [
   { title: 'FY',           type: 'text'      },
   { title: 'Brand',        type: 'text'      },
   { title: 'Status',       type: 'text'      },
-  { title: 
+  { title: 'Notes',        type: 'long_text' },
+] as const;
