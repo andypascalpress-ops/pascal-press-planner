@@ -287,7 +287,7 @@ export default function Home() {
 
       {/* ── Header ── */}
       <header className="bg-white border-b border-gray-200 shadow-sm z-30 shrink-0">
-        <div className="flex items-center justify-between px-6 py-3">
+        <div className="flex items-center justify-between px-4 md:px-6 py-2 md:py-3 gap-2">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-blue-700 rounded-lg flex items-center justify-center">
               <span className="text-white text-xs font-bold leading-none">PP</span>
@@ -298,7 +298,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 overflow-x-auto shrink min-w-0 py-0.5" style={{scrollbarWidth:'none'}}>
             {/* FY Selector */}
             <div className="flex rounded-lg border border-gray-300 overflow-hidden">
               {(['FY25', 'FY26', 'FY27', 'All'] as FYFilter[]).map(fy => (
@@ -328,7 +328,7 @@ export default function Home() {
                   <line x1="4.5" y1="1" x2="4.5" y2="4"/>
                   <line x1="9.5" y1="1" x2="9.5" y2="4"/>
                 </svg>
-                Calendar
+                <span className="hidden sm:inline">Calendar</span>
               </button>
               <button
                 onClick={() => setView('list')}
@@ -344,7 +344,7 @@ export default function Home() {
                   <circle cx="1.5" cy="7" r="0.8" fill="currentColor" stroke="none"/>
                   <circle cx="1.5" cy="10.5" r="0.8" fill="currentColor" stroke="none"/>
                 </svg>
-                List
+                <span className="hidden sm:inline">List</span>
               </button>
               <button
                 onClick={() => setView('finance')}
@@ -357,7 +357,7 @@ export default function Home() {
                   <rect x="5.5" y="4" width="3" height="9" rx="0.5"/>
                   <rect x="10" y="1" width="3" height="12" rx="0.5"/>
                 </svg>
-                Finance
+                <span className="hidden sm:inline">Finance</span>
               </button>
               <button
                 onClick={() => setView('email')}
@@ -367,7 +367,7 @@ export default function Home() {
                   <rect x="1" y="2.5" width="12" height="9" rx="1"/>
                   <polyline points="1,2.5 7,8 13,2.5"/>
                 </svg>
-                Email
+                <span className="hidden sm:inline">Email</span>
               </button>
             </div>
 
@@ -407,7 +407,7 @@ export default function Home() {
               <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
                 <path d="M7 0.5l1.2 3.8 3.8 0-3.1 2.2 1.2 3.8L7 8.1 3.9 10.3l1.2-3.8L2 4.3l3.8 0z"/>
               </svg>
-              Claude AI
+              <span className="hidden sm:inline">Claude AI</span>
             </button>
           </div>
         </div>
