@@ -228,12 +228,9 @@ export default function EmailTab() {
 
   const visible = showAll ? sorted : sorted.slice(0, 10);
 
-  const seenCampaignNames: string[] = [];
   const rows = visible.map(c => {
     const rev = gaConnected ? lookupRevenue(c.name, c.hsCampaignName, revenueMap) : null;
-    const showRev = rev !== null && seenCampaignNames.indexOf(rev.campaignName) === -1;
-    if (showRev && rev) seenCampaignNames.push(rev.campaignName);
-    return { c, rev, showRev };
+    return { c, rev };
   });
 
   let matchedTotal = 0;
@@ -352,7 +349,7 @@ export default function EmailTab() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {rows.map(({ c, rev, showRev }) => {
+                    {rows.map(({ c, rev }) => {
                       const openColor = c.openRate >= 0.2 ? 'text-green-600' : c.openRate >= 0.15 ? 'text-yellow-600' : 'text-red-500';
                       const openBar   = c.openRate >= 0.2 ? 'bg-green-400'  : c.openRate >= 0.15 ? 'bg-yellow-400'  : 'bg-red-400';
                       const clkColor  = c.clickRate >= 0.03 ? 'text-green-600' : c.clickRate >= 0.015 ? 'text-yellow-600' : 'text-red-500';
@@ -383,7 +380,7 @@ export default function EmailTab() {
                           </td>
                           {gaConnected && (
                             <td className="px-4 py-3 text-right font-mono text-emerald-700 font-medium">
-                              {revLoading ? <span className="text-gray-300">…</span> : showRev && rev ? fmtAUD(rev.revenue) : <span className="text-gray-300">-</span>}
+                              {revLoading ? <span className="text-gray-300">…</span> : rev ? fmtAUD(rev.revenue) : <span className="text-gray-300">-</span>}
                             </td>
                           )}
                           <td className="px-5 py-3 text-right text-gray-500 font-mono">{fmt(c.unsubscribes)}</td>
@@ -427,3 +424,4 @@ export default function EmailTab() {
     </div>
   );
 }
+                                                                                                                                                                                                                                 
