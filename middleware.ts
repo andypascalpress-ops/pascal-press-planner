@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from 'next/server';
 const COOKIE_NAME = 'pp_auth';
 const COOKIE_MAX_AGE = 60 * 60 * 24; // 24 hours
 
-// Only protect the main app — leave API routes open for server-side calls
 export const config = {
   matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
 };
@@ -11,37 +10,35 @@ export const config = {
 export function middleware(request: NextRequest) {
   const password = process.env.SITE_PASSWORD;
 
-  // If no password is configured, allow through (dev mode / not set up yet)
+  // No password configured — let everything through
   if (!password) return NextResponse.next();
 
-  // Already authenticated via cookie
+  const url = new URL(request.url);
+
+  // Handle login form submission (GET to /__login?p=...)
+  if (url.pathname === '/__login') {
+    const submitted = url.searchParams.get('p');
+    if (submitted === password) {
+      const res = NextResponse.redirect(new URL('/', request.url));
+      res.cookies.set(COOKIE_NAME, password, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: COOKIE_MAX_AGE,
+        path: '/',
+      });
+      return res;
+    }
+    // Wrong password
+    return new NextResponse(loginPage(true), {
+      status: 401,
+      headers: { 'Content-Type': 'text/html' },
+    });
+  }
+
+  // Already authenticated
   const cookie = request.cookies.get(COOKIE_NAME)?.value;
   if (cookie === password) return NextResponse.next();
-
-  // Handle login form submission
-  if (request.method === 'POST') {
-    const url = new URL(request.url);
-    if (url.pathname === '/__login') {
-      // We can't read the body in middleware easily, so we use a query param
-      const submitted = url.searchParams.get('p');
-      if (submitted === password) {
-        const res = NextResponse.redirect(new URL('/', request.url));
-        res.cookies.set(COOKIE_NAME, password, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          maxAge: COOKIE_MAX_AGE,
-          path: '/',
-        });
-        return res;
-      }
-      // Wrong password — show login page with error
-      return new NextResponse(loginPage(true), {
-        status: 401,
-        headers: { 'Content-Type': 'text/html' },
-      });
-    }
-  }
 
   // Show login page
   return new NextResponse(loginPage(false), {
@@ -114,7 +111,7 @@ function loginPage(wrongPassword: boolean): string {
     <div class="logo"><span>PP</span></div>
     <h1>Marketing Planner</h1>
     <p>Pascal Press internal tool</p>
-    <form method="GET" action="/__login" onsubmit="handleSubmit(event)">
+    <form id="loginForm">
       <label for="pw">Password</label>
       <input type="password" id="pw" name="p" placeholder="Enter password" autofocus autocomplete="current-password" />
       ${wrongPassword ? '<div class="error">Incorrect password — please try again.</div>' : ''}
@@ -122,11 +119,11 @@ function loginPage(wrongPassword: boolean): string {
     </form>
   </div>
   <script>
-    function handleSubmit(e) {
+    document.getElementById('loginForm').addEventListener('submit', function(e) {
       e.preventDefault();
-      const pw = document.getElementById('pw').value;
+      var pw = document.getElementById('pw').value;
       window.location.href = '/__login?p=' + encodeURIComponent(pw);
-    }
+    });
   </script>
 </body>
 </html>`;
