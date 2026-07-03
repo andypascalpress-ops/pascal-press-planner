@@ -4,11 +4,13 @@
  * GET /api/google-ads-history
  * Returns: Array<{ month: 'YYYY-MM', pp: number, etz: number }>
  *
- * ETZ data uses GOOGLE_ADS_ETZ_CUSTOMER_ID if set (account started July 2026).
- * Months before July will return 0 for ETZ naturally — no special handling needed.
+ * ETZ account (GOOGLE_ADS_ETZ_CUSTOMER_ID) started July 2026.
+ * Months before 2026-07 always return 0 for ETZ regardless of account data.
  */
 import { NextResponse } from 'next/server';
 import { fetchMonthlySpend, buildConfig, etzHasOwnAccount } from '@/lib/google-ads';
+
+const ETZ_START_MONTH = '2026-07';
 
 const MONTH_TO_NUM: Record<string, string> = {
   January: '01', February: '02', March:     '03', April:    '04',
@@ -34,13 +36,16 @@ export async function GET() {
   const now = new Date();
   const endDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()).padStart(2, '0')}`;
 
+  // ETZ only queried from its start month onwards
+  const etzStartDate = `${ETZ_START_MONTH}-01`;
+
   try {
     const ppCfg = buildConfig('pp');
 
     const [ppRows, etzRows] = await Promise.all([
       fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' }),
       etzHasOwnAccount()
-        ? fetchMonthlySpend(buildConfig('etz'), startDate, endDate)
+        ? fetchMonthlySpend(buildConfig('etz'), etzStartDate, endDate)
         : fetchMonthlySpend(ppCfg, startDate, endDate, { contains: 'ETZ' }),
     ]);
 
@@ -59,8 +64,9 @@ export async function GET() {
     return NextResponse.json(
       CHART_MONTHS.map(ym => ({
         month: ym,
-        pp:  ppByMonth[ym]  ?? 0,
-        etz: etzByMonth[ym] ?? 0,
+        pp:  ppByMonth[ym] ?? 0,
+        // Hard cutoff: ETZ always 0 before its start month
+        etz: ym >= ETZ_START_MONTH ? (etzByMonth[ym] ?? 0) : 0,
       }))
     );
   } catch (err) {
