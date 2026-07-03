@@ -5,8 +5,6 @@ import { useState, useEffect } from 'react';
 type SortKey = 'sentAt' | 'sends' | 'opens' | 'openRate' | 'clicks' | 'clickRate' | 'revenue';
 type SortDir = 'asc' | 'desc';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface EmailCampaign {
   id:           string;
   name:         string;
@@ -47,23 +45,16 @@ interface RevenueData {
   connected:    boolean;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
+  'January','February','March','April','May','June',
+  'July','August','September','October','November','December',
 ];
 
-function pct(n: number): string {
-  return (n * 100).toFixed(1) + '%';
-}
-
-function fmt(n: number): string {
-  return n.toLocaleString('en-AU');
-}
+function pct(n: number): string  { return (n * 100).toFixed(1) + '%'; }
+function fmt(n: number): string  { return n.toLocaleString('en-AU'); }
 
 function fmtAUD(n: number): string {
-  if (n === 0) return 'no rev';
+  if (n === 0) return '—';
   return '$' + n.toLocaleString('en-AU', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
@@ -108,10 +99,7 @@ function buildRevenueMap(byCampaign: CampaignRevenue[]): Map<string, CampaignRev
   return map;
 }
 
-function lookupRevenue(
-  emailName:  string,
-  revenueMap: Map<string, CampaignRevenue>,
-): CampaignRevenue | null {
+function lookupRevenue(emailName: string, revenueMap: Map<string, CampaignRevenue>): CampaignRevenue | null {
   const target = normName(emailName);
   if (revenueMap.has(target)) return revenueMap.get(target)!;
   for (const [key, val] of revenueMap) {
@@ -123,8 +111,6 @@ function lookupRevenue(
   return null;
 }
 
-// ─── Stat card ───────────────────────────────────────────────────────────────
-
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
@@ -134,8 +120,6 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
     </div>
   );
 }
-
-// ─── Rate bar ────────────────────────────────────────────────────────────────
 
 function RateBar({ value, color }: { value: number; color: string }) {
   const w = Math.min(value * 100, 100).toFixed(1);
@@ -160,8 +144,6 @@ function getSortNum(c: EmailCampaign, key: SortKey, revMap: Map<string, Campaign
   return 0;
 }
 
-// ─── Main component ──────────────────────────────────────────────────────────
-
 export default function EmailTab() {
   const [selectedMonth, setSelectedMonth] = useState<string>('');
   const [showAll,       setShowAll]       = useState(false);
@@ -176,9 +158,7 @@ export default function EmailTab() {
   useEffect(() => {
     setLoading(true);
     setData(null);
-    const url = selectedMonth
-      ? `/api/hubspot-email?month=${selectedMonth}`
-      : '/api/hubspot-email';
+    const url = selectedMonth ? `/api/hubspot-email?month=${selectedMonth}` : '/api/hubspot-email';
     fetch(url)
       .then(r => r.json())
       .then((d: EmailData) => setData(d))
@@ -229,6 +209,20 @@ export default function EmailTab() {
     return { c, rev, showRev };
   });
 
+  // Sum matched revenue across ALL campaigns (deduped), compute unmatched remainder
+  let matchedTotal = 0;
+  if (gaConnected) {
+    const seenForTotal: string[] = [];
+    for (const c of campaigns) {
+      const r = lookupRevenue(c.name, revenueMap);
+      if (r && seenForTotal.indexOf(r.campaignName) === -1) {
+        seenForTotal.push(r.campaignName);
+        matchedTotal += r.revenue;
+      }
+    }
+  }
+  const unmatchedRevenue = gaConnected ? (revenueData?.totalRevenue ?? 0) - matchedTotal : 0;
+
   return (
     <div className="flex-1 overflow-y-auto bg-gray-50 px-6 py-6">
 
@@ -262,31 +256,29 @@ export default function EmailTab() {
       )}
 
       {loading && (
-        <div className="flex items-center justify-center h-48 text-gray-400 text-sm">
-          Loading campaigns...
-        </div>
+        <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading campaigns...</div>
       )}
 
       {!loading && data?.connected && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-            <StatCard label="Sends" value={fmt(data.totalSends)} sub={monthLabel(selectedMonth)} />
-            <StatCard label="Opens" value={fmt(data.totalOpens)} sub={pct(data.avgOpenRate) + ' open rate'} />
-            <StatCard label="Clicks" value={fmt(data.totalClicks)} sub={pct(data.avgClickRate) + ' click rate'} />
+            <StatCard label="Sends"        value={fmt(data.totalSends)}   sub={monthLabel(selectedMonth)} />
+            <StatCard label="Opens"        value={fmt(data.totalOpens)}   sub={pct(data.avgOpenRate) + ' open rate'} />
+            <StatCard label="Clicks"       value={fmt(data.totalClicks)}  sub={pct(data.avgClickRate) + ' click rate'} />
             <StatCard
               label="Revenue (GA4)"
               value={gaConnected ? fmtAUD(revenueData?.totalRevenue ?? 0) : '—'}
               sub={gaConnected ? `${fmt(revenueData?.totalTx ?? 0)} transactions` : 'GA4 not connected'}
             />
-            <StatCard label="Campaigns" value={String(campaigns.length)} sub="in period" />
+            <StatCard label="Campaigns"    value={String(campaigns.length)} sub="in period" />
           </div>
 
           {!gaConnected && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl px-5 py-3 mb-5 flex items-center gap-3">
               <span className="text-blue-500 text-lg">i</span>
               <div className="text-sm text-blue-700">
-                <span className="font-medium">GA4 revenue not connected.</span> Add{' '}
-                <code className="bg-blue-100 px-1 rounded">GOOGLE_ANALYTICS_SERVICE_ACCOUNT_JSON</code> to Vercel.
+                <span className="font-medium">GA4 revenue not connected.</span>{' '}
+                Add <code className="bg-blue-100 px-1 rounded">GOOGLE_ANALYTICS_SERVICE_ACCOUNT_JSON</code> to Vercel.
               </div>
             </div>
           )}
@@ -353,18 +345,14 @@ export default function EmailTab() {
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
                               <span className={`font-medium tabular-nums ${openColor}`}>{pct(c.openRate)}</span>
-                              <div className="flex-1 min-w-[60px]">
-                                <RateBar value={c.openRate} color={openBar} />
-                              </div>
+                              <div className="flex-1 min-w-[60px]"><RateBar value={c.openRate} color={openBar} /></div>
                             </div>
                           </td>
                           <td className="px-4 py-3 text-right text-gray-700 font-mono">{fmt(c.clicks)}</td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
                               <span className={`font-medium tabular-nums ${clkColor}`}>{pct(c.clickRate)}</span>
-                              <div className="flex-1 min-w-[60px]">
-                                <RateBar value={c.clickRate * 10} color={clkBar} />
-                              </div>
+                              <div className="flex-1 min-w-[60px]"><RateBar value={c.clickRate * 10} color={clkBar} /></div>
                             </div>
                           </td>
                           {gaConnected && (
@@ -376,6 +364,17 @@ export default function EmailTab() {
                         </tr>
                       );
                     })}
+                    {gaConnected && unmatchedRevenue > 0.5 && (
+                      <tr className="bg-gray-50 border-t-2 border-gray-200">
+                        <td colSpan={7} className="px-5 py-2 text-xs text-gray-400 italic">
+                          Other email revenue (GA4 campaigns not matched to a HubSpot campaign name)
+                        </td>
+                        <td className="px-4 py-2 text-right font-mono text-gray-400 text-xs font-medium">
+                          {fmtAUD(unmatchedRevenue)}
+                        </td>
+                        <td />
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
