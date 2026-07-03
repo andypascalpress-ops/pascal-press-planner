@@ -87,21 +87,39 @@ function sentDate(iso: string | null): string {
   return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-/** Normalise a campaign name for fuzzy matching: lowercase, spaces → underscores */
+/** Normalise a name: lowercase, spaces/hyphens → underscores, strip special chars */
 function normName(s: string): string {
-  return s.toLowerCase().replace(/[\s-]+/g, '_').replace(/[^a-z0-9_]/g, '');
+  return s.toLowerCase().replace(/[\s\-]+/g, '_').replace(/[^a-z0-9_]/g, '');
 }
 
-/** Build a revenue lookup map from GA4 data (keyed by normalised campaign name) */
+/**
+ * Strip the leading numeric prefix HubSpot adds to utm_campaign values.
+ * e.g. "28676354-PP_5735_Black Friday" → "PP_5735_Black Friday"
+ */
+function stripNumericPrefix(s: string): string {
+  return s.replace(/^\d+[-_]/, '');
+}
+
+/**
+ * Build a revenue lookup map from GA4 data.
+ * Keys: normalised base name (numeric prefix stripped) AND full normalised name.
+ * GA4 campaign "28676354-PP_5735_Black Friday" covers ALL emails named PP_5735_*
+ */
 function buildRevenueMap(byCampaign: CampaignRevenue[]): Map<string, CampaignRevenue> {
   const map = new Map<string, CampaignRevenue>();
   for (const c of byCampaign) {
+    const base = stripNumericPrefix(c.campaignName);
+    map.set(normName(base), c);
     map.set(normName(c.campaignName), c);
   }
   return map;
 }
 
-/** Look up revenue for a HubSpot email name against the GA4 map */
+/**
+ * Look up revenue for a HubSpot email name against the GA4 map.
+ * Handles: HubSpot email "PP_5735_Black Friday_Reminder 3" matching GA4 "PP_5735_Black Friday"
+ * because the email name STARTS WITH the campaign base name.
+ */
 function lookupRevenue(
   emailName:  string,
   revenueMap: Map<string, CampaignRevenue>,
@@ -111,10 +129,16 @@ function lookupRevenue(
   // 1. Exact match
   if (revenueMap.has(target)) return revenueMap.get(target)!;
 
-  // 2. Partial match
+  // 2. Email name starts with GA4 campaign name (email is a variant of the campaign)
   for (const [key, val] of revenueMap) {
-    if (key.includes(target) || target.includes(key)) return val;
+    if (key.length > 5 && (target.startsWith(key + '_') || target === key)) return val;
   }
+
+  // 3. Fallback: substring containment
+  for (const [key, val] of revenueMap) {
+    if (key.length > 8 && (key.includes(target) || target.includes(key))) return val;
+  }
+
   return null;
 }
 
