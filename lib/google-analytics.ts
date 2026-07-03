@@ -203,7 +203,12 @@ export async function fetchGA4Revenue(month: string): Promise<GA4ChannelRevenue>
     const [year, mon] = month.split('-');
     const lastDay     = new Date(parseInt(year!), parseInt(mon!), 0).getDate();
     const startDate   = `${year}-${mon}-01`;
-    const endDate     = `${year}-${mon}-${String(lastDay).padStart(2, '0')}`;
+    // Cap end date to today — GA4 cannot convert AUD→USD for future dates
+    const now         = new Date();
+    const isCurrentMonth =
+      parseInt(year!) === now.getFullYear() && parseInt(mon!) === now.getMonth() + 1;
+    const endDayNum   = isCurrentMonth ? Math.min(lastDay, now.getDate()) : lastDay;
+    const endDate     = `${year}-${mon}-${String(endDayNum).padStart(2, '0')}`;
 
     const data = await runReport(accessToken, {
       dateRanges: [{ startDate, endDate }],

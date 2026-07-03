@@ -29,7 +29,11 @@ export async function GET() {
   const endMonth = months[months.length - 1]!;
   const [ey, em] = endMonth.split('-').map(Number);
   const lastDay  = new Date(ey!, em!, 0).getDate();
-  const endDate  = `${endMonth}-${String(lastDay).padStart(2, '0')}`;
+  // Cap to today — GA4 cannot convert AUD→USD for future dates
+  const now       = new Date();
+  const todayStr  = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const fullEnd   = `${endMonth}-${String(lastDay).padStart(2, '0')}`;
+  const endDate   = fullEnd > todayStr ? todayStr : fullEnd;
 
   const rows = await fetchGA4RevenueHistory('2026-01-01', endDate);
 
