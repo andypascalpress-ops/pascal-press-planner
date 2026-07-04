@@ -6,25 +6,24 @@ import { ChatMessage } from '@/lib/types';
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  onCampaignCreated?: () => void;
 }
 
 const SUGGESTIONS = [
   'What was our best performing campaign in FY25?',
   'Compare FY26 vs FY25 revenue',
   'Which campaign type generates the most orders?',
-  'Create a Back to School campaign for February FY27',
+  'Suggest a campaign for March',
   'What are our top 5 campaigns by revenue?',
-  'Add a Sale campaign for August called PP_Winter_Sale_2026',
+  'How many campaigns are still Planned vs Complete?',
 ];
 
-export default function ChatPanel({ isOpen, onClose, onCampaignCreated }: Props) {
-  const [messages, setMessages]   = useState<ChatMessage[]>([]);
-  const [input,    setInput]      = useState('');
-  const [loading,  setLoading]    = useState(false);
-  const [error,    setError]      = useState('');
-  const bottomRef  = useRef<HTMLDivElement>(null);
-  const inputRef   = useRef<HTMLTextAreaElement>(null);
+export default function ChatPanel({ isOpen, onClose }: Props) {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -57,17 +56,13 @@ export default function ChatPanel({ isOpen, onClose, onCampaignCreated }: Props)
       if (!res.ok) throw new Error(data.error || 'Failed to get response');
 
       setMessages(prev => [...prev, {
-        role:      'assistant',
-        content:   data.reply,
+        role: 'assistant',
+        content: data.reply,
         timestamp: new Date(),
       }]);
-
-      // If a campaign was created, refresh the calendar
-      if (data.createdCampaign && onCampaignCreated) {
-        onCampaignCreated();
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      // Remove the user message on failure
       setMessages(prev => prev.slice(0, -1));
     } finally {
       setLoading(false);
@@ -89,9 +84,14 @@ export default function ChatPanel({ isOpen, onClose, onCampaignCreated }: Props)
       <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 bg-gradient-to-r from-blue-700 to-blue-800">
         <div>
           <h2 className="text-white font-semibold text-base">Claude AI Assistant</h2>
-          <p className="text-blue-200 text-xs mt-0.5">Analyse campaigns · Create new ones</p>
+          <p className="text-blue-200 text-xs mt-0.5">Ask anything about your campaigns</p>
         </div>
-        <button onClick={onClose} className="text-blue-200 hover:text-white text-xl leading-none p-1">×</button>
+        <button
+          onClick={onClose}
+          className="text-blue-200 hover:text-white text-xl leading-none p-1"
+        >
+          ×
+        </button>
       </div>
 
       {/* Messages */}
@@ -99,11 +99,11 @@ export default function ChatPanel({ isOpen, onClose, onCampaignCreated }: Props)
         {messages.length === 0 && !loading && (
           <div className="space-y-4">
             <div className="bg-blue-50 rounded-xl p-4 text-sm text-blue-800">
-              <p className="font-medium mb-2">👋 Hi! I can analyse your campaigns and create new ones directly in the planner.</p>
-              <p>Ask me to analyse performance, compare years, or say <em>"create a campaign for..."</em> to add one.</p>
+              <p className="font-medium mb-2">👋 Hi! I have full visibility of your campaign data across FY25, FY26, and FY27.</p>
+              <p>Ask me to analyse performance, compare years, or suggest campaign ideas.</p>
             </div>
             <div>
-              <p className="text-xs text-gray-400 uppercase tracking-wide font-medium mb-2">Try asking</p>
+              <p className="text-xs text-gray-400 uppercase tracking-wide font-medium mb-2">Suggested questions</p>
               <div className="space-y-2">
                 {SUGGESTIONS.map(s => (
                   <button
@@ -139,7 +139,11 @@ export default function ChatPanel({ isOpen, onClose, onCampaignCreated }: Props)
             <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-3">
               <div className="flex gap-1.5 items-center h-5">
                 {[0, 1, 2].map(i => (
-                  <div key={i} className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                  <div
+                    key={i}
+                    className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                    style={{ animationDelay: `${i * 0.15}s` }}
+                  />
                 ))}
               </div>
             </div>
@@ -147,7 +151,9 @@ export default function ChatPanel({ isOpen, onClose, onCampaignCreated }: Props)
         )}
 
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">{error}</div>
+          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
         )}
 
         <div ref={bottomRef} />
@@ -156,7 +162,10 @@ export default function ChatPanel({ isOpen, onClose, onCampaignCreated }: Props)
       {/* Input */}
       <div className="border-t border-gray-200 p-4">
         {messages.length > 0 && (
-          <button onClick={() => setMessages([])} className="text-xs text-gray-400 hover:text-gray-600 mb-2 float-right">
+          <button
+            onClick={() => setMessages([])}
+            className="text-xs text-gray-400 hover:text-gray-600 mb-2 float-right"
+          >
             Clear conversation
           </button>
         )}
@@ -167,7 +176,7 @@ export default function ChatPanel({ isOpen, onClose, onCampaignCreated }: Props)
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about campaigns, or say 'create a campaign for…'"
+            placeholder="Ask about your campaigns… (Enter to send)"
             disabled={loading}
             className="flex-1 border border-gray-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none disabled:opacity-50"
           />

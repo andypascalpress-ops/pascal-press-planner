@@ -38,4 +38,18 @@ export async function GET() {
 
   const [ppRows, etzRows] = await Promise.all([
     fetchGA4RevenueHistory('2026-01-01', endDate),
-    fetchETZGA4RevenueHis
+    fetchETZGA4RevenueHistory('2026-01-01', endDate),
+  ]);
+
+  return NextResponse.json(
+    months.map(ym => {
+      const ppFound  = ppRows.find(r => r.month === ym);
+      const etzFound = etzRows.find(r => r.month === ym);
+      return {
+        month: ym,
+        pp:  ppFound?.pp   ?? { paid: 0, organic: 0 },
+        etz: etzFound?.etz ?? { paid: 0, organic: 0 },
+      };
+    }),
+  );
+}

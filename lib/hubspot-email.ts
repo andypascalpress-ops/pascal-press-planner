@@ -18,20 +18,19 @@ function getApiKey(): string {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface EmailCampaignStats {
-  id:               string;
-  name:             string;
-  subject:          string;
-  fromName:         string;
-  sentAt:           string | null;
-  sends:            number;
-  delivered:        number;
-  opens:            number;
-  clicks:           number;
-  unsubscribes:     number;
-  openRate:         number; // 0–1
-  clickRate:        number; // 0–1
-  clickToOpen:      number; // 0–1
-  hsCampaignName:   string; // v1 campaign name — matches GA4 utm_campaign
+  id:           string;
+  name:         string;
+  subject:      string;
+  fromName:     string;
+  sentAt:       string | null;
+  sends:        number;
+  delivered:    number;
+  opens:        number;
+  clicks:       number;
+  unsubscribes: number;
+  openRate:     number; // 0–1
+  clickRate:    number; // 0–1
+  clickToOpen:  number; // 0–1
 }
 
 export interface EmailSummary {
@@ -70,11 +69,6 @@ interface V1Counters {
   unsubscribed?: number;
 }
 
-interface V1CampaignData {
-  name?:     string;
-  counters?: V1Counters;
-}
-
 // ─── API calls ───────────────────────────────────────────────────────────────
 
 /** Fetch one page of PUBLISHED marketing emails. */
@@ -111,7 +105,7 @@ async function fetchEmailPage(
  * Uses GET /email/public/v1/campaigns/{primaryEmailCampaignId}
  * Returns counters or null on failure.
  */
-async function fetchCampaignStats(campaignId: string): Promise<V1CampaignData | null> {
+async function fetchCampaignStats(campaignId: string): Promise<V1Counters | null> {
   try {
     const res = await fetch(
       `${HS_BASE}/email/public/v1/campaigns/${campaignId}`,
@@ -122,10 +116,7 @@ async function fetchCampaignStats(campaignId: string): Promise<V1CampaignData | 
     );
     if (!res.ok) return null;
     const data = await res.json();
-    return {
-      name:     data.name     as string | undefined,
-      counters: data.counters as V1Counters | undefined,
-    };
+    return (data.counters as V1Counters) ?? null;
   } catch {
     return null;
   }
@@ -137,22 +128,22 @@ async function fetchCampaignStats(campaignId: string): Promise<V1CampaignData | 
  */
 async function fetchStatsForRows(
   rows: HsEmailRow[],
-): Promise<Map<string, V1CampaignData>> {
-  const map = new Map<string, V1CampaignData>();
+): Promise<Map<string, V1Counters>> {
+  const map = new Map<string, V1Counters>();
   const BATCH = 10;
 
   for (let i = 0; i < rows.length; i += BATCH) {
     const batch = rows.slice(i, i + BATCH);
     const results = await Promise.all(
       batch.map(async r => ({
-        id:   r.id,
-        data: r.primaryEmailCampaignId
+        id:       r.id,
+        counters: r.primaryEmailCampaignId
           ? await fetchCampaignStats(r.primaryEmailCampaignId)
           : null,
       })),
     );
-    for (const { id, data } of results) {
-      if (data) map.set(id, data);
+    for (const { id, counters } of results) {
+      if (counters) map.set(id, counters);
     }
   }
 
@@ -200,8 +191,7 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
 
     // Step 4: build campaign objects
     const campaigns: EmailCampaignStats[] = filtered.map(r => {
-      const d      = statsMap.get(r.id) ?? {};
-      const c      = d.counters ?? {};
+      const c      = statsMap.get(r.id) ?? {};
       const sends  = c.sent        ?? 0;
       const deliv  = c.delivered   ?? sends;
       const opens  = c.open        ?? 0;
@@ -209,20 +199,19 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
       const unsubs = c.unsubscribed ?? 0;
 
       return {
-        id:             r.id,
-        name:           r.name     ?? '(Untitled)',
-        subject:        r.subject  ?? '',
-        fromName:       r.fromName ?? '',
-        sentAt:         r.publishDate ?? null,
+        id:           r.id,
+        name:         r.name     ?? '(Untitled)',
+        subject:      r.subject  ?? '',
+        fromName:     r.fromName ?? '',
+        sentAt:       r.publishDate ?? null,
         sends,
-        delivered:      deliv,
+        delivered:    deliv,
         opens,
         clicks,
-        unsubscribes:   unsubs,
-        openRate:       safeDiv(opens,  deliv),
-        clickRate:      safeDiv(clicks, deliv),
-        clickToOpen:    safeDiv(clicks, opens),
-        hsCampaignName: d.name ?? '',
+        unsubscribes: unsubs,
+        openRate:     safeDiv(opens,  deliv),
+        clickRate:    safeDiv(clicks, deliv),
+        clickToOpen:  safeDiv(clicks, opens),
       };
     });
 

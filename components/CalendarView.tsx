@@ -9,10 +9,9 @@ interface Props {
   selectedFY: string;
   onEdit: (campaign: Campaign) => void;
   onAddForMonth: (month: string) => void;
-  onDelete: (id: string) => void;
 }
 
-export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMonth, onDelete }: Props) {
+export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMonth }: Props) {
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const months = FY_MONTHS;
 
@@ -50,7 +49,7 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
             onClick={() => setSelectedType(null)}
             title="Clear filter"
           >
-            {selectedType} &#x2715;
+            {selectedType} ✕
           </span>
         )}
       </div>
@@ -59,7 +58,7 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
       <div className="p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {months.map(month => {
           const items = campaignsByMonth[month] || [];
-          const monthComplete = items.filter(c => c.status === 'Complete').length;
+          const complete = items.filter(c => c.status === 'Complete').length;
 
           return (
             <div key={month} className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow min-h-[160px] flex flex-col">
@@ -69,7 +68,7 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
                   <span className="font-semibold text-gray-800 text-sm">{month}</span>
                   {items.length > 0 && (
                     <span className="ml-2 text-xs text-gray-400">
-                      {monthComplete}/{items.length}
+                      {complete}/{items.length}
                     </span>
                   )}
                 </div>
@@ -88,37 +87,26 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
                   <p className="text-xs text-gray-300 italic text-center mt-4">No campaigns</p>
                 ) : (
                   items.map(c => (
-                    <div
+                    <button
                       key={c.id}
-                      className="group relative w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium text-white"
+                      onClick={() => onEdit(c)}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium text-white transition-opacity hover:opacity-90 active:opacity-75"
                       style={{ backgroundColor: CAMPAIGN_COLORS[c.type] || CAMPAIGN_COLORS['Other'] }}
                     >
-                      <button
-                        className="w-full text-left"
-                        onClick={() => onEdit(c)}
-                      >
-                        <div className="flex items-center justify-between gap-1 pr-4">
-                          <span className="truncate">{c.name}</span>
-                          {c.status === 'Complete' && (
-                            <span className="shrink-0 text-white opacity-80">&#x2713;</span>
-                          )}
-                        </div>
-                        {(c.revenue > 0 || c.orders > 0) && (
-                          <div className="mt-0.5 text-white opacity-75 text-xs">
-                            {c.revenue > 0 && `$${c.revenue.toLocaleString()}`}
-                            {c.revenue > 0 && c.orders > 0 && ' · '}
-                            {c.orders > 0 && `${c.orders.toLocaleString()} orders`}
-                          </div>
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="truncate">{c.name}</span>
+                        {c.status === 'Complete' && (
+                          <span className="shrink-0 text-white opacity-80">✓</span>
                         )}
-                      </button>
-                      <button
-                        onClick={e => { e.stopPropagation(); if (confirm(`Delete "${c.name}"?`)) onDelete(c.id); }}
-                        className="absolute top-1 right-1 w-4 h-4 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-black/20 transition-opacity text-white leading-none"
-                        title="Delete campaign"
-                      >
-                        &#xd7;
-                      </button>
-                    </div>
+                      </div>
+                      {(c.revenue > 0 || c.orders > 0) && (
+                        <div className="mt-0.5 text-white opacity-75 text-xs">
+                          {c.revenue > 0 && `$${c.revenue.toLocaleString()}`}
+                          {c.revenue > 0 && c.orders > 0 && ' · '}
+                          {c.orders > 0 && `${c.orders.toLocaleString()} orders`}
+                        </div>
+                      )}
+                    </button>
                   ))
                 )}
               </div>
@@ -145,10 +133,10 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
                   outlineOffset: '1px',
                   boxShadow: isActive ? `0 0 0 3px ${color}` : 'none',
                 }}
-                title={isActive ? 'Clear filter' : `Filter by ${type}`}
+                title={isActive ? `Clear filter` : `Filter by ${type}`}
               >
                 {type}
-                {isActive && <span className="ml-0.5 opacity-80">&#x2715;</span>}
+                {isActive && <span className="ml-0.5 opacity-80">✕</span>}
               </button>
             );
           })}

@@ -1252,4 +1252,29 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
               <div className="text-xs text-blue-700 mt-0.5">Google Ads budget: {AUD.format(MONTHLY_GOOGLE_BUDGETS['Pascal Press'] ?? 0)}/mo</div>
             </div>
             <BudgetBreakdownTable
-              brand="Pascal P
+              brand="Pascal Press"
+              records={records}
+              accentBg="bg-blue-50"
+              accentText="text-blue-800"
+            />
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 bg-emerald-50 border-b border-gray-200">
+              <div className="text-xs font-semibold text-emerald-900 uppercase tracking-wide">
+                Excel Test Zone &middot; Budget vs Spend by Month
+              </div>
+              <div className="text-xs text-emerald-700 mt-0.5">Google Ads budget: {AUD.format(MONTHLY_GOOGLE_BUDGETS['Excel Test Zone'] ?? 0)}/mo</div>
+            </div>
+            <BudgetBreakdownTable
+              brand="Excel Test Zone"
+              records={records}
+              accentBg="bg-emerald-50"
+              accentText="text-emerald-800"
+            />
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}

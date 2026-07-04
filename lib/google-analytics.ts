@@ -375,4 +375,142 @@ export async function fetchETZGA4Revenue(month: string): Promise<GA4ChannelReven
   }
 
   try {
-    const accessToken = await getAcce
+    const accessToken = await getAccessToken();
+    const [year, mon] = month.split('-');
+    const lastDay     = new Date(parseInt(year!), parseInt(mon!), 0).getDate();
+    const startDate   = `${year}-${mon}-01`;
+    // Cap end date to today — GA4 cannot convert AUD→USD for future dates
+    const now         = new Date();
+    const isCurrentMonth =
+      parseInt(year!) === now.getFullYear() && parseInt(mon!) === now.getMonth() + 1;
+    const endDayNum   = isCurrentMonth ? Math.min(lastDay, now.getDate()) : lastDay;
+    const endDate     = `${year}-${mon}-${String(endDayNum).padStart(2, '0')}`;
+
+    const res = await fetch(`${GA4_ETZ_BASE}:runReport`, {
+      method:  'POST',
+      headers: {
+        Authorization:  `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [{ name: 'sessionMedium' }],
+        metrics:    [{ name: 'totalRevenue' }],
+      }),
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`ETZ GA4 API error (${res.status}): ${err.slice(0, 500)}`);
+    }
+    const data = await res.json();
+
+    let paidSearchRevenue    = 0;
+    let organicSearchRevenue = 0;
+
+    for (const row of data.rows ?? []) {
+      const medium = (row.dimensionValues?.[0]?.value ?? '').toLowerCase() as string;
+      const rev    = parseFloat(row.metricValues?.[0]?.value ?? '0');
+      if (medium === 'cpc')     paidSearchRevenue    += rev;
+      if (medium === 'organic') organicSearchRevenue += rev;
+    }
+
+    return {
+      paidSearchRevenue:    Math.round(paidSearchRevenue    * 100) / 100,
+      organicSearchRevenue: Math.round(organicSearchRevenue * 100) / 100,
+      connected: true,
+    };
+  } catch (err) {
+    console.error('[google-analytics fetchETZGA4Revenue]', err);
+    return { paidSearchRevenue: 0, organicSearchRevenue: 0, connected: false };
+  }
+}
+
+export async function fetchETZGA4RevenueHistory(
+  startDate: string,
+  endDate:   string,
+): Promise<GA4MonthlyRevenue[]> {
+  if (!isETZConnected()) return [];
+
+  try {
+    const accessToken = await getAccessToken();
+
+    const res = await fetch(`${GA4_ETZ_BASE}:runReport`, {
+      method:  'POST',
+      headers: {
+        Authorization:  `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [
+          { name: 'yearMonth' },
+          { name: 'sessionMedium' },
+        ],
+        metrics: [{ name: 'totalRevenue' }],
+      }),
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`ETZ GA4 history API error (${res.status}): ${err.slice(0, 500)}`);
+    }
+    const data = await res.json();
+
+    const byMonth: Record<string, { paid: number; organic: number }> = {};
+
+    for (const row of data.rows ?? []) {
+      const yearMonth = (row.dimensionValues?.[0]?.value ?? '') as string;
+      const medium    = (row.dimensionValues?.[1]?.value ?? '').toLowerCase() as string;
+      const rev       = parseFloat(row.metricValues?.[0]?.value ?? '0');
+
+      if (yearMonth.length !== 6) continue;
+      const ym = `${yearMonth.slice(0, 4)}-${yearMonth.slice(4, 6)}`;
+
+      if (!byMonth[ym]) byMonth[ym] = { paid: 0, organic: 0 };
+      if (medium === 'cpc')     byMonth[ym]!.paid    += rev;
+      if (medium === 'organic') byMonth[ym]!.organic += rev;
+    }
+
+    return Object.entries(byMonth)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, { paid, organic }]) => ({
+        month,
+        pp:  { paid: 0, organic: 0 }, // ETZ history — pp field unused
+        etz: {
+          paid:    Math.round(paid    * 100) / 100,
+          organic: Math.round(organic * 100) / 100,
+        },
+      }));
+  } catch (err) {
+    console.error('[google-analytics fetchETZGA4RevenueHistory]', err);
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Match helper (used client-side in EmailTab)
+// ---------------------------------------------------------------------------
+
+/** Normalise a name for fuzzy matching: lowercase, punctuation → underscore */
+export function normName(s: string): string {
+  return s.toLowerCase().replace(/[\s\-]+/g, '_').replace(/[^a-z0-9_]/g, '');
+}
+
+/** Look up a HubSpot email name in a GA4 campaign revenue map */
+export function matchRevenue(
+  emailName:  string,
+  byCampaign: CampaignRevenue[],
+): CampaignRevenue | null {
+  const target = normName(emailName);
+  const exact  = byCampaign.find(c => normName(c.campaignName) === target);
+  if (exact) return exact;
+  const partial = byCampaign.find(c => {
+    const n = normName(c.campaignName);
+    return n.includes(target) || target.includes(n);
+  });
+  return partial ?? null;
+}
+      

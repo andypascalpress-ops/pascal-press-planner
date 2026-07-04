@@ -81,10 +81,9 @@ export const ANNUAL_BUDGETS: Record<string, number> = {
 };
 
 // Fixed monthly Google Ads budgets (source of truth for budget calculations)
-// Updated July 2026: PP $8,300/mo, ETZ $3,700/mo
 export const MONTHLY_GOOGLE_BUDGETS: Record<string, number> = {
-  'Pascal Press':    8300,
-  'Excel Test Zone': 3700,
+  'Pascal Press':    8000,
+  'Excel Test Zone': 3000,
 };
 
 export const SPEND_CHANNELS = [
@@ -108,7 +107,7 @@ export const SPEND_COLUMNS_TO_CREATE = [
   { title: 'Actual Spend',        type: 'numbers'   },
   { title: 'Attributed Revenue',  type: 'numbers'   },
   { title: 'Indirect Revenue',    type: 'numbers'   },
-  { title: 'Notes',        type: 'long_text' },
+  { title: 'Notes',               type: 'long_text' },
 ] as const;
 
 export const COLUMNS_TO_CREATE = [

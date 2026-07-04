@@ -300,21 +300,6 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-2 overflow-x-auto shrink min-w-0 py-0.5" style={{scrollbarWidth:'none'}}>
-            {/* FY Selector */}
-            <div className="flex rounded-lg border border-gray-300 overflow-hidden">
-              {(['FY25', 'FY26', 'FY27', 'All'] as FYFilter[]).map(fy => (
-                <button
-                  key={fy}
-                  onClick={() => setSelectedFY(fy)}
-                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                    selectedFY === fy ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'
-                  }`}
-                >
-                  {fy}
-                </button>
-              ))}
-            </div>
-
             {/* View Toggle */}
             <div className="flex rounded-lg border border-gray-300 overflow-hidden">
               <button
@@ -479,13 +464,31 @@ export default function Home() {
                 </div>
               </div>
             ) : view === 'calendar' ? (
-              <CalendarView
-                campaigns={filteredCampaigns}
-                selectedFY={selectedFY}
-                onEdit={openEditModal}
-                onAddForMonth={openAddModal}
-                onDelete={handleDelete}
-              />
+              <>
+                {/* FY Selector — inside Calendar tab */}
+                <div className="flex px-4 md:px-6 py-2 bg-white border-b border-gray-100 shrink-0">
+                  <div className="flex rounded-lg border border-gray-300 overflow-hidden">
+                    {(['FY25', 'FY26', 'FY27', 'All'] as FYFilter[]).map(fy => (
+                      <button
+                        key={fy}
+                        onClick={() => setSelectedFY(fy)}
+                        className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                          selectedFY === fy ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        {fy}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <CalendarView
+                  campaigns={filteredCampaigns}
+                  selectedFY={selectedFY}
+                  onEdit={openEditModal}
+                  onAddForMonth={openAddModal}
+                  onDelete={handleDelete}
+                />
+              </>
             ) : (
               <ListView
                 campaigns={filteredCampaigns}

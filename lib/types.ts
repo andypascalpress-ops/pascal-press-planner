@@ -60,11 +60,4 @@ export interface SpendColumnMap {
 }
 
 export type FYFilter = 'FY25' | 'FY26' | 'FY27' | 'All';
-export type ViewMode = 'overview' | 'calendar' | 'list' | 'finance' | 'email';
-
-export interface OverviewAlert {
-  id:       string;
-  severity: 'danger' | 'warning' | 'info';
-  brand:    'Pascal Press' | 'Excel Test Zone' | 'Email' | 'General';
-  message:  string;
-}
+export type ViewMode = 'calendar' | 'list' | 'finance' | 'email';

@@ -14,4 +14,12 @@ import { fetchGA4Revenue, fetchETZGA4Revenue } from '@/lib/google-analytics';
 export async function GET(req: NextRequest) {
   const month = req.nextUrl.searchParams.get('month') ?? '';
   if (!/^\d{4}-\d{2}$/.test(month)) {
-    return Ne
+    return NextResponse.json({ error: 'month param required in YYYY-MM format' }, { status: 400 });
+  }
+
+  const [pp, etz] = await Promise.all([
+    fetchGA4Revenue(month),
+    fetchETZGA4Revenue(month),
+  ]);
+  return NextResponse.json({ month, pp, etz });
+}
