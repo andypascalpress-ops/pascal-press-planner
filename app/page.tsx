@@ -300,8 +300,8 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-2 overflow-x-auto shrink min-w-0 py-0.5" style={{scrollbarWidth:'none'}}>
-            {/* View Toggle */}
-            <div className="flex rounded-lg border border-gray-300 overflow-hidden">
+            {/* View Toggle — hidden on mobile (moved to bottom nav) */}
+            <div className="hidden sm:flex rounded-lg border border-gray-300 overflow-hidden">
               <button
                 onClick={() => setView('overview')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -376,7 +376,7 @@ export default function Home() {
               <button
                 onClick={() => openAddModal()}
                 disabled={saving}
-                className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                className="hidden sm:flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
                 + Add Campaign
               </button>
@@ -437,8 +437,8 @@ export default function Home() {
       </header>
 
       {/* ── Body ── */}
-      <main className="flex-1 overflow-hidden flex">
-        <div className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ${chatOpen ? 'mr-[420px]' : ''}`}>
+      <main className="flex-1 overflow-hidden flex pb-16 sm:pb-0">
+        <div className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ${chatOpen ? 'sm:mr-[420px]' : ''}`}>
 
           {/* Campaign views */}
           {view !== 'finance' && view !== 'email' && view !== 'overview' && (
@@ -577,9 +577,44 @@ export default function Home() {
         />
       )}
 
+      {/* ── Mobile FAB — Add Campaign ── */}
+      {view !== 'finance' && view !== 'email' && view !== 'overview' && (
+        <button
+          onClick={() => openAddModal()}
+          disabled={saving}
+          className="sm:hidden fixed bottom-[76px] right-4 z-40 w-14 h-14 bg-blue-600 text-white rounded-full shadow-xl flex items-center justify-center text-3xl leading-none hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-50"
+        >
+          +
+        </button>
+      )}
+
+      {/* ── Mobile Bottom Navigation ── */}
+      <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg z-30 flex items-stretch">
+        <button onClick={() => setView('overview')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'overview' ? 'text-blue-600' : 'text-gray-400'}`}>
+          <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="1" width="5" height="5" rx="1"/><rect x="8" y="1" width="5" height="5" rx="1"/><rect x="1" y="8" width="5" height="5" rx="1"/><rect x="8" y="8" width="5" height="5" rx="1"/></svg>
+          <span className="text-[10px] font-medium leading-none mt-0.5">Overview</span>
+        </button>
+        <button onClick={() => setView('calendar')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'calendar' ? 'text-blue-600' : 'text-gray-400'}`}>
+          <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="2" width="12" height="11" rx="1.5"/><line x1="1" y1="5.5" x2="13" y2="5.5"/><line x1="4.5" y1="1" x2="4.5" y2="4"/><line x1="9.5" y1="1" x2="9.5" y2="4"/></svg>
+          <span className="text-[10px] font-medium leading-none mt-0.5">Calendar</span>
+        </button>
+        <button onClick={() => setView('list')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'list' ? 'text-blue-600' : 'text-gray-400'}`}>
+          <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="4" y1="3.5" x2="13" y2="3.5"/><line x1="4" y1="7" x2="13" y2="7"/><line x1="4" y1="10.5" x2="13" y2="10.5"/><circle cx="1.5" cy="3.5" r="0.8" fill="currentColor" stroke="none"/><circle cx="1.5" cy="7" r="0.8" fill="currentColor" stroke="none"/><circle cx="1.5" cy="10.5" r="0.8" fill="currentColor" stroke="none"/></svg>
+          <span className="text-[10px] font-medium leading-none mt-0.5">List</span>
+        </button>
+        <button onClick={() => setView('finance')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'finance' ? 'text-blue-600' : 'text-gray-400'}`}>
+          <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="7" width="3" height="6" rx="0.5"/><rect x="5.5" y="4" width="3" height="9" rx="0.5"/><rect x="10" y="1" width="3" height="12" rx="0.5"/></svg>
+          <span className="text-[10px] font-medium leading-none mt-0.5">Finance</span>
+        </button>
+        <button onClick={() => setView('email')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'email' ? 'text-blue-600' : 'text-gray-400'}`}>
+          <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="2.5" width="12" height="9" rx="1"/><polyline points="1,2.5 7,8 13,2.5"/></svg>
+          <span className="text-[10px] font-medium leading-none mt-0.5">Email</span>
+        </button>
+      </nav>
+
       {/* ── Toast ── */}
       {toast && (
-        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium text-white transition-all ${
+        <div className={`fixed bottom-20 sm:bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium text-white transition-all ${
           toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
         }`}>
           {toast.msg}

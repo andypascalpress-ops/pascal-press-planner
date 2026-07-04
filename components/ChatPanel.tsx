@@ -82,7 +82,7 @@ export default function ChatPanel({ isOpen, onClose, onCampaignCreated }: Props)
   };
 
   return (
-    <div className={`fixed top-0 right-0 h-full w-[420px] bg-white shadow-2xl flex flex-col z-40 transition-transform duration-300 ${
+    <div className={`fixed top-0 right-0 h-full w-full sm:w-[420px] bg-white shadow-2xl flex flex-col z-40 transition-transform duration-300 ${
       isOpen ? 'translate-x-0' : 'translate-x-full'
     }`}>
       {/* Header */}
