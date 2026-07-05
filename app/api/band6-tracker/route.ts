@@ -19,7 +19,7 @@ const TARGET_REVENUE = 50_000;
 const START_DATE     = '2026-07-01'; // When the series launched
 const END_DATE       = '2026-11-30'; // Target deadline
 
-export const revalidate = 3600; // 1-hour cache
+export const revalidate = 0; // always fresh — tracker data changes frequently
 
 function bcHeaders() {
   return {
@@ -112,20 +112,9 @@ export async function GET() {
   }
 
   try {
-    // ── 1. Discover "60 Days to Band 6" products ──────────────────────────────
+    // ── 1. Discover products via catalog search (best-effort; used for display + ID match)
     const products = await findBand6Products();
-
-    if (products.length === 0) {
-      return NextResponse.json({
-        connected: true,
-        error: 'No "60 Days to Band 6" products found in the BigCommerce catalogue. Check product names include "60 days" or "band 6".',
-        products: [],
-        revenue: 0, orders: 0, units: 0,
-        target: TARGET_REVENUE, startDate: START_DATE, endDate: END_DATE,
-        daysRemaining: Math.max(0, Math.round((new Date(END_DATE).getTime() - Date.now()) / 86_400_000)),
-      });
-    }
-
+    // Product IDs for exact matching — may be empty if catalog search misses them
     const productIds = new Set(products.map(p => p.id));
 
     // ── 2. Fetch all orders from July 2026 → today ───────────────────────────
@@ -156,7 +145,15 @@ export async function GET() {
         const result = results[j];
         if (result?.status !== 'fulfilled') continue;
         const lineItems: BCOrderProduct[] = Array.isArray(result.value) ? result.value : [];
-        const band6Items = lineItems.filter(li => productIds.has(li.product_id));
+        // Match by catalog product_id (if search found them) OR by line-item name
+        const band6Items = lineItems.filter(li => {
+          if (productIds.size > 0 && productIds.has(li.product_id)) return true;
+          const n = (li.name ?? '').toLowerCase();
+          return (
+            n.includes('band 6') || n.includes('band6') ||
+            n.includes('60 days') || n.includes('60days') || n.includes('60-days')
+          );
+        });
         if (band6Items.length === 0) continue;
 
         const orderRevenue = band6Items.reduce(
