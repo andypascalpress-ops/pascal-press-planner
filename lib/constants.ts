@@ -64,7 +64,7 @@ export const FY_OPTIONS = ['FY25', 'FY26', 'FY27', 'All'] as const;
 
 export const BRANDS = [
   'Pascal Press',
-  'Excel',
+  'Excel Test Zone',
   'All Brands',
 ] as const;
 

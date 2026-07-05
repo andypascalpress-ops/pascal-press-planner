@@ -89,6 +89,21 @@ function KpiCard({ label, value, sub, valueClass = '' }: {
 function BudgetBar({ spend, budget, dayPct }: { spend: number; budget: number; dayPct: number }) {
   const spendPct = budget > 0 ? Math.min(spend / budget, 1.05) : 0;
   const barColor = budgetBarColor(spend / (budget || 1));
+
+  // Projected end-of-month spend — only meaningful after day 2 (dayPct > ~0.05)
+  const projected = dayPct > 0.05 && spend > 0 ? spend / dayPct : null;
+  const projPct   = projected && budget > 0 ? projected / budget : null;
+  const projClass = projPct == null ? ''
+    : projPct > 1.1  ? 'text-red-600 font-medium'
+    : projPct > 1.0  ? 'text-amber-600 font-medium'
+    : projPct >= 0.85 ? 'text-emerald-600'
+    : 'text-amber-600';
+  const projStatus = projPct == null ? ''
+    : projPct > 1.1  ? `${Math.round((projPct - 1) * 100)}% over budget`
+    : projPct > 1.0  ? 'slightly over budget'
+    : projPct >= 0.85 ? 'on track'
+    : `${Math.round((1 - projPct) * 100)}% underpacing`;
+
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-xs text-gray-500">
@@ -96,6 +111,14 @@ function BudgetBar({ spend, budget, dayPct }: { spend: number; budget: number; d
         <span>{AUD.format(budget)} budget</span>
       </div>
       <div className="relative h-2 bg-gray-100 rounded-full overflow-hidden">
+        {/* Ghost bar — projected month-end spend */}
+        {projPct != null && (
+          <div
+            className="absolute h-full rounded-full bg-gray-300 opacity-40"
+            style={{ width: `${Math.min(projPct * 100, 100)}%` }}
+          />
+        )}
+        {/* Actual spend bar */}
         <div
           className={`h-full rounded-full transition-all ${barColor}`}
           style={{ width: `${Math.min(spendPct * 100, 100)}%` }}
@@ -113,6 +136,12 @@ function BudgetBar({ spend, budget, dayPct }: { spend: number; budget: number; d
         </span>
         <span className="text-gray-400">{Math.round(dayPct * 100)}% of month elapsed</span>
       </div>
+      {projected != null && (
+        <div className="flex items-center gap-1.5 text-xs pt-0.5">
+          <span className="text-gray-400">Projected month-end:</span>
+          <span className={projClass}>{AUD.format(Math.round(projected))} · {projStatus}</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -62,6 +62,14 @@ function sentDate(iso: string | null): string {
   return new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 function normName(s: string): string { return s.toLowerCase().replace(/[\s\-]+/g, '_').replace(/[^a-z0-9_]/g, ''); }
+function detectBrand(name: string, fromName: string): 'Pascal Press' | 'Excel Test Zone' {
+  const n = name.toLowerCase();
+  const f = (fromName ?? '').toLowerCase();
+  if (n.includes('etz') || n.startsWith('excel') || f.includes('excel test') || f.includes('etz')) {
+    return 'Excel Test Zone';
+  }
+  return 'Pascal Press';
+}
 function stripNumericPrefix(s: string): string { return s.replace(/^\d+[-_]/, ''); }
 function getPrevMonth(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
@@ -333,6 +341,7 @@ export default function EmailTab() {
   const [trendLoading,  setTrendLoading]  = useState(false);
   const [sortKey,       setSortKey]       = useState<SortKey>('sentAt');
   const [sortDir,       setSortDir]       = useState<SortDir>('desc');
+  const [brandFilter,   setBrandFilter]   = useState<'All' | 'Pascal Press' | 'Excel Test Zone'>('All');
 
   const monthOptions = buildMonthOptions();
 
@@ -386,17 +395,24 @@ export default function EmailTab() {
 
   // ── Derived values ────────────────────────────────────────────────────────
 
-  const campaigns    = data?.campaigns ?? [];
-  const revenueMap   = buildRevenueMap(revenueData?.byCampaign ?? []);
-  const gaConnected  = revenueData?.connected ?? false;
-  const totalSends   = data?.totalSends ?? 0;
+  const allCampaigns   = data?.campaigns ?? [];
+  const campaigns      = brandFilter === 'All'
+    ? allCampaigns
+    : allCampaigns.filter(c => detectBrand(c.name, c.fromName) === brandFilter);
+  const revenueMap     = buildRevenueMap(revenueData?.byCampaign ?? []);
+  const gaConnected    = revenueData?.connected ?? false;
+  const totalSends     = campaigns.reduce((s, c) => s + c.sends, 0);
   const totalDelivered = campaigns.reduce((s, c) => s + c.delivered, 0);
-  const totalUnsubs  = campaigns.reduce((s, c) => s + c.unsubscribes, 0);
-  const deliveryRate = safeDiv(totalDelivered, totalSends);
-  const unsubRate    = safeDiv(totalUnsubs, totalSends);
-  const avgCtor      = safeDiv(data?.totalClicks ?? 0, data?.totalOpens ?? 0);
-  const totalRevenue = revenueData?.totalRevenue ?? 0;
-  const revPerSend   = safeDiv(totalRevenue, totalSends);
+  const totalOpens     = campaigns.reduce((s, c) => s + c.opens, 0);
+  const totalClicks    = campaigns.reduce((s, c) => s + c.clicks, 0);
+  const totalUnsubs    = campaigns.reduce((s, c) => s + c.unsubscribes, 0);
+  const deliveryRate   = safeDiv(totalDelivered, totalSends);
+  const unsubRate      = safeDiv(totalUnsubs, totalSends);
+  const avgOpenRate    = safeDiv(totalOpens, totalDelivered);
+  const avgClickRate   = safeDiv(totalClicks, totalDelivered);
+  const avgCtor        = safeDiv(totalClicks, totalOpens);
+  const totalRevenue   = revenueData?.totalRevenue ?? 0;
+  const revPerSend     = safeDiv(totalRevenue, totalSends);
 
   const prevSends      = prevData?.totalSends ?? 0;
   const prevDelivered  = (prevData?.campaigns ?? []).reduce((s, c) => s + c.delivered, 0);
@@ -439,7 +455,25 @@ export default function EmailTab() {
             HubSpot &middot; GA4 revenue &middot; {hasMoM ? `vs ${monthLabel(getPrevMonth(selectedMonth))}` : 'select month for MoM'}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {/* Brand filter */}
+          <div className="flex rounded-lg border border-gray-200 overflow-hidden text-sm">
+            {(['All', 'Pascal Press', 'Excel Test Zone'] as const).map(b => (
+              <button
+                key={b}
+                onClick={() => { setBrandFilter(b); setShowAll(false); }}
+                className={`px-3 py-1.5 font-medium transition-colors ${
+                  brandFilter === b
+                    ? b === 'Pascal Press' ? 'bg-blue-600 text-white'
+                    : b === 'Excel Test Zone' ? 'bg-emerald-600 text-white'
+                    : 'bg-gray-700 text-white'
+                    : 'text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                {b === 'All' ? 'All' : b === 'Pascal Press' ? 'PP' : 'ETZ'}
+              </button>
+            ))}
+          </div>
           <button
             onClick={() => setShowTrend(v => !v)}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors ${
@@ -526,10 +560,10 @@ export default function EmailTab() {
             <StatCard label="Delivery Rate" value={pct(deliveryRate)} sub={`${fmt(totalDelivered)} delivered`}
               delta={hasMoM ? <MomDelta curr={deliveryRate} prev={prevDelivRate} /> : undefined}
               warn={deliveryRate > 0 && deliveryRate < 0.95} />
-            <StatCard label="Avg Open Rate" value={pct(data.avgOpenRate)} sub={`${fmt(data.totalOpens)} opens`}
-              delta={hasMoM ? <MomDelta curr={data.avgOpenRate} prev={prevData?.avgOpenRate ?? 0} /> : undefined} />
-            <StatCard label="Avg Click Rate" value={pct(data.avgClickRate)} sub={`${fmt(data.totalClicks)} clicks`}
-              delta={hasMoM ? <MomDelta curr={data.avgClickRate} prev={prevData?.avgClickRate ?? 0} /> : undefined} />
+            <StatCard label="Avg Open Rate" value={pct(avgOpenRate)} sub={`${fmt(totalOpens)} opens`}
+              delta={hasMoM ? <MomDelta curr={avgOpenRate} prev={prevData?.avgOpenRate ?? 0} /> : undefined} />
+            <StatCard label="Avg Click Rate" value={pct(avgClickRate)} sub={`${fmt(totalClicks)} clicks`}
+              delta={hasMoM ? <MomDelta curr={avgClickRate} prev={prevData?.avgClickRate ?? 0} /> : undefined} />
           </div>
 
           {/* ── Stat cards row 2 ── */}
