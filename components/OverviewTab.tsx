@@ -72,6 +72,22 @@ function monthLabel(ym: string): string {
   return d.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
 }
 
+// ─── Band 6 Tracker types ────────────────────────────────────────────────────
+
+interface Band6Product { id: number; name: string; sku: string; }
+interface Band6Data {
+  connected:    boolean;
+  error?:       string;
+  products:     Band6Product[];
+  revenue:      number;
+  orders:       number;
+  units:        number;
+  target:       number;
+  startDate:    string;
+  endDate:      string;
+  daysRemaining: number;
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function KpiCard({ label, value, sub, valueClass = '' }: {
@@ -192,6 +208,79 @@ function BrandCard({ name, data, dayPct, onNavigate }: {
   );
 }
 
+function Band6TrackerCard({ data }: { data: Band6Data }) {
+  const pct           = data.target > 0 ? Math.min(data.revenue / data.target, 1) : 0;
+  const remaining     = Math.max(0, data.target - data.revenue);
+  const dailyNeeded   = data.daysRemaining > 0 ? remaining / data.daysRemaining : null;
+  const barColor      = pct >= 1 ? 'bg-emerald-500' : pct >= 0.7 ? 'bg-blue-500' : pct >= 0.4 ? 'bg-amber-500' : 'bg-orange-400';
+  const needColor     = !dailyNeeded ? 'text-gray-400' : dailyNeeded < 300 ? 'text-emerald-600' : dailyNeeded < 700 ? 'text-amber-600' : 'text-red-600';
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-5">
+      <div className="flex items-start justify-between mb-4 gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-gray-800">60 Days to Band 6</h3>
+            <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full font-medium">Series Tracker</span>
+          </div>
+          <p className="text-xs text-gray-400 mt-0.5">{data.products.length} products · target by Nov 2026</p>
+        </div>
+        <div className="text-right shrink-0">
+          <p className="text-xl font-bold text-gray-900">{AUD.format(data.revenue)}</p>
+          <p className="text-xs text-gray-400">of {AUD.format(data.target)} goal</p>
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div className="space-y-1 mb-4">
+        <div className="relative h-3 bg-gray-100 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(pct * 100, 100)}%` }} />
+        </div>
+        <div className="flex justify-between text-xs text-gray-500">
+          <span className="font-medium text-gray-700">{Math.round(pct * 100)}% to goal</span>
+          <span>{data.daysRemaining} days left</span>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-2">
+        <div className="bg-gray-50 rounded-lg p-3 text-center">
+          <p className="text-base font-bold text-gray-900">{data.orders}</p>
+          <p className="text-xs text-gray-500">Orders</p>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-3 text-center">
+          <p className="text-base font-bold text-gray-900">{data.units}</p>
+          <p className="text-xs text-gray-500">Units sold</p>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-3 text-center">
+          <p className={`text-base font-bold ${needColor}`}>
+            {dailyNeeded != null ? AUD.format(Math.ceil(dailyNeeded)) : '—'}
+          </p>
+          <p className="text-xs text-gray-500">Needed/day</p>
+        </div>
+      </div>
+
+      {/* Product list (collapsible) */}
+      {data.products.length > 0 && (
+        <details className="mt-3">
+          <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600 select-none">
+            {data.products.length} products tracked — click to expand
+          </summary>
+          <ul className="mt-2 space-y-0.5 pl-1">
+            {data.products.map(p => (
+              <li key={p.id} className="text-xs text-gray-600 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 flex-shrink-0" />
+                {p.name}
+                {p.sku && <span className="text-gray-400">({p.sku})</span>}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 interface OverviewTabProps {
@@ -204,6 +293,8 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
   const [error,      setError]      = useState('');
   const [dismissed,  setDismissed]  = useState<Set<string>>(new Set());
   const [alertsOpen, setAlertsOpen] = useState(true);
+  const [band6,      setBand6]      = useState<Band6Data | null>(null);
+  const [band6Loading, setBand6Loading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -220,6 +311,14 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    fetch('/api/band6-tracker')
+      .then(r => r.json())
+      .then((d: Band6Data) => setBand6(d))
+      .catch(() => setBand6(null))
+      .finally(() => setBand6Loading(false));
+  }, []);
 
   if (loading) {
     return (
@@ -344,6 +443,18 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
           <BrandCard name="Pascal Press"    data={pp}  dayPct={dayPct} onNavigate={() => onNavigate('finance')} />
           <BrandCard name="Excel Test Zone" data={etz} dayPct={dayPct} onNavigate={() => onNavigate('finance')} />
         </div>
+
+        {/* ── Band 6 Tracker ── */}
+        {(band6Loading || (band6 && band6.connected)) && (
+          band6Loading ? (
+            <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
+              <div className="w-4 h-4 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
+              <p className="text-sm text-gray-400">Loading Band 6 tracker…</p>
+            </div>
+          ) : band6 && band6.connected ? (
+            <Band6TrackerCard data={band6} />
+          ) : null
+        )}
 
         {/* ── Email snapshot ── */}
         {email && (
