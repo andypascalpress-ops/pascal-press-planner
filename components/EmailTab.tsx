@@ -62,12 +62,11 @@ function sentDate(iso: string | null): string {
   return new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 function normName(s: string): string { return s.toLowerCase().replace(/[\s\-]+/g, '_').replace(/[^a-z0-9_]/g, ''); }
-function detectBrand(name: string, fromName: string): 'Pascal Press' | 'Excel Test Zone' {
+function detectBrand(name: string, fromName: string): 'Pascal Press' | 'Excel Test Zone' | 'Blake Education' {
   const n = name.toLowerCase();
   const f = (fromName ?? '').toLowerCase();
-  if (n.includes('etz') || n.startsWith('excel') || f.includes('excel test') || f.includes('etz')) {
-    return 'Excel Test Zone';
-  }
+  if (n.startsWith('be_') || n.includes('blake') || f.includes('blake')) return 'Blake Education';
+  if (n.includes('etz') || n.startsWith('excel') || f.includes('excel test') || f.includes('etz')) return 'Excel Test Zone';
   return 'Pascal Press';
 }
 function stripNumericPrefix(s: string): string { return s.replace(/^\d+[-_]/, ''); }
@@ -341,7 +340,7 @@ export default function EmailTab() {
   const [trendLoading,  setTrendLoading]  = useState(false);
   const [sortKey,       setSortKey]       = useState<SortKey>('sentAt');
   const [sortDir,       setSortDir]       = useState<SortDir>('desc');
-  const [brandFilter,   setBrandFilter]   = useState<'All' | 'Pascal Press' | 'Excel Test Zone'>('All');
+  const [brandFilter,   setBrandFilter]   = useState<'All' | 'Pascal Press' | 'Excel Test Zone' | 'Blake Education'>('All');
 
   const monthOptions = buildMonthOptions();
 
@@ -458,7 +457,7 @@ export default function EmailTab() {
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {/* Brand filter */}
           <div className="flex rounded-lg border border-gray-200 overflow-hidden text-sm">
-            {(['All', 'Pascal Press', 'Excel Test Zone'] as const).map(b => (
+            {(['All', 'Pascal Press', 'Excel Test Zone', 'Blake Education'] as const).map(b => (
               <button
                 key={b}
                 onClick={() => { setBrandFilter(b); setShowAll(false); }}
@@ -466,11 +465,12 @@ export default function EmailTab() {
                   brandFilter === b
                     ? b === 'Pascal Press' ? 'bg-blue-600 text-white'
                     : b === 'Excel Test Zone' ? 'bg-emerald-600 text-white'
+                    : b === 'Blake Education' ? 'bg-purple-600 text-white'
                     : 'bg-gray-700 text-white'
                     : 'text-gray-500 hover:bg-gray-50'
                 }`}
               >
-                {b === 'All' ? 'All' : b === 'Pascal Press' ? 'PP' : 'ETZ'}
+                {b === 'All' ? 'All' : b === 'Pascal Press' ? 'PP' : b === 'Excel Test Zone' ? 'ETZ' : 'BE'}
               </button>
             ))}
           </div>

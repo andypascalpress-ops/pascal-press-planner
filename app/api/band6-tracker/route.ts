@@ -81,6 +81,31 @@ async function searchProducts(keyword: string): Promise<BCCatalogProduct[]> {
   return (json.data ?? []) as BCCatalogProduct[];
 }
 
+/**
+ * Search multiple keyword variants and validate results by name.
+ * Returns products whose names actually contain "band 6" / "band6" / "60 days".
+ */
+async function findBand6Products(): Promise<BCCatalogProduct[]> {
+  const TERMS = ['60 days', 'band 6', '60days', 'band6', '60 day'];
+  const batches = await Promise.all(TERMS.map(t => searchProducts(t)));
+
+  const seen = new Set<number>();
+  const products: BCCatalogProduct[] = [];
+  for (const p of batches.flat()) {
+    if (seen.has(p.id)) continue;
+    seen.add(p.id);
+    const name = p.name.toLowerCase();
+    // Keep only products whose name actually references Band 6 or 60 Days
+    if (
+      name.includes('band 6') || name.includes('band6') ||
+      name.includes('60 days') || name.includes('60days') || name.includes('60-days')
+    ) {
+      products.push(p);
+    }
+  }
+  return products;
+}
+
 export async function GET() {
   if (!STORE_HASH || !ACCESS_TOKEN) {
     return NextResponse.json({ connected: false, error: 'BigCommerce not configured' });
@@ -88,17 +113,7 @@ export async function GET() {
 
   try {
     // ── 1. Discover "60 Days to Band 6" products ──────────────────────────────
-    const [r1, r2] = await Promise.all([
-      searchProducts('60 days'),
-      searchProducts('band 6'),
-    ]);
-
-    // Merge, dedup by product id
-    const seen = new Set<number>();
-    const products: BCCatalogProduct[] = [];
-    for (const p of [...r1, ...r2]) {
-      if (!seen.has(p.id)) { seen.add(p.id); products.push(p); }
-    }
+    const products = await findBand6Products();
 
     if (products.length === 0) {
       return NextResponse.json({

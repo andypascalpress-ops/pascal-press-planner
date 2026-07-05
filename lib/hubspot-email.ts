@@ -58,7 +58,7 @@ interface HsEmailRow {
   name?:                   string;
   subject?:                string;
   fromName?:               string;
-  publishDate?:            string;
+  publishDate?:            string | number; // HubSpot may return ISO string OR Unix ms timestamp
   primaryEmailCampaignId?: string;
 }
 
@@ -73,6 +73,28 @@ interface V1Counters {
 interface V1CampaignData {
   name?:     string;
   counters?: V1Counters;
+}
+
+// ─── Date helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Convert a HubSpot publishDate (ISO string OR Unix ms timestamp as number/string)
+ * to "YYYY-MM" in AEST (UTC+10). Returns '' if unparseable.
+ */
+function toAESTYearMonth(publishDate: string | number | undefined | null): string {
+  if (publishDate == null) return '';
+  let ts: number;
+  if (typeof publishDate === 'number') {
+    ts = publishDate;
+  } else if (/^\d{10,}$/.test(publishDate)) {
+    ts = parseInt(publishDate, 10);
+  } else {
+    ts = new Date(publishDate).getTime();
+  }
+  if (isNaN(ts)) return '';
+  // Shift to AEST (UTC+10) then read UTC fields to get the local AEST date
+  const d = new Date(ts + 10 * 60 * 60 * 1000);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
 // ─── API calls ───────────────────────────────────────────────────────────────
@@ -175,19 +197,29 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
   }
 
   try {
-    // Step 1: fetch PUBLISHED email list (fast, cached)
+    // Step 1: fetch PUBLISHED email list with early-exit when month is specified.
+    // Emails are sorted newest-first (-publishDate), so once we see a row from
+    // before the target month we can stop paginating.
     let after: string | undefined;
     const allRows: HsEmailRow[] = [];
     do {
       const page = await fetchEmailPage(after);
-      allRows.push(...page.results);
+      const rows = page.results;
+      if (month) {
+        for (const r of rows) {
+          if (toAESTYearMonth(r.publishDate) === month) allRows.push(r);
+        }
+        // Early exit: stop once we reach rows older than the target month
+        const lastYM = toAESTYearMonth(rows[rows.length - 1]?.publishDate);
+        if (lastYM && lastYM < month) break;
+      } else {
+        allRows.push(...rows);
+      }
       after = page.next;
-    } while (after && allRows.length < 500);
+    } while (after && allRows.length < 2000);
 
-    // Step 2: filter + sort
-    const filtered = month
-      ? allRows.filter(r => r.publishDate?.startsWith(month))
-      : allRows;
+    // Step 2: sort (all rows are already filtered to the target month above)
+    const filtered = allRows;
 
     filtered.sort((a, b) =>
       (b.publishDate ?? '').localeCompare(a.publishDate ?? ''),
