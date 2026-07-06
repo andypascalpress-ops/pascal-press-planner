@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 
-export const runtime = 'edge';
+export const maxDuration = 60; // Vercel: up to 60s for Pro, 10s for Hobby
 
 const client = new Anthropic();
 
@@ -115,7 +115,7 @@ Priority order: zero-conversion campaigns burning budget → high abandoned cart
 
     const msg = await client.messages.create({
       model:      'claude-haiku-4-5-20251001',
-      max_tokens: 2400,
+      max_tokens: 1800,
       messages:   [{ role: 'user', content: prompt }],
     });
 
