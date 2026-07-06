@@ -608,11 +608,99 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
               <path d="M14 8a6 6 0 01-6 6 6 6 0 01-6-6 6 6 0 016-6" strokeLinecap="round"/>
               <path d="M14 4V8h-4" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            Claude is analysing your campaigns for deeper insights…
+                        Claude is analysing your campaigns for deeper insights…
           </div>
         )}
 
         {/* Priority Actions */}
         {critical.length > 0 && (
           <section>
-            <SectionHead co
+            <SectionHead count={critical.length} label="Priority Actions"
+              icon={<svg className="w-4 h-4 text-red-500 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
+              </svg>}
+            />
+            <div className="space-y-3">
+              {critical.map((ins, i) => (
+                <InsightCard key={ins.id} rank={i + 1} insight={ins} onDismiss={dismiss} onOpenChat={onOpenChat} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Opportunities */}
+        {opps.length > 0 && (
+          <section>
+            <SectionHead count={opps.length} label="Opportunities"
+              icon={<svg className="w-4 h-4 text-blue-500 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.298.082-.58.195-.844a3 3 0 10-4.39 0c.113.263.18.546.195.844h4z"/>
+              </svg>}
+            />
+            <div className="space-y-3">
+              {opps.map((ins, i) => (
+                <InsightCard key={ins.id} rank={i + 1} insight={ins} onDismiss={dismiss} onOpenChat={onOpenChat} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Performance Notes */}
+        {infoItems.length > 0 && (
+          <section>
+            <SectionHead count={infoItems.length} label="Performance Notes"
+              icon={<svg className="w-4 h-4 text-gray-400 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"/>
+              </svg>}
+            />
+            <div className="space-y-3">
+              {infoItems.map((ins, i) => (
+                <InsightCard key={ins.id} rank={i + 1} insight={ins} onDismiss={dismiss} onOpenChat={onOpenChat} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Restore dismissed */}
+        {dismissedCnt > 0 && (status === 'ready' || status === 'analysing') && (
+          <div className="text-center py-1">
+            <button onClick={restoreDismissed}
+              className="text-xs text-gray-400 hover:text-gray-600 underline">
+              Restore {dismissedCnt} dismissed item{dismissedCnt !== 1 ? 's' : ''}
+            </button>
+          </div>
+        )}
+
+        {/* Quick Actions */}
+        {(status === 'ready' || status === 'analysing') && (
+          <section className="bg-white rounded-xl border border-gray-200 p-4">
+            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Quick Actions</h3>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => onOpenChat('Give me a detailed Google Ads performance breakdown for Pascal Press and Excel Test Zone this month. List each campaign by name with ROAS, CTR, and cost. Tell me which campaigns to pause, scale, or restructure, and why.')}
+                className="text-left text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg p-2.5 transition-colors">
+                <div className="font-semibold text-gray-700 mb-0.5">🎯 Google Ads Breakdown</div>
+                <div className="text-gray-500">Campaign-by-campaign ROAS</div>
+              </button>
+              <button onClick={() => onOpenChat('Analyse our HubSpot email campaigns from this month. Which subject lines worked best? Which audience segments have the highest open rate? Give me 3 concrete changes to improve open rates and click-through rates.')}
+                className="text-left text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg p-2.5 transition-colors">
+                <div className="font-semibold text-gray-700 mb-0.5">📧 Email Deep Dive</div>
+                <div className="text-gray-500">Subject lines + segments</div>
+              </button>
+              <button onClick={() => onOpenChat('Based on our BigCommerce sales data and current Term 3 period, which products should we be prioritising in Google Ads? Are there any product bundles, promotions, or ad campaigns I should create? Which products are underperforming and why?')}
+                className="text-left text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg p-2.5 transition-colors">
+                <div className="font-semibold text-gray-700 mb-0.5">🛒 Product Intelligence</div>
+                <div className="text-gray-500">What to push in ads</div>
+              </button>
+              <button onClick={() => onNavigate('calendar')}
+                className="text-left text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg p-2.5 transition-colors">
+                <div className="font-semibold text-gray-700 mb-0.5">📅 Campaign Calendar</div>
+                <div className="text-gray-500">View & plan campaigns</div>
+              </button>
+            </div>
+          </section>
+        )}
+
+        <div className="h-6" />
+      </div>
+    </div>
+  );
+}
