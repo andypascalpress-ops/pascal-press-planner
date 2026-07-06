@@ -110,7 +110,11 @@ export default function Home() {
         });
         const updated: Campaign = await res.json();
         if (!res.ok) throw new Error((updated as { error?: string }).error || 'Update failed');
-        setCampaigns(prev => prev.map(c => c.id === editingCampaign.id ? updated : c));
+        // Merge form data over API response so new fields (color, discount, etc.)
+        // show immediately even if the Monday.com board columns don't exist yet.
+        setCampaigns(prev => prev.map(c => c.id === editingCampaign.id
+          ? { ...updated, ...data, id: editingCampaign.id }
+          : c));
         showToast('Campaign updated');
       } else {
         const res = await fetch('/api/campaigns', {
@@ -120,7 +124,7 @@ export default function Home() {
         });
         const created: Campaign = await res.json();
         if (!res.ok) throw new Error((created as { error?: string }).error || 'Create failed');
-        setCampaigns(prev => [...prev, created]);
+        setCampaigns(prev => [...prev, { ...created, ...data, id: created.id }]);
         showToast('Campaign added');
       }
       closeModal();
