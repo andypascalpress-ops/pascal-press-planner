@@ -242,8 +242,11 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
       });
 
       if (!insightRes.ok) throw new Error(`Insights API ${insightRes.status}`);
-      const { insights: raw, error: apiErr } = await insightRes.json();
-      if (apiErr) throw new Error(apiErr);
+
+      // Route streams plain text (Claude tokens) — collect then parse JSON
+      const rawText = await insightRes.text();
+      const cleaned = rawText.replace(/^```json?\s*/m, '').replace(/\s*```\s*$/m, '').trim();
+      const raw = JSON.parse(cleaned);
 
       setInsights(Array.isArray(raw) ? raw : []);
       setStatus('ready');

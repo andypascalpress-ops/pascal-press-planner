@@ -1,132 +1,186 @@
 /**
- * POST /api/insights
+ * POST /api/insights  — Edge runtime + streaming
  *
- * Accepts a rich `metrics` payload containing real campaign names, ad groups,
- * product names, and email subjects. Calls Claude Haiku to produce 5–8 specific,
- * named recommendations as a JSON array. Used by the redesigned Action Centre.
+ * Streams the Claude response as plain text so Vercel never times out.
+ * The client reads the full text, then parses the JSON array.
+ *
+ * Edge runtime + streaming bypasses Vercel's 10 s function limit on Hobby.
  */
-import { NextRequest, NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { NextRequest } from 'next/server';
 
-export const maxDuration = 60; // Vercel: up to 60s for Pro, 10s for Hobby
+export const runtime = 'edge';
 
-const client = new Anthropic();
-
-function fmt(n: number | undefined, prefix = '$'): string {
+function fmt(n: number | undefined): string {
   if (n == null) return '?';
-  return `${prefix}${n.toLocaleString('en-AU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  return `$${n.toLocaleString('en-AU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+}
+
+function buildPrompt(metrics: any): string {
+  const campaigns  = metrics?.campaigns  ?? {};
+  const emailData  = metrics?.email      ?? {};
+  const band6      = metrics?.band6      ?? {};
+  const spend      = metrics?.spend      ?? {};
+  const bc         = metrics?.bc         ?? {};
+
+  const ppCampaigns  = (campaigns?.pp?.campaigns  ?? []).slice(0, 6);
+  const ppAdGroups   = (campaigns?.pp?.adGroups   ?? []).slice(0, 6);
+  const etzCampaigns = (campaigns?.etz?.campaigns ?? []).slice(0, 6);
+  const etzAdGroups  = (campaigns?.etz?.adGroups  ?? []).slice(0, 6);
+  const emails       = (emailData?.campaigns ?? emailData?.emails ?? []).slice(0, 8);
+  const topProducts  = (bc?.topProducts ?? []).slice(0, 8);
+  const abandoned    = bc?.abandonedCarts ?? { count: 0, value: 0 };
+
+  const today = new Date().toLocaleDateString('en-AU', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    timeZone: 'Australia/Sydney',
+  });
+
+  const cLine = (c: any, brand: string) =>
+    `• [${brand}] ${c.name}: spend ${fmt(c.cost)}, conv ${c.conversions ?? 0}, ROAS ${c.roas ?? 0}, CTR ${((c.ctr ?? 0) * 100).toFixed(1)}%`;
+
+  const gLine = (g: any, brand: string) =>
+    `• [${brand}] "${g.campaign}" / "${g.adGroup}": spend ${fmt(g.cost)}, conv ${g.conversions ?? 0}, CTR ${((g.ctr ?? 0) * 100).toFixed(1)}%`;
+
+  const eLine = (e: any) => {
+    const name  = e.name ?? e.subject ?? e.id ?? 'Unknown';
+    const open  = typeof e.openRate  === 'number' ? e.openRate.toFixed(1)  : (e.open_rate  ?? '?');
+    const click = typeof e.clickRate === 'number' ? e.clickRate.toFixed(1) : (e.click_rate ?? '?');
+    return `• "${name}": open ${open}%, click ${click}%, ${e.sends ?? e.recipients ?? '?'} sent`;
+  };
+
+  const ppLines  = ppCampaigns.length  ? ppCampaigns.map((c: any)  => cLine(c, 'PP')).join('\n')  : '  (no PP data)';
+  const etzLines = etzCampaigns.length ? etzCampaigns.map((c: any) => cLine(c, 'ETZ')).join('\n') : '  (no ETZ data)';
+  const agLines  = [...ppAdGroups.map((g: any) => gLine(g, 'PP')), ...etzAdGroups.map((g: any) => gLine(g, 'ETZ'))].join('\n') || '  (no ad group data)';
+  const emLines  = emails.length ? emails.map(eLine).join('\n') : '  (no email data)';
+  const prLines  = topProducts.length ? topProducts.map((p: any) => `• ${p.name}: ${p.quantity ?? 0} units, ${fmt(p.revenue)}`).join('\n') : '  (no product data)';
+
+  const spendSummary = JSON.stringify(spend?.summary ?? spend ?? {});
+  const band6Summary = JSON.stringify(band6?.summary ?? band6 ?? {});
+
+  return `You are a digital marketing strategist for Pascal Press (K–12 workbooks) and Excel Test Zone (HSC/NAPLAN prep) — Australian educational publisher.
+
+Today: ${today}. It's Term 3 — peak for NAPLAN prep, HSC, Back to School.
+
+Analyse this data. Return 5–7 actionable insights as JSON. Reference EXACT campaign names, ad group names, email subjects, product names from the data. Include specific numbers (dollars, %, counts). Be direct — generic advice is useless.
+
+GOOGLE ADS — Campaigns:
+${ppLines}
+${etzLines}
+
+GOOGLE ADS — Ad Groups:
+${agLines}
+
+EMAIL (HubSpot):
+${emLines}
+
+BIGCOMMERCE — Top Products This Month:
+${prLines}
+
+ABANDONED CARTS (last 30 days): ${abandoned.count} carts, ${fmt(abandoned.value)}
+
+BUDGET PACING: ${spendSummary}
+BAND 6: ${band6Summary}
+
+Return ONLY a valid JSON array — no markdown, no preamble:
+[{
+  "id": "kebab-unique-id",
+  "severity": "critical|warning|opportunity|info",
+  "category": "google-ads|email|bigcommerce|band6|seasonal|budget",
+  "title": "Title with exact campaign/product/email name (max 70 chars)",
+  "body": "2–3 sentences. Cite specific numbers. WHY it matters in Term 3. ONE concrete action this week.",
+  "metric": "e.g. 'ROAS 0.0 · $840 spent' or 'Open 9.4% · 2,100 sent'",
+  "chatPrompt": "Pre-filled AI question with exact name + numbers",
+  "action": "Short imperative (max 30 chars)"
+}]
+
+Priority: zero-conversion spend → abandoned cart value → low email open/click → Term 3 gaps → product wins.`;
 }
 
 export async function POST(req: NextRequest) {
+  let prompt = '';
+
   try {
     const { metrics } = await req.json();
-
-    const campaigns  = metrics?.campaigns ?? {};
-    const emailData  = metrics?.email     ?? {};
-    const band6      = metrics?.band6     ?? {};
-    const spend      = metrics?.spend     ?? {};
-    const bc         = metrics?.bc        ?? {};
-
-    const ppCampaigns  = campaigns?.pp?.campaigns  ?? [];
-    const ppAdGroups   = campaigns?.pp?.adGroups   ?? [];
-    const etzCampaigns = campaigns?.etz?.campaigns ?? [];
-    const etzAdGroups  = campaigns?.etz?.adGroups  ?? [];
-    const emails       = emailData?.campaigns ?? emailData?.emails ?? [];
-    const topProducts  = bc?.topProducts      ?? [];
-    const abandoned    = bc?.abandonedCarts   ?? { count: 0, value: 0 };
-
-    const today = new Date().toLocaleDateString('en-AU', {
-      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-      timeZone: 'Australia/Sydney',
-    });
-
-    const campaignLines = (arr: any[], brand: string) => arr.length
-      ? arr.map(c =>
-          `  • [${brand}] ${c.name}: cost ${fmt(c.cost)}, conversions ${c.conversions ?? 0}, ROAS ${c.roas ?? 0}, CTR ${((c.ctr ?? 0) * 100).toFixed(2)}%, CPC ${fmt(c.avgCpc)}, ${c.clicks ?? 0} clicks`
-        ).join('\n')
-      : `  (no ${brand} campaign data)`;
-
-    const adGroupLines = (arr: any[], brand: string) => arr.slice(0, 8).map(g =>
-      `  • [${brand}] campaign="${g.campaign}" adGroup="${g.adGroup}": cost ${fmt(g.cost)}, conversions ${g.conversions ?? 0}, CTR ${((g.ctr ?? 0) * 100).toFixed(2)}%`
-    ).join('\n');
-
-    const emailLines = emails.length
-      ? emails.slice(0, 10).map((e: any) => {
-          const name     = e.name ?? e.subject ?? e.id ?? 'Unknown';
-          const openRate = e.openRate  ?? e.open_rate  ?? '?';
-          const clickRate= e.clickRate ?? e.click_rate ?? '?';
-          const sends    = e.sends ?? e.recipients ?? '?';
-          return `  • "${name}": open ${typeof openRate === 'number' ? openRate.toFixed(1) : openRate}%, click ${typeof clickRate === 'number' ? clickRate.toFixed(1) : clickRate}%, ${sends} sent`;
-        }).join('\n')
-      : '  (no email data)';
-
-    const productLines = topProducts.length
-      ? topProducts.slice(0, 10).map((p: any) => `  • ${p.name}: ${p.quantity ?? 0} units, ${fmt(p.revenue)} revenue`).join('\n')
-      : '  (no product data)';
-
-    const prompt = `You are a senior digital marketing strategist for Pascal Press and Excel Test Zone (Australian educational publisher — maths, English, science workbooks K–12; HSC/NAPLAN exam prep).
-
-Today: ${today} — it's Australian Term 3 (peak season for NAPLAN prep, HSC prep, and Back to School).
-
-Analyse the data below and return 5–8 specific, actionable insights as a JSON array. REFERENCE EXACT campaign names, ad group names, product names, and email subject lines from the data. Include real dollar amounts, percentages, and conversion counts. Be direct and specific — generic advice is useless.
-
-=== GOOGLE ADS — Pascal Press ===
-Campaigns this month:
-${campaignLines(ppCampaigns, 'PP')}
-
-Ad Groups:
-${adGroupLines(ppAdGroups, 'PP')}
-
-=== GOOGLE ADS — Excel Test Zone ===
-Campaigns this month:
-${campaignLines(etzCampaigns, 'ETZ')}
-
-Ad Groups:
-${adGroupLines(etzAdGroups, 'ETZ')}
-
-=== EMAIL CAMPAIGNS (HubSpot) ===
-${emailLines}
-
-=== BIGCOMMERCE — Top Products This Month ===
-${productLines}
-
-=== BIGCOMMERCE — Abandoned Carts (last 30 days) ===
-  ${abandoned.count} abandoned carts, estimated value: ${fmt(abandoned.value)}
-
-=== BUDGET PACING ===
-${JSON.stringify(spend, null, 2)}
-
-=== BAND 6 TRACKER ===
-${JSON.stringify(band6, null, 2)}
-
-Return ONLY a valid JSON array (no markdown fences, no preamble) with this structure:
-[{
-  "id": "short-unique-kebab-id",
-  "severity": "critical|warning|opportunity|info",
-  "category": "google-ads|email|bigcommerce|band6|seasonal|budget",
-  "title": "Title naming the exact campaign/product/email (max 70 chars)",
-  "body": "2–3 sentences. Cite specific numbers from the data. State WHY this matters in Term 3. End with ONE concrete action step for this week.",
-  "metric": "Key metric string, e.g. 'ROAS 0.0 · $840 spent' or 'Open rate 9.4% · 2,100 sent'",
-  "chatPrompt": "Pre-filled question for the AI assistant — include the exact campaign/product name AND the specific numbers, so the assistant has full context",
-  "action": "Short imperative label, e.g. 'Pause campaign' or 'Fix subject line' (max 30 chars)"
-}]
-
-Priority order: zero-conversion campaigns burning budget → high abandoned cart value → low email open/click rates → Term 3 seasonal gaps → product opportunities → wins to double down on.`;
-
-    const msg = await client.messages.create({
-      model:      'claude-haiku-4-5-20251001',
-      max_tokens: 1800,
-      messages:   [{ role: 'user', content: prompt }],
-    });
-
-    const raw  = msg.content[0]?.type === 'text' ? msg.content[0].text.trim() : '[]';
-    const json = raw.replace(/^```json?\n?/, '').replace(/\n?```$/, '').trim();
-    const insights = JSON.parse(json);
-
-    return NextResponse.json({ insights });
-
+    prompt = buildPrompt(metrics);
   } catch (e) {
-    console.error('[insights]', e);
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return new Response(JSON.stringify({ error: `Bad request: ${String(e)}` }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not set' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Call Anthropic with streaming — keeps the Edge connection alive
+  const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key':          apiKey,
+      'anthropic-version':  '2023-06-01',
+      'content-type':       'application/json',
+    },
+    body: JSON.stringify({
+      model:      'claude-haiku-4-5-20251001',
+      max_tokens: 1500,
+      stream:     true,
+      messages:   [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  if (!anthropicRes.ok || !anthropicRes.body) {
+    const errText = await anthropicRes.text().catch(() => '');
+    return new Response(JSON.stringify({ error: `Anthropic ${anthropicRes.status}: ${errText.slice(0, 200)}` }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Pipe Anthropic SSE → plain text stream (extract text_delta payloads)
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let sseBuffer = '';
+
+  const transform = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, ctrl) {
+      sseBuffer += decoder.decode(chunk, { stream: true });
+      const lines = sseBuffer.split('\n');
+      sseBuffer   = lines.pop() ?? '';          // keep incomplete last line
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6).trim();
+        if (payload === '[DONE]') continue;
+        try {
+          const evt = JSON.parse(payload);
+          if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
+            ctrl.enqueue(encoder.encode(evt.delta.text));
+          }
+        } catch { /* malformed chunk — skip */ }
+      }
+    },
+    flush(ctrl) {
+      // Handle any remaining buffered line
+      if (sseBuffer.startsWith('data: ')) {
+        const payload = sseBuffer.slice(6).trim();
+        if (payload && payload !== '[DONE]') {
+          try {
+            const evt = JSON.parse(payload);
+            if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
+              ctrl.enqueue(encoder.encode(evt.delta.text));
+            }
+          } catch { /* ignore */ }
+        }
+      }
+    },
+  });
+
+  return new Response(
+    anthropicRes.body.pipeThrough(transform),
+    { headers: { 'Content-Type': 'text/plain; charset=utf-8' } },
+  );
 }
