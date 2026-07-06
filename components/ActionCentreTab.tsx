@@ -1,30 +1,17 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { MONTHLY_GOOGLE_BUDGETS } from '@/lib/constants';
+import { useState, useEffect, useCallback } from 'react';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type Severity = 'critical' | 'warning' | 'opportunity' | 'info';
-
-interface InsightAction {
-  label: string;
-  type:  'navigate' | 'open-chat' | 'add-spend' | 'add-campaign';
-  value?: string;
-}
 interface Insight {
-  id:       string;
-  severity: Severity;
-  category: string;
-  title:    string;
-  body:     string;
-  metric?:  string;
-  actions:  InsightAction[];
+  id:         string;
+  severity:   'critical' | 'warning' | 'opportunity' | 'info';
+  category:   'google-ads' | 'email' | 'bigcommerce' | 'band6' | 'seasonal' | 'budget';
+  title:      string;
+  body:       string;
+  metric:     string;
+  chatPrompt: string;
+  action?:    string;
 }
-interface EmailCampaign { openRate: number; clickRate: number; sends: number; name: string; }
-interface EmailData { campaigns: EmailCampaign[]; connected: boolean; avgOpenRate: number; avgClickRate: number; }
-interface Band6Data { connected: boolean; revenue: number; orders: number; units: number; target: number; daysRemaining: number; }
-interface SpendRecord { brand: string; channel: string; month: string; fy: string; budget: number; actualSpend: number; }
 
 interface Props {
   onNavigate:    (tab: string) => void;
@@ -33,472 +20,460 @@ interface Props {
   onAddCampaign: () => void;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+type Status = 'idle' | 'fetching' | 'analysing' | 'ready' | 'error';
 
-const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
-const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const CAT_LABELS: Record<string, string> = {
+  'google-ads': 'Google Ads',
+  'email':      'Email',
+  'bigcommerce':'BigCommerce',
+  'band6':      'Band 6',
+  'seasonal':   'Seasonal',
+  'budget':     'Budget',
+};
 
-function currentYM(): string {
+const SEV: Record<string, { leftBorder: string; badge: string; dot: string; icon: string }> = {
+  critical:    { leftBorder: 'border-l-red-500',   badge: 'bg-red-50 text-red-700 border-red-200',     dot: 'bg-red-500',   icon: '🔴' },
+  warning:     { leftBorder: 'border-l-amber-400',  badge: 'bg-amber-50 text-amber-700 border-amber-200',dot: 'bg-amber-400', icon: '🟡' },
+  opportunity: { leftBorder: 'border-l-blue-500',   badge: 'bg-blue-50 text-blue-700 border-blue-200',  dot: 'bg-blue-500',  icon: '💡' },
+  info:        { leftBorder: 'border-l-gray-300',   badge: 'bg-gray-50 text-gray-600 border-gray-200',  dot: 'bg-gray-400',  icon: 'ℹ️' },
+};
+
+function currentMonthStr(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
-function ymToName(ym: string): string {
-  const [, m] = ym.split('-').map(Number);
-  return MONTH_NAMES[(m ?? 1) - 1] ?? '';
-}
-function dayPct(): number {
-  const now = new Date();
-  return now.getDate() / new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-}
-function severityOrder(s: Severity): number {
-  return s === 'critical' ? 0 : s === 'warning' ? 1 : s === 'opportunity' ? 2 : 3;
-}
-function severityStyle(s: Severity) {
-  return {
-    critical:    { border: 'border-red-200',   bg: 'bg-red-50',    icon: '🔴', headColor: 'text-red-700',   badge: 'bg-red-100 text-red-800',    btn: 'border-red-200 hover:bg-red-50' },
-    warning:     { border: 'border-amber-200', bg: 'bg-amber-50',  icon: '🟡', headColor: 'text-amber-700', badge: 'bg-amber-100 text-amber-800', btn: 'border-amber-200 hover:bg-amber-50' },
-    opportunity: { border: 'border-blue-200',  bg: 'bg-blue-50',   icon: '🔵', headColor: 'text-blue-700',  badge: 'bg-blue-100 text-blue-800',   btn: 'border-blue-200 hover:bg-blue-50' },
-    info:        { border: 'border-gray-200',  bg: 'bg-gray-50',   icon: 'ℹ️', headColor: 'text-gray-600',  badge: 'bg-gray-100 text-gray-700',   btn: 'border-gray-200 hover:bg-gray-100' },
-  }[s];
+
+function fmtTime(d: Date): string {
+  return d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', timeZone: 'Australia/Sydney' });
 }
 
-// ── Rule engine ───────────────────────────────────────────────────────────────
-
-function computeInsights(
-  spendRecords: SpendRecord[],
-  emailData:    EmailData | null,
-  band6Data:    Band6Data | null,
-): Insight[] {
-  const insights: Insight[] = [];
-  const ym       = currentYM();
-  const monthName = ymToName(ym);
-  const dp       = dayPct();
-
-  // ── Google Ads budget pacing ──
-  for (const brand of ['Pascal Press', 'Excel Test Zone'] as const) {
-    const budget = MONTHLY_GOOGLE_BUDGETS[brand] ?? 0;
-    if (budget <= 0) continue;
-    const short  = brand === 'Pascal Press' ? 'PP' : 'ETZ';
-    const record = spendRecords.find(r =>
-      r.brand === brand &&
-      r.channel === 'Google Ads' &&
-      (r.month === monthName || r.month?.toLowerCase().startsWith(monthName.toLowerCase()))
-    );
-    const actual  = record?.actualSpend ?? 0;
-    const spendP  = actual / budget;
-
-    if (dp > 0.05 && actual === 0) {
-      insights.push({
-        id: `${short}-google-zero`,
-        severity: 'warning',
-        category: 'budget',
-        title: `No ${short} Google Ads spend recorded for ${monthName}`,
-        body: `No Google Ads spend has been logged for ${brand} this month. If campaigns are running, sync from Google Ads or add the actual spend manually.`,
-        metric: `Budget: ${AUD.format(budget)}/mo · ${Math.round(dp * 100)}% of month elapsed`,
-        actions: [
-          { label: 'View Finance', type: 'navigate', value: 'finance' },
-          { label: 'Add Spend', type: 'add-spend', value: brand },
-        ],
-      });
-    } else if (actual > 0 && spendP > dp + 0.15) {
-      const projected = actual / dp;
-      insights.push({
-        id: `${short}-google-over`,
-        severity: 'critical',
-        category: 'budget',
-        title: `${short} Google Ads is overspending`,
-        body: `${brand} has spent ${AUD.format(actual)} (${Math.round(spendP * 100)}% of budget) with only ${Math.round(dp * 100)}% of the month elapsed. Projected month-end spend: ~${AUD.format(Math.round(projected))}.`,
-        metric: `${AUD.format(actual)} / ${AUD.format(budget)} · ${Math.round(spendP * 100)}% of budget used`,
-        actions: [
-          { label: 'View Finance', type: 'navigate', value: 'finance' },
-          { label: 'Ask Claude', type: 'open-chat', value: `${brand} Google Ads has spent ${AUD.format(actual)} (${Math.round(spendP * 100)}%) of the ${AUD.format(budget)} monthly budget with only ${Math.round(dp * 100)}% of the month elapsed. What should we do to avoid overspending?` },
-        ],
-      });
-    } else if (actual > 0 && spendP < dp - 0.20) {
-      insights.push({
-        id: `${short}-google-under`,
-        severity: 'warning',
-        category: 'budget',
-        title: `${short} Google Ads is underpacing`,
-        body: `${brand} has spent ${AUD.format(actual)} (${Math.round(spendP * 100)}%) but ${Math.round(dp * 100)}% of the month is gone. Around ${AUD.format(Math.round(budget - actual))} may go unspent.`,
-        metric: `${AUD.format(actual)} / ${AUD.format(budget)} · ${Math.round(spendP * 100)}% spent`,
-        actions: [
-          { label: 'View Finance', type: 'navigate', value: 'finance' },
-          { label: 'Ask Claude', type: 'open-chat', value: `${brand} Google Ads is underpacing — ${Math.round(spendP * 100)}% spent with ${Math.round(dp * 100)}% of the month gone. Should I increase bids, expand targeting, or reallocate the budget?` },
-        ],
-      });
-    }
-  }
-
-  // ── Email performance ──
-  if (emailData?.connected && emailData.campaigns.length > 0) {
-    const avgOpen  = emailData.avgOpenRate  ?? 0;
-    const avgClick = emailData.avgClickRate ?? 0;
-
-    if (avgOpen > 0 && avgOpen < 0.15) {
-      insights.push({
-        id: 'email-open-critical',
-        severity: 'critical',
-        category: 'email',
-        title: 'Email open rates critically low',
-        body: `Average open rate is ${(avgOpen * 100).toFixed(1)}% — well below the 20% benchmark. Test shorter subject lines, personalisation, and different send times.`,
-        metric: `${(avgOpen * 100).toFixed(1)}% avg open rate (benchmark: 20%)`,
-        actions: [
-          { label: 'View Email', type: 'navigate', value: 'email' },
-          { label: 'Ask Claude', type: 'open-chat', value: `Our email open rate is ${(avgOpen * 100).toFixed(1)}%, well below 20%. Give me 5 specific subject line improvements for our next Pascal Press campaign targeting teachers and parents.` },
-        ],
-      });
-    } else if (avgOpen > 0 && avgOpen < 0.20) {
-      insights.push({
-        id: 'email-open-warning',
-        severity: 'warning',
-        category: 'email',
-        title: 'Email open rate below 20% benchmark',
-        body: `Average open rate is ${(avgOpen * 100).toFixed(1)}%. Small tweaks to subject lines or send timing could lift this above 20%.`,
-        metric: `${(avgOpen * 100).toFixed(1)}% avg open rate (benchmark: 20%)`,
-        actions: [
-          { label: 'View Email', type: 'navigate', value: 'email' },
-          { label: 'Ask Claude', type: 'open-chat', value: `Our email open rate is ${(avgOpen * 100).toFixed(1)}%. Suggest subject line A/B test ideas for our next Pascal Press email campaign.` },
-        ],
-      });
-    }
-
-    if (avgClick > 0 && avgClick < 0.015) {
-      insights.push({
-        id: 'email-click-warning',
-        severity: 'warning',
-        category: 'email',
-        title: 'Email click rate below 2% benchmark',
-        body: `Average click rate is ${(avgClick * 100).toFixed(2)}%. Review CTA placement, button copy, and offer clarity to drive more clicks.`,
-        metric: `${(avgClick * 100).toFixed(2)}% avg click rate (benchmark: 2%)`,
-        actions: [
-          { label: 'View Email', type: 'navigate', value: 'email' },
-          { label: 'Ask Claude', type: 'open-chat', value: `Our email click rate is ${(avgClick * 100).toFixed(2)}%, below the 2% benchmark. What specific CTA, layout, and content changes would improve it for educational product emails?` },
-        ],
-      });
-    }
-
-    if (avgOpen >= 0.20 && avgClick >= 0.02) {
-      insights.push({
-        id: 'email-performing',
-        severity: 'opportunity',
-        category: 'email',
-        title: 'Email performance above benchmark — build on it',
-        body: `Open rate ${(avgOpen * 100).toFixed(1)}% and click rate ${(avgClick * 100).toFixed(2)}% are both above benchmark. Consider increasing send frequency or applying what's working to the other brand.`,
-        metric: `${(avgOpen * 100).toFixed(1)}% opens · ${(avgClick * 100).toFixed(2)}% clicks`,
-        actions: [
-          { label: 'View Email', type: 'navigate', value: 'email' },
-          { label: 'Ask Claude', type: 'open-chat', value: `Our emails are performing well with ${(avgOpen * 100).toFixed(1)}% open rate and ${(avgClick * 100).toFixed(2)}% click rate. How can we scale this success and apply it to more campaigns?` },
-        ],
-      });
-    }
-  }
-
-  // ── Band 6 pacing ──
-  if (band6Data?.connected && band6Data.target > 0) {
-    const TOTAL  = 153; // July 1 → Nov 30
-    const elapsed = Math.max(1, TOTAL - band6Data.daysRemaining);
-    const expPct  = elapsed / TOTAL;
-    const actPct  = band6Data.revenue / band6Data.target;
-    const needed  = band6Data.daysRemaining > 0 ? (band6Data.target - band6Data.revenue) / band6Data.daysRemaining : 0;
-    const actual  = band6Data.revenue / elapsed;
-
-    if (actPct < expPct * 0.6 && elapsed > 7) {
-      insights.push({
-        id: 'band6-critical',
-        severity: 'critical',
-        category: 'band6',
-        title: '60 Days to Band 6 significantly behind target',
-        body: `${AUD.format(band6Data.revenue)} raised (${Math.round(actPct * 100)}% of ${AUD.format(band6Data.target)} goal). You need ${AUD.format(Math.round(needed))}/day vs current ${AUD.format(Math.round(actual))}/day. A targeted promotion could close the gap.`,
-        metric: `${AUD.format(band6Data.revenue)} / ${AUD.format(band6Data.target)} · ${band6Data.daysRemaining} days left`,
-        actions: [
-          { label: 'View Overview', type: 'navigate', value: 'overview' },
-          { label: 'Create Promo', type: 'open-chat', value: `60 Days to Band 6 is significantly behind target — ${AUD.format(band6Data.revenue)} raised of ${AUD.format(band6Data.target)} goal with ${band6Data.daysRemaining} days left. Design a promotional campaign for HSC students to boost sales this week.` },
-        ],
-      });
-    } else if (actPct < expPct * 0.85 && elapsed > 7) {
-      insights.push({
-        id: 'band6-warning',
-        severity: 'warning',
-        category: 'band6',
-        title: '60 Days to Band 6 slightly behind pace',
-        body: `${AUD.format(band6Data.revenue)} raised (${Math.round(actPct * 100)}%). You need ${AUD.format(Math.round(needed))}/day to reach ${AUD.format(band6Data.target)} by November.`,
-        metric: `${AUD.format(band6Data.revenue)} / ${AUD.format(band6Data.target)} · ${band6Data.daysRemaining} days left`,
-        actions: [
-          { label: 'View Overview', type: 'navigate', value: 'overview' },
-          { label: 'Ask Claude', type: 'open-chat', value: `60 Days to Band 6 is slightly behind pace — ${AUD.format(band6Data.revenue)} of ${AUD.format(band6Data.target)} goal with ${band6Data.daysRemaining} days left. What marketing tactics would you recommend to accelerate sales?` },
-        ],
-      });
-    } else if (actPct > expPct * 1.2 && elapsed > 3) {
-      insights.push({
-        id: 'band6-opportunity',
-        severity: 'opportunity',
-        category: 'band6',
-        title: '60 Days to Band 6 ahead of target',
-        body: `${AUD.format(band6Data.revenue)} raised at ${AUD.format(Math.round(actual))}/day — ahead of the ${AUD.format(Math.round(needed))}/day needed for ${AUD.format(band6Data.target)} by November.`,
-        metric: `${AUD.format(band6Data.revenue)} / ${AUD.format(band6Data.target)} · ${Math.round(actPct * 100)}% of goal`,
-        actions: [
-          { label: 'View Overview', type: 'navigate', value: 'overview' },
-          { label: 'Scale Up?', type: 'open-chat', value: `60 Days to Band 6 is ahead of target at ${AUD.format(band6Data.revenue)}. Should we increase ad spend or run a bundle promotion to maximise revenue before the November deadline?` },
-        ],
-      });
-    } else if (elapsed <= 7) {
-      insights.push({
-        id: 'band6-early',
-        severity: 'info',
-        category: 'band6',
-        title: '60 Days to Band 6 — early days',
-        body: `${AUD.format(band6Data.revenue)} raised across ${band6Data.orders} order${band6Data.orders !== 1 ? 's' : ''} so far. Check back in a week for a reliable pacing assessment.`,
-        metric: `${AUD.format(band6Data.revenue)} / ${AUD.format(band6Data.target)} · ${band6Data.daysRemaining} days left`,
-        actions: [
-          { label: 'View Overview', type: 'navigate', value: 'overview' },
-        ],
-      });
-    }
-  }
-
-  return insights;
+function fmtDate(d: Date): string {
+  return d.toLocaleDateString('en-AU', {
+    weekday: 'short', day: 'numeric', month: 'short',
+    timeZone: 'Australia/Sydney',
+  });
 }
 
-// ── Insight card ──────────────────────────────────────────────────────────────
+// ─── Skeleton loader ──────────────────────────────────────────────────────────
 
-function InsightCard({
-  insight,
-  onAction,
-  onDismiss,
-}: {
-  insight:   Insight;
-  onAction:  (a: InsightAction) => void;
-  onDismiss: (id: string) => void;
-}) {
-  const s = severityStyle(insight.severity);
+function SkeletonCard({ index }: { index: number }) {
   return (
-    <div className={`relative rounded-xl border ${s.border} ${s.bg} p-4 shadow-sm`}>
-      <button
-        onClick={() => onDismiss(insight.id)}
-        className="absolute top-3 right-3 text-gray-300 hover:text-gray-500 text-xl leading-none"
-        title="Dismiss"
-      >×</button>
-      <div className="flex items-start gap-3 pr-7">
-        <span className="text-base leading-none mt-0.5 shrink-0">{s.icon}</span>
-        <div className="flex-1 min-w-0">
-          <h3 className={`font-semibold text-sm ${s.headColor}`}>{insight.title}</h3>
-          <p className="text-sm text-gray-600 mt-1 leading-relaxed">{insight.body}</p>
-          {insight.metric && (
-            <span className={`inline-block mt-2 text-xs font-medium px-2.5 py-0.5 rounded-full ${s.badge}`}>
-              {insight.metric}
-            </span>
-          )}
-          {insight.actions.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-3">
-              {insight.actions.map(action => (
-                <button
-                  key={action.label}
-                  onClick={() => onAction(action)}
-                  className={`text-xs font-medium px-3 py-1.5 rounded-lg border bg-white transition-colors text-gray-700 ${s.btn}`}
-                >
-                  {action.type === 'open-chat' ? '✨ ' : ''}{action.label}
-                </button>
-              ))}
-            </div>
-          )}
+    <div
+      className="bg-white rounded-xl border border-l-4 border-gray-200 border-l-gray-200 p-4 space-y-3 animate-pulse"
+      style={{ animationDelay: `${index * 120}ms` }}
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex gap-2">
+          <div className="h-5 w-16 bg-gray-200 rounded-full" />
+          <div className="h-5 w-20 bg-gray-200 rounded-full" />
         </div>
+        <div className="h-4 w-4 bg-gray-200 rounded" />
+      </div>
+      <div className="h-4 w-3/4 bg-gray-200 rounded" />
+      <div className="space-y-1.5">
+        <div className="h-3 w-full bg-gray-100 rounded" />
+        <div className="h-3 w-5/6 bg-gray-100 rounded" />
+        <div className="h-3 w-2/3 bg-gray-100 rounded" />
+      </div>
+      <div className="flex gap-2 pt-1">
+        <div className="h-7 w-28 bg-gray-200 rounded-lg" />
+        <div className="h-7 w-24 bg-gray-100 rounded-lg" />
       </div>
     </div>
   );
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
+// ─── Insight card ─────────────────────────────────────────────────────────────
+
+function InsightCard({ insight, rank, onDismiss, onOpenChat }: {
+  insight:     Insight;
+  rank:        number;
+  onDismiss:   (id: string) => void;
+  onOpenChat:  (prompt: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const s   = SEV[insight.severity] ?? SEV.info;
+  const cat = CAT_LABELS[insight.category] ?? insight.category;
+
+  return (
+    <div className={`bg-white rounded-xl border border-l-4 ${s.leftBorder} border-gray-200 p-4`}>
+
+      {/* Top row */}
+      <div className="flex items-start gap-2 mb-2">
+        <span className="text-gray-400 font-mono text-xs font-medium mt-0.5 shrink-0">#{rank}</span>
+        <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-0">
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${s.badge}`}>
+            {insight.severity.charAt(0).toUpperCase() + insight.severity.slice(1)}
+          </span>
+          <span className="text-xs text-gray-500 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full font-medium">
+            {cat}
+          </span>
+        </div>
+        <button
+          onClick={() => onDismiss(insight.id)}
+          className="text-gray-300 hover:text-gray-500 text-xl leading-none shrink-0 -mt-0.5"
+          title="Dismiss"
+          aria-label="Dismiss"
+        >
+          ×
+        </button>
+      </div>
+
+      {/* Title */}
+      <h4 className="text-sm font-semibold text-gray-800 mb-2 leading-snug">{insight.title}</h4>
+
+      {/* Metric badge */}
+      {insight.metric && (
+        <div className="inline-flex items-center gap-1.5 text-xs font-mono text-gray-600 bg-gray-50 border border-gray-200 rounded px-2 py-1 mb-2">
+          <span className={`w-1.5 h-1.5 rounded-full ${s.dot} shrink-0`} />
+          {insight.metric}
+        </div>
+      )}
+
+      {/* Body */}
+      <p className={`text-sm text-gray-600 leading-relaxed ${expanded ? '' : 'line-clamp-3'}`}>
+        {insight.body}
+      </p>
+      {insight.body.length > 180 && (
+        <button
+          onClick={() => setExpanded(v => !v)}
+          className="text-xs text-blue-500 hover:text-blue-700 mt-1"
+        >
+          {expanded ? 'Show less ↑' : 'Read more ↓'}
+        </button>
+      )}
+
+      {/* Action row */}
+      <div className="flex items-center gap-2 mt-3 flex-wrap">
+        <button
+          onClick={() => onOpenChat(insight.chatPrompt)}
+          className="inline-flex items-center gap-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-3 py-1.5 rounded-lg transition-colors"
+        >
+          <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M14 2H2a1 1 0 00-1 1v8a1 1 0 001 1h2v3l3-3h7a1 1 0 001-1V3a1 1 0 00-1-1z"/>
+          </svg>
+          Ask Claude
+        </button>
+        {insight.action && (
+          <span className="text-xs text-gray-500 bg-gray-100 border border-gray-200 px-2.5 py-1.5 rounded-lg">
+            {insight.action}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Section heading ──────────────────────────────────────────────────────────
+
+function SectionHead({ icon, label, count }: { icon: React.ReactNode; label: string; count: number }) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      {icon}
+      <h3 className="text-xs font-bold text-gray-600 uppercase tracking-wider">{label}</h3>
+      <span className="text-xs text-gray-400 font-medium">({count})</span>
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, onAddCampaign }: Props) {
-  const [spendRecords, setSpendRecords] = useState<SpendRecord[]>([]);
-  const [emailData,    setEmailData]    = useState<EmailData | null>(null);
-  const [band6Data,    setBand6Data]    = useState<Band6Data | null>(null);
-  const [loading,      setLoading]      = useState(true);
-  const [aiInsights,   setAiInsights]   = useState<Insight[] | null>(null);
-  const [aiLoading,    setAiLoading]    = useState(false);
-  const [aiError,      setAiError]      = useState('');
-  const [dismissed,    setDismissed]    = useState<Set<string>>(() => {
-    try { return new Set(JSON.parse(localStorage.getItem('ac-dismissed') ?? '[]')); }
-    catch { return new Set(); }
-  });
 
-  useEffect(() => {
-    const ym = currentYM();
-    Promise.all([
-      fetch('/api/spend').then(r => r.ok ? r.json() : []).catch(() => []),
-      fetch(`/api/hubspot-email?month=${ym}`).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch('/api/band6-tracker').then(r => r.ok ? r.json() : null).catch(() => null),
-    ]).then(([spend, email, band6]) => {
-      setSpendRecords(Array.isArray(spend) ? spend : []);
-      setEmailData(email);
-      setBand6Data(band6);
-    }).finally(() => setLoading(false));
-  }, []);
+  const [status,      setStatus]      = useState<Status>('idle');
+  const [insights,    setInsights]    = useState<Insight[]>([]);
+  const [dismissed,   setDismissed]   = useState<Set<string>>(() => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('ac-dismissed-v2') : null;
+      return raw ? new Set<string>(JSON.parse(raw)) : new Set<string>();
+    } catch { return new Set<string>(); }
+  });
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [errorMsg,    setErrorMsg]    = useState('');
+
+  // ── Dismiss ──────────────────────────────────────────────────────────────────
 
   const dismiss = useCallback((id: string) => {
     setDismissed(prev => {
-      const next = new Set(prev); next.add(id);
-      try { localStorage.setItem('ac-dismissed', JSON.stringify([...next])); } catch {}
+      const next = new Set(prev);
+      next.add(id);
+      try { localStorage.setItem('ac-dismissed-v2', JSON.stringify([...next])); } catch {}
       return next;
     });
   }, []);
 
-  const handleAction = useCallback((action: InsightAction) => {
-    if (action.type === 'navigate')    onNavigate(action.value ?? 'overview');
-    if (action.type === 'open-chat')   onOpenChat(action.value ?? '');
-    if (action.type === 'add-spend')   onAddSpend(action.value);
-    if (action.type === 'add-campaign') onAddCampaign();
-  }, [onNavigate, onOpenChat, onAddSpend, onAddCampaign]);
+  const restoreDismissed = useCallback(() => {
+    setDismissed(new Set());
+    try { localStorage.removeItem('ac-dismissed-v2'); } catch {}
+  }, []);
 
-  const loadAiInsights = async () => {
-    setAiLoading(true); setAiError('');
+  // ── Refresh ──────────────────────────────────────────────────────────────────
+
+  const refresh = useCallback(async () => {
+    setStatus('fetching');
+    setInsights([]);
+    setErrorMsg('');
+
     try {
-      const ym = currentYM();
-      const metrics = {
-        month:   ym,
-        dayPct:  Math.round(dayPct() * 100),
-        email:   emailData ? {
-          campaigns:    emailData.campaigns.length,
-          avgOpenRate:  Math.round((emailData.avgOpenRate ?? 0) * 1000) / 10,
-          avgClickRate: Math.round((emailData.avgClickRate ?? 0) * 1000) / 10,
-          connected:    emailData.connected,
-        } : null,
-        band6: band6Data ? {
-          revenue:      band6Data.revenue,
-          target:       band6Data.target,
-          orders:       band6Data.orders,
-          units:        band6Data.units,
-          daysRemaining: band6Data.daysRemaining,
-          percentToGoal: Math.round((band6Data.revenue / band6Data.target) * 100),
-        } : null,
-        googleAds: {
-          ppBudget:  MONTHLY_GOOGLE_BUDGETS['Pascal Press'],
-          etzBudget: MONTHLY_GOOGLE_BUDGETS['Excel Test Zone'],
-          ppActual:  spendRecords.find(r => r.brand === 'Pascal Press'  && r.channel === 'Google Ads')?.actualSpend ?? 0,
-          etzActual: spendRecords.find(r => r.brand === 'Excel Test Zone' && r.channel === 'Google Ads')?.actualSpend ?? 0,
-        },
-      };
-      const res = await fetch('/api/insights', {
+      const month = currentMonthStr();
+
+      const [spendRes, campaignsRes, emailRes, band6Res, bcRes] = await Promise.all([
+        fetch('/api/spend').then(r => r.json()).catch(() => ({})),
+        fetch('/api/google-ads-campaigns').then(r => r.json()).catch(() => ({})),
+        fetch(`/api/hubspot-email?month=${month}`).then(r => r.json()).catch(() => ({})),
+        fetch('/api/band6-tracker').then(r => r.json()).catch(() => ({})),
+        fetch('/api/bc-performance').then(r => r.json()).catch(() => ({})),
+      ]);
+
+      setStatus('analysing');
+
+      const insightRes = await fetch('/api/insights', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ metrics }),
+        body: JSON.stringify({
+          metrics: {
+            campaigns: campaignsRes,
+            email:     emailRes,
+            band6:     band6Res,
+            spend:     spendRes,
+            bc:        bcRes,
+          },
+        }),
       });
-      if (!res.ok) throw new Error('Claude insights API failed');
-      const data = await res.json();
-      setAiInsights(Array.isArray(data.insights) ? data.insights : []);
+
+      if (!insightRes.ok) throw new Error(`Insights API ${insightRes.status}`);
+      const { insights: raw, error: apiErr } = await insightRes.json();
+      if (apiErr) throw new Error(apiErr);
+
+      setInsights(Array.isArray(raw) ? raw : []);
+      setStatus('ready');
+      setLastUpdated(new Date());
     } catch (e) {
-      setAiError(e instanceof Error ? e.message : 'Failed to load AI insights');
-    } finally { setAiLoading(false); }
-  };
+      setErrorMsg(e instanceof Error ? e.message : String(e));
+      setStatus('error');
+    }
+  }, []);
 
-  const ruleInsights = useMemo(
-    () => computeInsights(spendRecords, emailData, band6Data),
-    [spendRecords, emailData, band6Data],
-  );
+  useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const allInsights = [...ruleInsights, ...(aiInsights ?? [])]
-    .filter(i => !dismissed.has(i.id))
-    .sort((a, b) => severityOrder(a.severity) - severityOrder(b.severity));
+  // ── Derived state ─────────────────────────────────────────────────────────────
 
-  const byGroup = {
-    critical:    allInsights.filter(i => i.severity === 'critical'),
-    warning:     allInsights.filter(i => i.severity === 'warning'),
-    opportunity: allInsights.filter(i => i.severity === 'opportunity'),
-    info:        allInsights.filter(i => i.severity === 'info'),
-  };
+  const visible      = insights.filter(i => !dismissed.has(i.id));
+  const critical     = visible.filter(i => i.severity === 'critical' || i.severity === 'warning');
+  const opps         = visible.filter(i => i.severity === 'opportunity');
+  const infoItems    = visible.filter(i => i.severity === 'info');
+  const isLoading    = status === 'fetching' || status === 'analysing';
+  const dismissedCnt = [...dismissed].filter(id => insights.some(i => i.id === id)).length;
 
-  if (loading) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-sm text-gray-500">Analysing your marketing data…</p>
-        </div>
-      </div>
-    );
-  }
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex-1 overflow-y-auto bg-gray-50 px-3 md:px-6 py-4 md:py-6">
+    <div className="flex flex-col h-full bg-gray-50 overflow-hidden">
 
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
-        <div>
-          <h2 className="text-lg font-semibold text-gray-900">Action Centre</h2>
-          <p className="text-sm text-gray-500">
-            {allInsights.length === 0
-              ? 'All clear — no issues detected'
-              : `${allInsights.length} item${allInsights.length !== 1 ? 's' : ''} need${allInsights.length === 1 ? 's' : ''} attention`}
-            {dismissed.size > 0 && <span className="text-gray-400"> · {dismissed.size} dismissed</span>}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {dismissed.size > 0 && (
-            <button
-              onClick={() => { setDismissed(new Set()); try { localStorage.removeItem('ac-dismissed'); } catch {} }}
-              className="text-xs text-gray-500 hover:text-gray-700 px-3 py-1.5 border border-gray-200 rounded-lg bg-white"
-            >
-              Restore {dismissed.size} dismissed
-            </button>
-          )}
+      {/* ── Header ── */}
+      <div className="bg-white border-b border-gray-200 px-4 py-3 sm:px-6 shrink-0">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
+              <svg className="w-4 h-4 text-orange-500 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
+              </svg>
+              Marketing Intelligence
+            </h2>
+            {status === 'ready' && lastUpdated && (
+              <p className="text-xs text-gray-400 mt-0.5 truncate">
+                {fmtDate(lastUpdated)} · {fmtTime(lastUpdated)}
+                {visible.length > 0 && <span className="ml-1.5 text-gray-500">{visible.length} item{visible.length !== 1 ? 's' : ''}</span>}
+              </p>
+            )}
+            {isLoading && (
+              <p className="text-xs text-blue-500 mt-0.5 animate-pulse">
+                {status === 'fetching' ? 'Loading campaign data…' : 'Claude is analysing…'}
+              </p>
+            )}
+          </div>
           <button
-            onClick={loadAiInsights}
-            disabled={aiLoading}
-            className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 transition-colors"
+            onClick={refresh}
+            disabled={isLoading}
+            className="shrink-0 flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 px-2.5 py-1.5 rounded-lg disabled:opacity-50 transition-colors"
           >
-            {aiLoading
-              ? <><span className="w-3.5 h-3.5 border border-white border-t-transparent rounded-full animate-spin inline-block mr-1" />Analysing…</>
-              : <>✨ {aiInsights ? 'Refresh' : 'Get'} AI Insights</>}
+            <svg
+              className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`}
+              viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"
+            >
+              <path d="M14 8a6 6 0 01-6 6 6 6 0 01-6-6 6 6 0 016-6" strokeLinecap="round"/>
+              <path d="M14 4V8h-4" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Refresh
           </button>
         </div>
       </div>
 
-      {aiError && (
-        <div className="mb-4 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2">{aiError}</div>
-      )}
+      {/* ── Body ── */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 space-y-6">
 
-      {allInsights.length === 0 ? (
-        <div className="text-center py-20">
-          <div className="text-5xl mb-4">✅</div>
-          <h3 className="font-semibold text-gray-700 mb-1">All clear — no issues detected</h3>
-          <p className="text-sm text-gray-400 mb-6">Click "Get AI Insights" for strategic recommendations from Claude.</p>
-          <button
-            onClick={loadAiInsights}
-            disabled={aiLoading}
-            className="inline-flex items-center gap-1.5 px-5 py-2 text-sm font-medium rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 transition-colors"
-          >
-            ✨ Get AI Insights
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-6">
-          {byGroup.critical.length > 0 && (
-            <section>
-              <h3 className="text-xs font-semibold text-red-600 uppercase tracking-wider mb-3">🔴 Critical — Action Required</h3>
-              <div className="space-y-3">{byGroup.critical.map(i => <InsightCard key={i.id} insight={i} onAction={handleAction} onDismiss={dismiss} />)}</div>
-            </section>
-          )}
-          {byGroup.warning.length > 0 && (
-            <section>
-              <h3 className="text-xs font-semibold text-amber-600 uppercase tracking-wider mb-3">🟡 Warnings — Review Soon</h3>
-              <div className="space-y-3">{byGroup.warning.map(i => <InsightCard key={i.id} insight={i} onAction={handleAction} onDismiss={dismiss} />)}</div>
-            </section>
-          )}
-          {byGroup.opportunity.length > 0 && (
-            <section>
-              <h3 className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-3">🔵 Opportunities</h3>
-              <div className="space-y-3">{byGroup.opportunity.map(i => <InsightCard key={i.id} insight={i} onAction={handleAction} onDismiss={dismiss} />)}</div>
-            </section>
-          )}
-          {byGroup.info.length > 0 && (
-            <section>
-              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">ℹ️ Info</h3>
-              <div className="space-y-3">{byGroup.info.map(i => <InsightCard key={i.id} insight={i} onAction={handleAction} onDismiss={dismiss} />)}</div>
-            </section>
-          )}
-        </div>
-      )}
+        {/* Error */}
+        {status === 'error' && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+            <p className="text-sm font-semibold text-red-700 mb-1">Analysis failed</p>
+            <p className="text-xs text-red-500 break-all">{errorMsg}</p>
+            <button
+              onClick={refresh}
+              className="mt-3 text-xs font-medium text-red-600 hover:text-red-800 underline"
+            >
+              Try again
+            </button>
+          </div>
+        )}
+
+        {/* Loading skeletons */}
+        {isLoading && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse shrink-0" />
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                {status === 'fetching' ? 'Fetching campaigns, emails & store data' : 'Claude is analysing your marketing data'}
+              </span>
+            </div>
+            {[0, 1, 2, 3].map(i => <SkeletonCard key={i} index={i} />)}
+          </div>
+        )}
+
+        {/* Empty state */}
+        {status === 'ready' && visible.length === 0 && (
+          <div className="bg-white rounded-xl border border-gray-200 p-10 text-center">
+            <div className="text-4xl mb-3">✅</div>
+            <p className="font-semibold text-gray-700 mb-1">All clear</p>
+            <p className="text-sm text-gray-500 mb-4">No action items found. Refresh to re-analyse.</p>
+            <button
+              onClick={refresh}
+              className="text-xs text-blue-600 hover:text-blue-700 underline"
+            >
+              Refresh now
+            </button>
+          </div>
+        )}
+
+        {/* ── Priority Actions ── */}
+        {status === 'ready' && critical.length > 0 && (
+          <section>
+            <SectionHead
+              count={critical.length}
+              label="Priority Actions"
+              icon={
+                <svg className="w-4 h-4 text-red-500 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
+                </svg>
+              }
+            />
+            <div className="space-y-3">
+              {critical.map((ins, i) => (
+                <InsightCard
+                  key={ins.id} rank={i + 1} insight={ins}
+                  onDismiss={dismiss} onOpenChat={onOpenChat}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ── Opportunities ── */}
+        {status === 'ready' && opps.length > 0 && (
+          <section>
+            <SectionHead
+              count={opps.length}
+              label="Opportunities"
+              icon={
+                <svg className="w-4 h-4 text-blue-500 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.298.082-.58.195-.844a3 3 0 10-4.39 0c.113.263.18.546.195.844h4z"/>
+                </svg>
+              }
+            />
+            <div className="space-y-3">
+              {opps.map((ins, i) => (
+                <InsightCard
+                  key={ins.id} rank={i + 1} insight={ins}
+                  onDismiss={dismiss} onOpenChat={onOpenChat}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ── Performance Notes ── */}
+        {status === 'ready' && infoItems.length > 0 && (
+          <section>
+            <SectionHead
+              count={infoItems.length}
+              label="Performance Notes"
+              icon={
+                <svg className="w-4 h-4 text-gray-400 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"/>
+                </svg>
+              }
+            />
+            <div className="space-y-3">
+              {infoItems.map((ins, i) => (
+                <InsightCard
+                  key={ins.id} rank={i + 1} insight={ins}
+                  onDismiss={dismiss} onOpenChat={onOpenChat}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Restore dismissed */}
+        {dismissedCnt > 0 && status === 'ready' && (
+          <div className="text-center py-2">
+            <button
+              onClick={restoreDismissed}
+              className="text-xs text-gray-400 hover:text-gray-600 underline"
+            >
+              Restore {dismissedCnt} dismissed item{dismissedCnt !== 1 ? 's' : ''}
+            </button>
+          </div>
+        )}
+
+        {/* ── Quick Actions ── */}
+        {status === 'ready' && (
+          <section className="bg-white rounded-xl border border-gray-200 p-4">
+            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Quick Actions</h3>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => onOpenChat('Give me a detailed Google Ads performance breakdown for Pascal Press and Excel Test Zone this month. List each campaign by name with ROAS, CTR, and cost. Tell me which campaigns to pause, scale, or restructure, and why.')}
+                className="text-left text-xs bg-gray-50 hover:bg-gray-100 active:bg-gray-200 border border-gray-200 rounded-lg p-2.5 transition-colors"
+              >
+                <div className="font-semibold text-gray-700 mb-0.5">🎯 Google Ads Breakdown</div>
+                <div className="text-gray-500">Campaign-by-campaign ROAS</div>
+              </button>
+              <button
+                onClick={() => onOpenChat('Analyse our HubSpot email campaigns from this month. Which subject lines worked best? Which audience segments have the highest open rate? Give me 3 concrete changes I should make to improve open rates and click-through rates.')}
+                className="text-left text-xs bg-gray-50 hover:bg-gray-100 active:bg-gray-200 border border-gray-200 rounded-lg p-2.5 transition-colors"
+              >
+                <div className="font-semibold text-gray-700 mb-0.5">📧 Email Deep Dive</div>
+                <div className="text-gray-500">Subject lines + segments</div>
+              </button>
+              <button
+                onClick={() => onOpenChat('Based on our BigCommerce sales data and current Term 3 period, which products should we be prioritising in Google Ads? Are there any product bundles, promotions, or ad campaigns I should create? Which products are underperforming and why?')}
+                className="text-left text-xs bg-gray-50 hover:bg-gray-100 active:bg-gray-200 border border-gray-200 rounded-lg p-2.5 transition-colors"
+              >
+                <div className="font-semibold text-gray-700 mb-0.5">🛒 Product Intelligence</div>
+                <div className="text-gray-500">What to push in ads</div>
+              </button>
+              <button
+                onClick={() => onNavigate('calendar')}
+                className="text-left text-xs bg-gray-50 hover:bg-gray-100 active:bg-gray-200 border border-gray-200 rounded-lg p-2.5 transition-colors"
+              >
+                <div className="font-semibold text-gray-700 mb-0.5">📅 Campaign Calendar</div>
+                <div className="text-gray-500">View & plan campaigns</div>
+              </button>
+            </div>
+          </section>
+        )}
+
+        <div className="h-6" />
+      </div>
     </div>
   );
 }

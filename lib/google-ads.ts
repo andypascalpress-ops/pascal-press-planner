@@ -75,7 +75,17 @@ async function getAccessToken(cfg: GoogleAdsConfig): Promise<string> {
 
 interface GaqlRow {
   segments?: { month?: string };
-  metrics?:  { costMicros?: string; conversionsValue?: number };
+  campaign?: { name?: string; status?: string };
+  adGroup?:  { name?: string; status?: string };
+  metrics?: {
+    costMicros?:       string;
+    conversionsValue?: number;
+    clicks?:           number;
+    impressions?:      number;
+    ctr?:              number;
+    averageCpc?:       string;
+    conversions?:      number;
+  };
 }
 
 async function gaqlSearch(
@@ -169,6 +179,139 @@ export async function fetchMonthlySpend(
     month,
     actualSpend:       Math.round(spend   * 100) / 100,
     attributedRevenue: Math.round(revenue * 100) / 100,
+  }));
+}
+
+// ─── Campaign & ad-group performance ─────────────────────────────────────────
+
+export interface CampaignPerf {
+  name:         string;
+  status:       string;
+  clicks:       number;
+  impressions:  number;
+  ctr:          number; // 0–1
+  avgCpc:       number; // AUD
+  conversions:  number;
+  convValue:    number; // AUD
+  cost:         number; // AUD
+  roas:         number; // convValue / cost
+}
+
+export interface AdGroupPerf {
+  campaign:    string;
+  adGroup:     string;
+  clicks:      number;
+  impressions: number;
+  ctr:         number;
+  conversions: number;
+  convValue:   number;
+  cost:        number;
+}
+
+/**
+ * Fetch campaign-level performance for THIS_MONTH.
+ * Optionally filter by campaign name (contains/excludes).
+ */
+export async function fetchCampaignPerformance(
+  cfg: GoogleAdsConfig,
+  campaignNameFilter?: { contains: string } | { excludes: string },
+): Promise<CampaignPerf[]> {
+  const accessToken = await getAccessToken(cfg);
+
+  let nameClause = '';
+  if (campaignNameFilter) {
+    if ('contains' in campaignNameFilter) {
+      nameClause = `AND campaign.name LIKE '%${campaignNameFilter.contains}%'`;
+    } else {
+      nameClause = `AND campaign.name NOT LIKE '%${campaignNameFilter.excludes}%'`;
+    }
+  }
+
+  const query = `
+    SELECT
+      campaign.name,
+      campaign.status,
+      metrics.clicks,
+      metrics.impressions,
+      metrics.ctr,
+      metrics.average_cpc,
+      metrics.conversions,
+      metrics.conversions_value,
+      metrics.cost_micros
+    FROM campaign
+    WHERE segments.date DURING THIS_MONTH
+    AND campaign.status != 'REMOVED'
+    ${nameClause}
+    ORDER BY metrics.cost_micros DESC
+    LIMIT 25
+  `;
+
+  const rows = await gaqlSearch(cfg, accessToken, query);
+  return rows.map(r => {
+    const cost = Number(r.metrics?.costMicros ?? 0) / 1_000_000;
+    const conv = r.metrics?.conversionsValue ?? 0;
+    return {
+      name:        r.campaign?.name        ?? '',
+      status:      r.campaign?.status      ?? '',
+      clicks:      r.metrics?.clicks       ?? 0,
+      impressions: r.metrics?.impressions  ?? 0,
+      ctr:         r.metrics?.ctr          ?? 0,
+      avgCpc:      Number(r.metrics?.averageCpc ?? 0) / 1_000_000,
+      conversions: r.metrics?.conversions  ?? 0,
+      convValue:   Math.round(conv * 100) / 100,
+      cost:        Math.round(cost * 100) / 100,
+      roas:        cost > 0 ? Math.round((conv / cost) * 100) / 100 : 0,
+    };
+  });
+}
+
+/**
+ * Fetch ad-group-level performance for THIS_MONTH.
+ */
+export async function fetchAdGroupPerformance(
+  cfg: GoogleAdsConfig,
+  campaignNameFilter?: { contains: string } | { excludes: string },
+): Promise<AdGroupPerf[]> {
+  const accessToken = await getAccessToken(cfg);
+
+  let nameClause = '';
+  if (campaignNameFilter) {
+    if ('contains' in campaignNameFilter) {
+      nameClause = `AND campaign.name LIKE '%${campaignNameFilter.contains}%'`;
+    } else {
+      nameClause = `AND campaign.name NOT LIKE '%${campaignNameFilter.excludes}%'`;
+    }
+  }
+
+  const query = `
+    SELECT
+      campaign.name,
+      ad_group.name,
+      metrics.clicks,
+      metrics.impressions,
+      metrics.ctr,
+      metrics.conversions,
+      metrics.conversions_value,
+      metrics.cost_micros
+    FROM ad_group
+    WHERE segments.date DURING THIS_MONTH
+    AND campaign.status != 'REMOVED'
+    AND ad_group.status != 'REMOVED'
+    ${nameClause}
+    ORDER BY metrics.cost_micros DESC
+    LIMIT 30
+  `;
+
+  const rows = await gaqlSearch(cfg, accessToken, query);
+  return rows.map(r => ({
+    campaign:    r.campaign?.name   ?? '',
+    adGroup:     r.adGroup?.name    ?? '',
+    clicks:      r.metrics?.clicks  ?? 0,
+    impressions: r.metrics?.impressions ?? 0,
+    ctr:         r.metrics?.ctr ?? 0,
+    conversions: r.metrics?.conversions ?? 0,
+    convValue:   Math.round((r.metrics?.conversionsValue ?? 0) * 100) / 100,
+    cost:        Math.round((Number(r.metrics?.costMicros ?? 0) / 1_000_000) * 100) / 100,
   }));
 }
 
