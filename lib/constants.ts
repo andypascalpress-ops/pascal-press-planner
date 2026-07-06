@@ -112,6 +112,7 @@ export const SPEND_COLUMNS_TO_CREATE = [
 ] as const;
 
 export const COLUMNS_TO_CREATE = [
+  { title: 'Campaign Code', type: 'text'     },
   { title: 'Promo Code',   type: 'text'      },
   { title: 'Type',         type: 'text'      },
   { title: 'Month',        type: 'text'      },

@@ -67,6 +67,7 @@ export async function getColumnMap(boardId: string): Promise<ColumnMap> {
     cols.find(c => c.title === title)?.id;
 
   const map: ColumnMap = {
+    campaignCode: findOptional('Campaign Code'),
     promoCode: findOptional('Promo Code'),
     type:      find('Type'),
     month:     find('Month'),
@@ -102,9 +103,10 @@ function itemToCampaign(item: {
 }, colMap: ColumnMap): Campaign {
   const cv = item.column_values;
   return {
-    id:         item.id,
-    name:       item.name,
-    promoCode:  colMap.promoCode ? colValue(cv, colMap.promoCode) : '',
+    id:           item.id,
+    name:         item.name,
+    campaignCode: colMap.campaignCode ? colValue(cv, colMap.campaignCode) : '',
+    promoCode:    colMap.promoCode    ? colValue(cv, colMap.promoCode)    : '',
     type:       colValue(cv, colMap.type),
     month:      colValue(cv, colMap.month),
     dateRange:  colValue(cv, colMap.dateRange),
@@ -281,7 +283,8 @@ function buildColumnValues(
 ): Record<string, unknown> {
   const cols: Record<string, unknown> = {};
 
-  if (campaign.promoCode !== undefined && colMap.promoCode) cols[colMap.promoCode] = campaign.promoCode;
+  if (campaign.campaignCode !== undefined && colMap.campaignCode) cols[colMap.campaignCode] = campaign.campaignCode;
+  if (campaign.promoCode    !== undefined && colMap.promoCode)    cols[colMap.promoCode]    = campaign.promoCode;
   if (campaign.type      !== undefined) cols[colMap.type]      = campaign.type;
   if (campaign.month     !== undefined) cols[colMap.month]     = campaign.month;
   if (campaign.dateRange !== undefined) cols[colMap.dateRange] = campaign.dateRange;

@@ -14,6 +14,7 @@ interface Props {
 
 const EMPTY: Omit<Campaign, 'id'> = {
   name: '',
+  campaignCode: '',
   promoCode: '',
   type: 'Storewide Sale',
   month: 'July',
@@ -27,8 +28,21 @@ const EMPTY: Omit<Campaign, 'id'> = {
   notes: '',
 };
 
+const LS_KEY = 'pp_custom_campaign_types';
+
 export default function CampaignModal({ campaign, defaultMonth, defaultFY, onSave, onClose }: Props) {
   const [form, setForm] = useState<Omit<Campaign, 'id'>>(EMPTY);
+  const [customTypes, setCustomTypes] = useState<string[]>([]);
+  const [addingType, setAddingType] = useState(false);
+  const [newTypeName, setNewTypeName] = useState('');
+
+  // Load custom types from localStorage
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(LS_KEY);
+      if (stored) setCustomTypes(JSON.parse(stored));
+    } catch {}
+  }, []);
 
   useEffect(() => {
     if (campaign) {
@@ -45,6 +59,34 @@ export default function CampaignModal({ campaign, defaultMonth, defaultFY, onSav
 
   const set = (field: keyof typeof form, value: string | number) =>
     setForm(prev => ({ ...prev, [field]: value }));
+
+  // All campaign types: built-in (minus Other) + custom + Other
+  const allTypes = [
+    ...CAMPAIGN_TYPES.filter(t => t !== 'Other'),
+    ...customTypes,
+    'Other',
+  ];
+
+  const handleTypeChange = (val: string) => {
+    if (val === '__add__') {
+      setAddingType(true);
+    } else {
+      set('type', val);
+    }
+  };
+
+  const confirmNewType = () => {
+    const t = newTypeName.trim();
+    if (!t) { setAddingType(false); return; }
+    if (!allTypes.includes(t)) {
+      const updated = [...customTypes, t];
+      setCustomTypes(updated);
+      try { localStorage.setItem(LS_KEY, JSON.stringify(updated)); } catch {}
+    }
+    set('type', t);
+    setAddingType(false);
+    setNewTypeName('');
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,12 +123,39 @@ export default function CampaignModal({ campaign, defaultMonth, defaultFY, onSav
               <label className="block text-sm font-medium text-gray-700 mb-1">Campaign Type *</label>
               <select
                 required
-                value={form.type}
-                onChange={e => set('type', e.target.value)}
+                value={addingType ? '__add__' : form.type}
+                onChange={e => handleTypeChange(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                {CAMPAIGN_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                {allTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                <option value="__add__">＋ Add new type…</option>
               </select>
+              {addingType && (
+                <div className="flex gap-2 mt-2">
+                  <input
+                    autoFocus
+                    type="text"
+                    value={newTypeName}
+                    onChange={e => setNewTypeName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') { e.preventDefault(); confirmNewType(); }
+                      if (e.key === 'Escape') { setAddingType(false); setNewTypeName(''); }
+                    }}
+                    placeholder="New type name…"
+                    className="flex-1 border border-blue-400 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={confirmNewType}
+                    className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700"
+                  >Add</button>
+                  <button
+                    type="button"
+                    onClick={() => { setAddingType(false); setNewTypeName(''); }}
+                    className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-lg hover:bg-gray-200"
+                  >Cancel</button>
+                </div>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
@@ -129,7 +198,7 @@ export default function CampaignModal({ campaign, defaultMonth, defaultFY, onSav
             </div>
           </div>
 
-          {/* Row: Brand + Promo Code */}
+          {/* Row: Brand + Campaign Code */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Brand</label>
@@ -142,27 +211,39 @@ export default function CampaignModal({ campaign, defaultMonth, defaultFY, onSav
               />
             </div>
             <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Campaign Code</label>
+              <input
+                type="text"
+                value={form.campaignCode}
+                onChange={e => set('campaignCode', e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="e.g. MATHS15"
+              />
+            </div>
+          </div>
+
+          {/* Row: Promo Code + Date Range */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Promo Code</label>
               <input
                 type="text"
                 value={form.promoCode}
                 onChange={e => set('promoCode', e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="SALE25"
+                placeholder="e.g. PP5755"
               />
             </div>
-          </div>
-
-          {/* Date Range */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Date Range</label>
-            <input
-              type="text"
-              value={form.dateRange}
-              onChange={e => set('dateRange', e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="1–31 July 2025"
-            />
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date Range</label>
+              <input
+                type="text"
+                value={form.dateRange}
+                onChange={e => set('dateRange', e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="3–19 July 2026"
+              />
+            </div>
           </div>
 
           {/* Row: Revenue + Orders + Units Sold */}

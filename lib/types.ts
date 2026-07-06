@@ -1,6 +1,7 @@
 export interface Campaign {
   id: string;
   name: string;
+  campaignCode: string;
   promoCode: string;
   type: string;
   month: string;
@@ -15,7 +16,8 @@ export interface Campaign {
 }
 
 export interface ColumnMap {
-  promoCode: string | undefined; // optional — column may not exist on older boards
+  campaignCode: string | undefined; // optional — column may not exist on older boards
+  promoCode: string | undefined;    // optional — column may not exist on older boards
   type: string;
   month: string;
   dateRange: string;
