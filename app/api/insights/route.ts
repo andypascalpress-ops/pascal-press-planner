@@ -98,12 +98,22 @@ export async function POST(req: NextRequest) {
       ...ppAGs.map((g: any)    => `  [AD GROUP] "${g.adGroup}" in "${g.campaign}": spend ${money(g.cost)}, ${g.conversions ?? 0} conv, CTR ${pct((g.ctr ?? 0) * 100)}`),
     ].join('\n') : '  (live campaign data unavailable — use spend + email data below)';
 
-    const emailSection = emails.length ? emails.map((e: any) => {
-      const name  = e.name ?? e.subject ?? e.id ?? 'Unknown';
-      const open  = typeof e.openRate  === 'number' ? pct(e.openRate)  : (e.open_rate  ?? '?');
-      const click = typeof e.clickRate === 'number' ? pct(e.clickRate) : (e.click_rate ?? '?');
-      return `  "${name}": open ${open}, click ${click}, ${e.sends ?? e.recipients ?? '?'} sent`;
-    }).join('\n') : '  (no email data)';
+    // Split emails by brand: ETZ campaigns contain "ETZ" in name; rest is PP
+    const isETZEmail = (name: string) => /\bETZ\b/i.test(name) || name.toUpperCase().startsWith('ETZ');
+    const ppEmails  = emails.filter((e: any) => !isETZEmail(e.name ?? ''));
+    const etzEmails = emails.filter((e: any) =>  isETZEmail(e.name ?? ''));
+    const fmtEmail  = (e: any) => {
+      const open  = typeof e.openRate  === 'number' ? pct(e.openRate)  : '?';
+      const ctor  = typeof e.clickToOpen === 'number' ? pct(e.clickToOpen) : '?';
+      const unsub = e.unsubscribes && e.sends ? pct(e.unsubscribes / e.sends) : '?';
+      return `  "${e.name ?? 'Untitled'}": open ${open}, CTOR ${ctor}, unsub ${unsub}, ${e.sends ?? '?'} sent`;
+    };
+    const emailSection = emails.length
+      ? [
+          ppEmails.length  ? `Pascal Press emails:\n${ppEmails.map(fmtEmail).join('\n')}`   : '  Pascal Press: no emails this month',
+          etzEmails.length ? `Excel Test Zone emails:\n${etzEmails.map(fmtEmail).join('\n')}` : '  Excel Test Zone: no emails this month',
+        ].join('\n')
+      : '  (no email data — recommend Term 3 campaigns for both brands)';
 
     const bcSection = [
       topProducts.length
@@ -146,7 +156,7 @@ ${b6Section}
 
 IMPORTANT: You MUST return exactly 4–6 insights. Do NOT return an empty array. Focus on:
 - GOOGLE ADS: Call out specific named campaigns to pause (zero conversions), scale (high ROAS), or restructure (low CTR). Use actual campaign names from the data above.
-- EMAIL: Name the specific email campaign with the issue. Recommend subject line, segmentation, or send-time fix.
+- EMAIL (MOST IMPORTANT): Treat Pascal Press and Excel Test Zone as separate brands with separate email lists. For each brand: if no emails were sent this month, recommend a specific Term 3 campaign to send NOW (subject line, audience, CTA). If emails were sent, identify the weakest performer by name and give a concrete fix (subject line rewrite, segmentation change, or send-time advice).
 - BIGCOMMERCE: For the WORST performing products listed above, recommend a specific campaign type (e.g. Google Ads ad group, HubSpot email, discount), audience, and message. Do not just name the product — give an actionable campaign suggestion.
 - If live data is missing, generate strategic Term 3 recommendations for PP/ETZ (NAPLAN prep, HSC timing, Back to School). Name specific products, audiences, and timing.
 

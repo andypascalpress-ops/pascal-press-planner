@@ -84,17 +84,7 @@ function computeBaselineInsights(
     const pacing   = Math.round((s.actual / s.budget) * 100);
     const roas     = s.actual > 0 ? (s.revenue / s.actual).toFixed(1) : '—';
 
-    if (s.actual === 0 && pctThrough > 5) {
-      insights.push({
-        id: `spend-zero-${brand.replace(/\s/g, '-').toLowerCase()}`,
-        severity: 'critical', category: 'google-ads',
-        title:   `${brand}: no Google Ads spend recorded for ${monthName}`,
-        body:    `${monthName} spend shows $0 against a ${fmt(s.budget)} budget with ${Math.round(pctThrough)}% of the month elapsed. Either no campaigns are running or spend records haven't been entered yet.`,
-        metric:  `$0 of ${fmt(s.budget)} · Day ${dayOfMonth}/${daysInMonth}`,
-        chatPrompt: `${brand} Google Ads shows zero spend for ${monthName} against a ${fmt(s.budget)} budget. We're on day ${dayOfMonth} of ${daysInMonth}. What campaigns should be running and what's the fastest way to get back on pace?`,
-        action:  'Check campaigns or enter spend',
-      });
-    } else if (diff < -300) {
+    if (diff < -300 && s.actual > 0) {
       insights.push({
         id: `spend-under-${brand.replace(/\s/g, '-').toLowerCase()}`,
         severity: 'warning', category: 'google-ads',
@@ -183,30 +173,79 @@ function computeBaselineInsights(
     });
   }
 
-  // ── Email performance ─────────────────────────────────────────────────────
+  // ── Email performance (brand-split) ─────────────────────────────────────
   const emailCampaigns: any[] = emailData?.campaigns ?? emailData?.emails ?? [];
   const sentEmails = emailCampaigns.filter((e: any) => (e.sends ?? 0) > 100);
 
-  // Worst open rate
-  const worstOpen = [...sentEmails].sort((a, b) => (a.openRate ?? 0) - (b.openRate ?? 0))[0];
-  if (worstOpen && (worstOpen.openRate ?? 0) < 0.20) {
-    const name = worstOpen.name ?? 'recent campaign';
-    const rate = pctStr(worstOpen.openRate ?? 0);
+  // Detect brand from campaign name (ETZ campaigns start with ETZ_ or contain "ETZ")
+  const isETZ = (name: string) => /\bETZ\b/i.test(name) || name.toUpperCase().startsWith('ETZ');
+  const isPP  = (name: string) => !isETZ(name) && !/\bBE_\b/i.test(name) && !/\bBlake\b/i.test(name);
+
+  const ppEmails  = sentEmails.filter(e => isPP(e.name ?? ''));
+  const etzEmails = sentEmails.filter(e => isETZ(e.name ?? ''));
+
+  // ── Per-brand: worst open rate ────────────────────────────────────────────
+  for (const [brandLabel, brandEmails, promoType] of [
+    ['Pascal Press', ppEmails,  'NAPLAN prep workbooks'] as const,
+    ['Excel Test Zone', etzEmails, 'HSC exam practice papers'] as const,
+  ]) {
+    const worst = [...brandEmails].sort((a, b) => (a.openRate ?? 0) - (b.openRate ?? 0))[0];
+    if (worst && (worst.openRate ?? 0) < 0.20) {
+      const name = (worst.name ?? 'campaign').slice(0, 55);
+      const rate = pctStr(worst.openRate ?? 0);
+      insights.push({
+        id: `email-open-${brandLabel.replace(/\s/g, '-').toLowerCase()}-${worst.id ?? 'x'}`,
+        severity: 'warning', category: 'email',
+        title:   `${brandLabel}: "${name}" open rate ${rate}`,
+        body:    `This ${brandLabel} email had only a ${rate} open rate (${(worst.sends ?? 0).toLocaleString()} sent). For ${promoType}, subject lines that lead with a specific title, grade level, or urgency ("HSC exams in 6 weeks") consistently outperform generic ones.`,
+        metric:  `Open ${rate} · ${(worst.sends ?? 0).toLocaleString()} sent · ${(worst.clicks ?? 0)} clicks`,
+        chatPrompt: `Our ${brandLabel} email "${worst.name}" had a ${rate} open rate (${worst.sends} sent, ${worst.opens ?? 0} opens). Write 5 alternative subject lines for ${promoType} that use urgency, specificity, or curiosity to lift open rates above 20%. Explain the hook for each.`,
+        action:  'Rewrite subject line',
+      });
+    }
+  }
+
+  // ── Per-brand: no campaigns sent this month — proactive suggestion ─────────
+  const ppSuggestion = [
+    month === 6 ? 'Term 3 has just started — send a NAPLAN prep campaign now to capture parents buying workbooks for Year 3–9 students. Subject line: "Your child's NAPLAN prep starts here".' : null,
+    month === 7 ? 'August is peak Back to School prep research time. A Pascal Press "prepare for next year" email with grade-specific workbook recommendations would convert well.' : null,
+    month === 8 ? 'September — plan your Back to School email sequence now (3 sends: Oct, Nov, Jan). Early preparation emails for Pascal Press outperform January sends.' : null,
+    'Send a Pascal Press product spotlight email featuring your top NAPLAN workbooks for the current term.',
+  ].find(Boolean) as string;
+
+  const etzSuggestion = [
+    month === 6 ? 'Term 3 has started — ETZ should send an HSC exam countdown email immediately. Students sitting HSC in October have under 14 weeks. Subject: "14 weeks to your HSC — are you exam-ready?"' : null,
+    month === 7 ? 'August is when HSC students sit trial exams — the highest-urgency window for ETZ. Send a "trial exam coming up? Practice now" email to your full student list.' : null,
+    month === 8 ? 'HSC exams are 6–8 weeks away. ETZ should send a final exam prep push email with a specific call-to-action to purchase practice papers.' : null,
+    'Send an ETZ NAPLAN/HSC practice paper reminder to re-engage students who haven't purchased this term.',
+  ].find(Boolean) as string;
+
+  if (ppEmails.length === 0) {
     insights.push({
-      id: `email-low-open-${worstOpen.id ?? 'x'}`,
-      severity: 'warning', category: 'email',
-      title:   `"${name.slice(0, 55)}" open rate ${rate} — below 20%`,
-      body:    `Open rate of ${rate} is below the 20% benchmark for educational publishers. The subject line, preview text, and send timing are the highest-leverage fixes. Test an urgency or curiosity-driven subject line next send.`,
-      metric:  `Open ${rate} · ${(worstOpen.sends ?? 0).toLocaleString()} sent`,
-      chatPrompt: `Our email "${name}" had a ${rate} open rate. Give me 5 alternative subject line ideas for K-12 educational products that would likely lift open rates, and explain the psychological hook behind each.`,
-      action:  'Rewrite subject line',
+      id: 'email-pp-no-campaigns', severity: 'opportunity', category: 'email',
+      title:   'Pascal Press: no email campaigns sent this month',
+      body:    ppSuggestion,
+      metric:  `0 PP campaigns · ${ppEmails.length === 0 && sentEmails.length > 0 ? sentEmails.length + ' ETZ only' : 'month to date'}`,
+      chatPrompt: `Pascal Press hasn't sent any email campaigns yet in ${monthName}. ${ppSuggestion} Draft a complete email campaign for me: subject line, preview text, email body (3 sections), and a clear CTA. Audience: parents of primary school students.`,
+      action:  'Draft PP email campaign',
     });
   }
 
-  // High unsubscribe rate
-  const worstUnsub = [...sentEmails].sort((a, b) => {
-    return ((b.unsubscribes ?? 0) / (b.sends ?? 1)) - ((a.unsubscribes ?? 0) / (a.sends ?? 1));
-  })[0];
+  if (etzEmails.length === 0) {
+    insights.push({
+      id: 'email-etz-no-campaigns', severity: 'opportunity', category: 'email',
+      title:   'Excel Test Zone: no email campaigns sent this month',
+      body:    etzSuggestion,
+      metric:  `0 ETZ campaigns · ${monthName}`,
+      chatPrompt: `Excel Test Zone hasn't sent any email campaigns yet in ${monthName}. ${etzSuggestion} Draft a complete email campaign for me: subject line, preview text, email body, and a CTA to purchase practice papers. Audience: HSC students and their parents.`,
+      action:  'Draft ETZ email campaign',
+    });
+  }
+
+  // ── Cross-brand: high unsubscribe ─────────────────────────────────────────
+  const worstUnsub = [...sentEmails].sort((a, b) =>
+    ((b.unsubscribes ?? 0) / (b.sends ?? 1)) - ((a.unsubscribes ?? 0) / (a.sends ?? 1))
+  )[0];
   if (worstUnsub) {
     const unsubRate = (worstUnsub.unsubscribes ?? 0) / (worstUnsub.sends ?? 1);
     if (unsubRate > 0.005) {
@@ -216,14 +255,15 @@ function computeBaselineInsights(
         title:   `"${(worstUnsub.name ?? 'Email').slice(0, 55)}" — ${pctStr(unsubRate)} unsub rate`,
         body:    `A ${pctStr(unsubRate)} unsubscribe rate is above the 0.5% warning threshold. This suggests misaligned audience expectations or excessive send frequency. Audit the list segment for this campaign.`,
         metric:  `${pctStr(unsubRate)} unsub · ${worstUnsub.unsubscribes ?? 0} unsubs`,
-        chatPrompt: `Our email "${worstUnsub.name}" had a ${pctStr(unsubRate)} unsubscribe rate (${worstUnsub.unsubscribes} unsubs from ${worstUnsub.sends} sends). What are the likely causes and how should we fix list segmentation or content to reduce future unsubscribes?`,
+        chatPrompt: `Our email "${worstUnsub.name}" had a ${pctStr(unsubRate)} unsubscribe rate (${worstUnsub.unsubscribes} unsubs from ${worstUnsub.sends} sends). What are the likely causes and how should we fix list segmentation or send frequency?`,
         action:  'Review segment + frequency',
       });
     }
   }
 
-  // Low CTOR — poor content/offer engagement
-  const worstCtor = [...sentEmails].filter(e => (e.opens ?? 0) > 50 && (e.clickToOpen ?? 0) > 0)
+  // ── Cross-brand: low CTOR ─────────────────────────────────────────────────
+  const worstCtor = [...sentEmails]
+    .filter(e => (e.opens ?? 0) > 50 && (e.clickToOpen ?? 0) > 0)
     .sort((a, b) => (a.clickToOpen ?? 0) - (b.clickToOpen ?? 0))[0];
   if (worstCtor && (worstCtor.clickToOpen ?? 0) < 0.08) {
     insights.push({
@@ -232,19 +272,8 @@ function computeBaselineInsights(
       title:   `"${(worstCtor.name ?? 'Email').slice(0, 55)}" — CTOR ${pctStr(worstCtor.clickToOpen ?? 0)}`,
       body:    `Only ${pctStr(worstCtor.clickToOpen ?? 0)} of people who opened clicked through — below the 8% benchmark. The offer, CTA button copy, or email body isn't compelling enough to drive action.`,
       metric:  `CTOR ${pctStr(worstCtor.clickToOpen ?? 0)} · ${worstCtor.opens ?? 0} opens`,
-      chatPrompt: `Our email "${worstCtor.name}" had a ${pctStr(worstCtor.clickToOpen ?? 0)} click-to-open rate (${worstCtor.opens} opens, ${worstCtor.clicks ?? 0} clicks). What specific improvements to the CTA, offer framing, or email layout would lift click-through for our educational audience?`,
+      chatPrompt: `Our email "${worstCtor.name}" had a ${pctStr(worstCtor.clickToOpen ?? 0)} CTOR (${worstCtor.opens} opens, ${worstCtor.clicks ?? 0} clicks). What specific CTA, offer framing, or layout changes would lift click-through for educational content?`,
       action:  'Improve CTA + offer copy',
-    });
-  }
-
-  if (emailCampaigns.length === 0) {
-    insights.push({
-      id: 'email-no-campaigns', severity: 'info', category: 'email',
-      title:   'No email campaigns detected this month',
-      body:    'No HubSpot email campaigns were found for this month. For Term 3, Pascal Press should send at least 2–3 campaigns targeting NAPLAN prep, and ETZ should send HSC trial exam reminders.',
-      metric:  '0 campaigns this month',
-      chatPrompt: 'What email campaigns should Pascal Press and Excel Test Zone be sending in Term 3 (July-September)? Give me a campaign calendar with subject lines, audience segments, and send timing.',
-      action:  'Plan email calendar',
     });
   }
 
@@ -584,92 +613,4 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
         {/* Priority Actions */}
         {critical.length > 0 && (
           <section>
-            <SectionHead count={critical.length} label="Priority Actions"
-              icon={<svg className="w-4 h-4 text-red-500 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
-              </svg>}
-            />
-            <div className="space-y-3">
-              {critical.map((ins, i) => (
-                <InsightCard key={ins.id} rank={i + 1} insight={ins} onDismiss={dismiss} onOpenChat={onOpenChat} />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Opportunities */}
-        {opps.length > 0 && (
-          <section>
-            <SectionHead count={opps.length} label="Opportunities"
-              icon={<svg className="w-4 h-4 text-blue-500 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.298.082-.58.195-.844a3 3 0 10-4.39 0c.113.263.18.546.195.844h4z"/>
-              </svg>}
-            />
-            <div className="space-y-3">
-              {opps.map((ins, i) => (
-                <InsightCard key={ins.id} rank={i + 1} insight={ins} onDismiss={dismiss} onOpenChat={onOpenChat} />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Performance Notes */}
-        {infoItems.length > 0 && (
-          <section>
-            <SectionHead count={infoItems.length} label="Performance Notes"
-              icon={<svg className="w-4 h-4 text-gray-400 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"/>
-              </svg>}
-            />
-            <div className="space-y-3">
-              {infoItems.map((ins, i) => (
-                <InsightCard key={ins.id} rank={i + 1} insight={ins} onDismiss={dismiss} onOpenChat={onOpenChat} />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Restore dismissed */}
-        {dismissedCnt > 0 && (status === 'ready' || status === 'analysing') && (
-          <div className="text-center py-1">
-            <button onClick={restoreDismissed}
-              className="text-xs text-gray-400 hover:text-gray-600 underline">
-              Restore {dismissedCnt} dismissed item{dismissedCnt !== 1 ? 's' : ''}
-            </button>
-          </div>
-        )}
-
-        {/* Quick Actions */}
-        {(status === 'ready' || status === 'analysing') && (
-          <section className="bg-white rounded-xl border border-gray-200 p-4">
-            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Quick Actions</h3>
-            <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => onOpenChat('Give me a detailed Google Ads performance breakdown for Pascal Press and Excel Test Zone this month. List each campaign by name with ROAS, CTR, and cost. Tell me which campaigns to pause, scale, or restructure, and why.')}
-                className="text-left text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg p-2.5 transition-colors">
-                <div className="font-semibold text-gray-700 mb-0.5">🎯 Google Ads Breakdown</div>
-                <div className="text-gray-500">Campaign-by-campaign ROAS</div>
-              </button>
-              <button onClick={() => onOpenChat('Analyse our HubSpot email campaigns from this month. Which subject lines worked best? Which audience segments have the highest open rate? Give me 3 concrete changes to improve open rates and click-through rates.')}
-                className="text-left text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg p-2.5 transition-colors">
-                <div className="font-semibold text-gray-700 mb-0.5">📧 Email Deep Dive</div>
-                <div className="text-gray-500">Subject lines + segments</div>
-              </button>
-              <button onClick={() => onOpenChat('Based on our BigCommerce sales data and current Term 3 period, which products should we be prioritising in Google Ads? Are there any product bundles, promotions, or ad campaigns I should create? Which products are underperforming and why?')}
-                className="text-left text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg p-2.5 transition-colors">
-                <div className="font-semibold text-gray-700 mb-0.5">🛒 Product Intelligence</div>
-                <div className="text-gray-500">What to push in ads</div>
-              </button>
-              <button onClick={() => onNavigate('calendar')}
-                className="text-left text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg p-2.5 transition-colors">
-                <div className="font-semibold text-gray-700 mb-0.5">📅 Campaign Calendar</div>
-                <div className="text-gray-500">View & plan campaigns</div>
-              </button>
-            </div>
-          </section>
-        )}
-
-        <div className="h-6" />
-      </div>
-    </div>
-  );
-}
+            <SectionHead co
