@@ -32,16 +32,24 @@ export async function GET() {
   const startDate   = `${month}-01`;
   const endDate     = `${month}-${String(daysInMonth).padStart(2, '0')}`;
 
-  const ppCfg  = buildConfig('pp');
-  const etzCfg = buildConfig('etz');
+  let ppCfg, etzCfg;
+  try { ppCfg  = buildConfig('pp');  } catch (e) { console.error('[overview] buildConfig(pp) failed:', e);  }
+  try { etzCfg = buildConfig('etz'); } catch (e) { console.error('[overview] buildConfig(etz) failed:', e); }
+
   const useOwnEtzAccount = month >= ETZ_START_MONTH;
+
+  const noAds = () => Promise.reject(new Error('Google Ads config missing'));
 
   const [ppAdsResult, etzAdsResult, ppRevResult, etzRevResult, emailResult] =
     await Promise.allSettled([
-      fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' }),
-      useOwnEtzAccount
-        ? fetchMonthlySpend(etzCfg, startDate, endDate)
-        : fetchMonthlySpend(ppCfg,  startDate, endDate, { contains: 'ETZ' }),
+      ppCfg
+        ? fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' })
+        : noAds(),
+      ppCfg
+        ? (useOwnEtzAccount && etzCfg
+            ? fetchMonthlySpend(etzCfg, startDate, endDate)
+            : fetchMonthlySpend(ppCfg,  startDate, endDate, { contains: 'ETZ' }))
+        : noAds(),
       fetchPPRevenue(month),
       fetchETZStripeRevenue(month),
       fetchEmailCampaigns(month),
@@ -123,6 +131,12 @@ export async function GET() {
     }
   }
 
+  // Debug: surface rejection reasons so we can diagnose Google Ads failures
+  const ppAdsError  = ppAdsResult.status  === 'rejected' ? String(ppAdsResult.reason)  : null;
+  const etzAdsError = etzAdsResult.status === 'rejected' ? String(etzAdsResult.reason) : null;
+  if (ppAdsError)  console.error('[overview] PP Google Ads error:',  ppAdsError);
+  if (etzAdsError) console.error('[overview] ETZ Google Ads error:', etzAdsError);
+
   return NextResponse.json({
     month,
     daysInMonth,
@@ -135,6 +149,7 @@ export async function GET() {
       orders:       ppRev?.totalOrders ?? 0,
       revConnected: ppRev?.connected   ?? false,
       adsConnected: ppAdsResult.status === 'fulfilled',
+      adsError:     ppAdsError,
     },
     etz: {
       spend:        Math.round(etzSpend * 100) / 100,
@@ -144,6 +159,7 @@ export async function GET() {
       orders:       etzRev?.totalOrders ?? 0,
       revConnected: etzRev?.connected   ?? false,
       adsConnected: etzAdsResult.status === 'fulfilled',
+      adsError:     etzAdsError,
     },
     combined: {
       spend:   Math.round((ppSpend   + etzSpend)   * 100) / 100,
