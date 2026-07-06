@@ -242,13 +242,8 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
       });
 
       if (!insightRes.ok) throw new Error(`Insights API ${insightRes.status}`);
-
-      // Route streams plain text (Claude tokens) — find JSON array boundaries and parse
-      const rawText = await insightRes.text();
-      const start   = rawText.indexOf('[');
-      const end     = rawText.lastIndexOf(']');
-      if (start === -1 || end === -1 || end <= start) throw new Error('Insights response contained no JSON array');
-      const raw = JSON.parse(rawText.slice(start, end + 1));
+      const { insights: raw, error: apiErr } = await insightRes.json();
+      if (apiErr) throw new Error(apiErr);
 
       setInsights(Array.isArray(raw) ? raw : []);
       setStatus('ready');
