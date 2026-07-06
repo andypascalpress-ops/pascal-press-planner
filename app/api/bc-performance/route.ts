@@ -1,9 +1,8 @@
 /**
  * GET /api/bc-performance
  *
- * Returns top-selling products this calendar month (by revenue),
- * worst-performing products over the last 30 days, and an
- * abandoned-cart summary for the last 30 days.
+ * Returns top-selling and worst-selling products over the last 30 days,
+ * plus an abandoned-cart summary for the same window.
  *
  * Uses BigCommerce v2 REST API.
  * Env: BIGCOMMERCE_STORE_HASH, BIGCOMMERCE_ACCESS_TOKEN
@@ -25,115 +24,106 @@ function bcHeaders() {
 }
 
 interface BCOrder {
-  id: number;
+  id:            number;
   total_inc_tax: string;
-  status: string;
+  status:        string;
+  date_created:  string;
 }
 
 interface BCLineItem {
-  name:           string;
-  sku:            string;
-  quantity:       number;
-  price_inc_tax:  string;
+  name:          string;
+  sku:           string;
+  quantity:      number;
+  price_inc_tax: string;
 }
+
+// Statuses excluded from revenue (mirrors BigCommerce dashboard)
+const EXCLUDED = new Set([
+  'Cancelled', 'Refunded', 'Declined',
+  'Incomplete', 'Awaiting Payment', 'Manual Verification Required',
+]);
 
 export async function GET() {
   if (!STORE_HASH || !ACCESS_TOKEN) {
     return NextResponse.json({
-      connected: false,
-      topProducts: [],
-      bottomProducts: [],
+      connected: false, topProducts: [], bottomProducts: [],
       abandonedCarts: { count: 0, value: 0 },
     });
   }
 
   try {
-    // AEST month range
-    const nowUTC = new Date();
-    const aestMs  = nowUTC.getTime() + 10 * 60 * 60 * 1000;
-    const aestNow = new Date(aestMs);
-    const y = aestNow.getUTCFullYear();
-    const m = aestNow.getUTCMonth();
-    const startOfMonth  = new Date(Date.UTC(y, m, 1));
-    const thirtyDaysAgo = new Date(aestMs - 30 * 24 * 60 * 60 * 1000);
+    // ── Date range: last 30 days (plain UTC, no timezone suffix so BC accepts it) ──
+    const now         = new Date();
+    const thirtyAgo   = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const minDate     = thirtyAgo.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+    const maxDate     = now.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+    const minEncoded  = encodeURIComponent(minDate);
+    const maxEncoded  = encodeURIComponent(maxDate);
 
-    const startISO     = `${startOfMonth.toISOString().split('T')[0]}T00:00:00+10:00`;
-    const endISO       = `${aestNow.toISOString().split('T')[0]}T23:59:59+10:00`;
-    const thirty30ISO  = thirtyDaysAgo.toISOString();
-
-    // Statuses excluded from revenue (same as BC dashboard)
-    const excluded = new Set(['Cancelled', 'Refunded', 'Incomplete', 'Awaiting Payment', 'Manual Verification Required']);
-
-    // 1. Three parallel fetches: current-month orders, last-30-days orders, abandoned carts
-    const [ordersRes, orders30Res, abandonedRes] = await Promise.all([
-      fetch(`${BC_BASE}/orders?min_date_created=${startISO}&max_date_created=${endISO}&limit=100`, { headers: bcHeaders() }),
-      fetch(`${BC_BASE}/orders?min_date_created=${thirty30ISO}&max_date_created=${endISO}&limit=100`, { headers: bcHeaders() }),
-      fetch(`${BC_BASE}/orders?status_id=0&min_date_created=${thirty30ISO}&limit=50`, { headers: bcHeaders() }),
+    // ── 1. Fetch last-30-day completed orders + abandoned carts in parallel ──
+    const [ordersRes, abandonedRes] = await Promise.all([
+      fetch(`${BC_BASE}/orders?min_date_created=${minEncoded}&max_date_created=${maxEncoded}&limit=150`, { headers: bcHeaders() }),
+      fetch(`${BC_BASE}/orders?min_date_created=${minEncoded}&max_date_created=${maxEncoded}&status_id=0&limit=100`, { headers: bcHeaders() }),
     ]);
 
     const ordersRaw    = ordersRes.ok    ? await ordersRes.json()    : [];
-    const orders30Raw  = orders30Res.ok  ? await orders30Res.json()  : [];
     const abandonedRaw = abandonedRes.ok ? await abandonedRes.json() : [];
 
-    const validOrders:    BCOrder[] = (Array.isArray(ordersRaw)    ? ordersRaw    : []).filter((o: BCOrder) => !excluded.has(o.status));
-    const validOrders30:  BCOrder[] = (Array.isArray(orders30Raw)  ? orders30Raw  : []).filter((o: BCOrder) => !excluded.has(o.status));
-    const abandonedOrders: BCOrder[] = Array.isArray(abandonedRaw) ? abandonedRaw : [];
+    const allOrders:   BCOrder[] = Array.isArray(ordersRaw)    ? ordersRaw    : [];
+    const abandoned:   BCOrder[] = Array.isArray(abandonedRaw) ? abandonedRaw : [];
 
-    // 2. Helper: fetch line items for up to 40 orders and aggregate by product name
-    const buildProductMap = async (orders: BCOrder[]): Promise<Record<string, { name: string; quantity: number; revenue: number }>> => {
-      const results = await Promise.allSettled(
-        orders.slice(0, 40).map(o =>
-          fetch(`${BC_BASE}/orders/${o.id}/products`, { headers: bcHeaders() })
-            .then(r => r.ok ? r.json() : []),
-        ),
-      );
-      const map: Record<string, { name: string; quantity: number; revenue: number }> = {};
-      for (const res of results) {
-        if (res.status !== 'fulfilled' || !Array.isArray(res.value)) continue;
-        for (const item of res.value as BCLineItem[]) {
-          const name = item.name ?? item.sku ?? 'Unknown';
-          if (!map[name]) map[name] = { name, quantity: 0, revenue: 0 };
-          map[name].quantity += Number(item.quantity ?? 0);
-          map[name].revenue  += Number(item.price_inc_tax ?? 0) * Number(item.quantity ?? 0);
-        }
+    // Filter to revenue-counting statuses only
+    const validOrders = allOrders.filter(o => !EXCLUDED.has(o.status));
+
+    // ── 2. Fetch line items for up to 50 valid orders ──
+    const lineItemResults = await Promise.allSettled(
+      validOrders.slice(0, 50).map(o =>
+        fetch(`${BC_BASE}/orders/${o.id}/products`, { headers: bcHeaders() })
+          .then(r => r.ok ? r.json() : []),
+      ),
+    );
+
+    // ── 3. Aggregate by product name ──
+    const map: Record<string, { name: string; quantity: number; revenue: number }> = {};
+    for (const res of lineItemResults) {
+      if (res.status !== 'fulfilled' || !Array.isArray(res.value)) continue;
+      for (const item of res.value as BCLineItem[]) {
+        const name = item.name ?? item.sku ?? 'Unknown';
+        if (!map[name]) map[name] = { name, quantity: 0, revenue: 0 };
+        map[name].quantity += Number(item.quantity  ?? 0);
+        map[name].revenue  += Number(item.price_inc_tax ?? 0) * Number(item.quantity ?? 0);
       }
-      return map;
-    };
+    }
 
-    // 3. Build both product maps in parallel
-    const [productMap, productMap30] = await Promise.all([
-      buildProductMap(validOrders),
-      buildProductMap(validOrders30),
-    ]);
-
-    // 4. Top products = current month, highest revenue first
-    const sortedDesc = Object.values(productMap).sort((a, b) => b.revenue - a.revenue);
-    const topProducts = sortedDesc.slice(0, 12).map(p => ({ ...p, revenue: Math.round(p.revenue * 100) / 100 }));
-
-    // 5. Bottom products = last 30 days, lowest revenue first (must have sold at least 1 unit)
-    const sortedAsc = Object.values(productMap30)
+    const allProducts = Object.values(map)
       .filter(p => p.quantity > 0)
-      .sort((a, b) => a.revenue - b.revenue);
-    const bottomProducts = sortedAsc.slice(0, 10).map(p => ({ ...p, revenue: Math.round(p.revenue * 100) / 100 }));
+      .map(p => ({ ...p, revenue: Math.round(p.revenue * 100) / 100 }));
 
-    // 6. Abandoned carts summary
-    const abandonedCount = abandonedOrders.length;
-    const abandonedValue = abandonedOrders.reduce((sum: number, o: BCOrder) => sum + Number(o.total_inc_tax ?? 0), 0);
+    // Highest revenue → top performers
+    const topProducts = [...allProducts].sort((a, b) => b.revenue - a.revenue).slice(0, 12);
+    // Lowest revenue → worst performers (rolling 30 days)
+    const bottomProducts = [...allProducts].sort((a, b) => a.revenue - b.revenue).slice(0, 10);
+
+    // ── 4. Abandoned carts summary ──
+    const abandonedValue = abandoned.reduce(
+      (s, o) => s + parseFloat(o.total_inc_tax || '0'), 0,
+    );
 
     return NextResponse.json({
-      connected: true,
+      connected:     true,
       topProducts,
       bottomProducts,
-      abandonedCarts: { count: abandonedCount, value: Math.round(abandonedValue * 100) / 100 },
+      abandonedCarts: {
+        count: abandoned.length,
+        value: Math.round(abandonedValue * 100) / 100,
+      },
     });
 
   } catch (e) {
     console.error('[bc-performance]', e);
     return NextResponse.json({
-      connected: false,
-      error: String(e),
-      topProducts: [],
-      bottomProducts: [],
+      connected: false, error: String(e),
+      topProducts: [], bottomProducts: [],
       abandonedCarts: { count: 0, value: 0 },
     }, { status: 500 });
   }
