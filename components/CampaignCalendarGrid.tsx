@@ -33,8 +33,17 @@ function parseDateRange(dr: string): { start: Date; end: Date } | null {
 }
 
 function getRange(c: Campaign, year: number): { start: Date; end: Date } {
+  // Prefer explicit ISO dates
+  if (c.startDate && c.endDate) {
+    return {
+      start: new Date(c.startDate + 'T12:00:00'),
+      end:   new Date(c.endDate   + 'T12:00:00'),
+    };
+  }
+  // Fall back to parsing legacy dateRange text
   const parsed = parseDateRange(c.dateRange);
   if (parsed) return parsed;
+  // Fall back to full month
   const mi = MONTH_NAMES.indexOf(c.month);
   if (mi >= 0) return { start: new Date(year, mi, 1), end: new Date(year, mi + 1, 0) };
   return { start: new Date(year, 6, 1), end: new Date(year, 6, 31) };

@@ -4,6 +4,47 @@ import { useState, useEffect } from 'react';
 import { Campaign } from '@/lib/types';
 import { CAMPAIGN_TYPES, FY_MONTHS } from '@/lib/constants';
 
+const MONTH_NAMES_EN = [
+  'January','February','March','April','May','June',
+  'July','August','September','October','November','December',
+];
+
+/** "2026-07-03" + "2026-07-19" → "3–19 July 2026" */
+function formatDateRange(start: string, end: string): string {
+  if (!start || !end) return '';
+  const s = new Date(start + 'T12:00:00');
+  const e = new Date(end   + 'T12:00:00');
+  if (s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear()) {
+    return `${s.getDate()}–${e.getDate()} ${MONTH_NAMES_EN[s.getMonth()]} ${s.getFullYear()}`;
+  }
+  return `${s.getDate()} ${MONTH_NAMES_EN[s.getMonth()]} – ${e.getDate()} ${MONTH_NAMES_EN[e.getMonth()]} ${e.getFullYear()}`;
+}
+
+/** Parse legacy text like "3–19 July 2026" or "1 July – 19 August 2026" → ISO dates */
+function parseDateRangeToISO(dr: string): { start: string; end: string } | null {
+  if (!dr) return null;
+  const s = dr.replace(/[–—]/g, '-').trim();
+  const m1 = s.match(/^(\d{1,2})\s*-\s*(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+  if (m1) {
+    const mi = MONTH_NAMES_EN.findIndex(n => n.toLowerCase().startsWith(m1[3].toLowerCase().substring(0, 3)));
+    if (mi >= 0) {
+      const mm = String(mi + 1).padStart(2, '0');
+      return { start: `${m1[4]}-${mm}-${String(+m1[1]).padStart(2,'0')}`, end: `${m1[4]}-${mm}-${String(+m1[2]).padStart(2,'0')}` };
+    }
+  }
+  const m2 = s.match(/^(\d{1,2})\s+([A-Za-z]+)\s*-\s*(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+  if (m2) {
+    const mi1 = MONTH_NAMES_EN.findIndex(n => n.toLowerCase().startsWith(m2[2].toLowerCase().substring(0, 3)));
+    const mi2 = MONTH_NAMES_EN.findIndex(n => n.toLowerCase().startsWith(m2[4].toLowerCase().substring(0, 3)));
+    if (mi1 >= 0 && mi2 >= 0)
+      return {
+        start: `${m2[5]}-${String(mi1+1).padStart(2,'0')}-${String(+m2[1]).padStart(2,'0')}`,
+        end:   `${m2[5]}-${String(mi2+1).padStart(2,'0')}-${String(+m2[3]).padStart(2,'0')}`,
+      };
+  }
+  return null;
+}
+
 interface Props {
   campaign?: Campaign | null;
   defaultMonth?: string;
@@ -18,6 +59,8 @@ const EMPTY: Omit<Campaign, 'id'> = {
   promoCode: '',
   type: 'Storewide Sale',
   month: 'July',
+  startDate: '',
+  endDate: '',
   dateRange: '',
   revenue: 0,
   orders: 0,
@@ -47,6 +90,11 @@ export default function CampaignModal({ campaign, defaultMonth, defaultFY, onSav
   useEffect(() => {
     if (campaign) {
       const { id: _id, ...rest } = campaign;
+      // Pre-fill ISO date pickers from legacy dateRange text if needed
+      if (!rest.startDate && !rest.endDate && rest.dateRange) {
+        const parsed = parseDateRangeToISO(rest.dateRange);
+        if (parsed) { rest.startDate = parsed.start; rest.endDate = parsed.end; }
+      }
       setForm(rest);
     } else {
       setForm({
@@ -59,6 +107,19 @@ export default function CampaignModal({ campaign, defaultMonth, defaultFY, onSav
 
   const set = (field: keyof typeof form, value: string | number) =>
     setForm(prev => ({ ...prev, [field]: value }));
+
+  // When start date changes, auto-derive Month and FY
+  const handleStartDateChange = (val: string) => {
+    const updates: Partial<typeof form> = { startDate: val };
+    if (val) {
+      const d = new Date(val + 'T12:00:00');
+      updates.month = MONTH_NAMES_EN[d.getMonth()];
+      const yr = d.getFullYear();
+      const fyYear = d.getMonth() >= 6 ? yr + 1 : yr; // Jul–Dec → next FY
+      updates.fy = `FY${String(fyYear).slice(2)}`;
+    }
+    setForm(prev => ({ ...prev, ...updates }));
+  };
 
   // All campaign types: built-in (minus Other) + custom + Other
   const allTypes = [
@@ -90,7 +151,12 @@ export default function CampaignModal({ campaign, defaultMonth, defaultFY, onSav
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(form);
+    const data = { ...form };
+    // Auto-compute dateRange string for calendar grid + legacy compat
+    if (form.startDate && form.endDate) {
+      data.dateRange = formatDateRange(form.startDate, form.endDate);
+    }
+    onSave(data);
   };
 
   return (
@@ -222,8 +288,8 @@ export default function CampaignModal({ campaign, defaultMonth, defaultFY, onSav
             </div>
           </div>
 
-          {/* Row: Promo Code + Date Range */}
-          <div className="grid grid-cols-2 gap-4">
+          {/* Row: Promo Code + Start Date + End Date */}
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Promo Code</label>
               <input
@@ -235,13 +301,22 @@ export default function CampaignModal({ campaign, defaultMonth, defaultFY, onSav
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Date Range</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
               <input
-                type="text"
-                value={form.dateRange}
-                onChange={e => set('dateRange', e.target.value)}
+                type="date"
+                value={form.startDate}
+                onChange={e => handleStartDateChange(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="3–19 July 2026"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+              <input
+                type="date"
+                value={form.endDate}
+                min={form.startDate || undefined}
+                onChange={e => set('endDate', e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
           </div>

@@ -114,6 +114,8 @@ export const SPEND_COLUMNS_TO_CREATE = [
 export const COLUMNS_TO_CREATE = [
   { title: 'Campaign Code', type: 'text'     },
   { title: 'Promo Code',   type: 'text'      },
+  { title: 'Start Date',   type: 'text'      },
+  { title: 'End Date',     type: 'text'      },
   { title: 'Type',         type: 'text'      },
   { title: 'Month',        type: 'text'      },
   { title: 'Date Range',   type: 'text'      },

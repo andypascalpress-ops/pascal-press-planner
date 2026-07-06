@@ -5,7 +5,9 @@ export interface Campaign {
   promoCode: string;
   type: string;
   month: string;
-  dateRange: string;
+  startDate: string;  // ISO "YYYY-MM-DD"
+  endDate: string;    // ISO "YYYY-MM-DD"
+  dateRange: string;  // display string, computed from startDate/endDate on save
   revenue: number;
   orders: number;
   unitsSold: number;
@@ -18,6 +20,8 @@ export interface Campaign {
 export interface ColumnMap {
   campaignCode: string | undefined; // optional — column may not exist on older boards
   promoCode: string | undefined;    // optional — column may not exist on older boards
+  startDate: string | undefined;    // optional — column may not exist on older boards
+  endDate: string | undefined;      // optional — column may not exist on older boards
   type: string;
   month: string;
   dateRange: string;
