@@ -190,6 +190,7 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
   });
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [errorMsg,    setErrorMsg]    = useState('');
+  const [sources,     setSources]     = useState<Record<string, boolean>>({});
 
   // ── Dismiss ──────────────────────────────────────────────────────────────────
 
@@ -217,13 +218,31 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
     try {
       const month = currentMonthStr();
 
-      const [spendRes, campaignsRes, emailRes, band6Res, bcRes] = await Promise.all([
-        fetch('/api/spend').then(r => r.json()).catch(() => ({})),
-        fetch('/api/google-ads-campaigns').then(r => r.json()).catch(() => ({})),
-        fetch(`/api/hubspot-email?month=${month}`).then(r => r.json()).catch(() => ({})),
-        fetch('/api/band6-tracker').then(r => r.json()).catch(() => ({})),
-        fetch('/api/bc-performance').then(r => r.json()).catch(() => ({})),
+      // Fetch all sources; track which ones succeed
+      const results = await Promise.allSettled([
+        fetch('/api/spend').then(r => r.json()),
+        fetch('/api/google-ads-campaigns').then(r => r.json()),
+        fetch(`/api/hubspot-email?month=${month}`).then(r => r.json()),
+        fetch('/api/band6-tracker').then(r => r.json()),
+        fetch('/api/bc-performance').then(r => r.json()),
       ]);
+
+      const [spendR, campaignsR, emailR, band6R, bcR] = results;
+      const spendRes     = spendR.status     === 'fulfilled' ? spendR.value     : [];
+      const campaignsRes = campaignsR.status === 'fulfilled' ? campaignsR.value : {};
+      const emailRes     = emailR.status     === 'fulfilled' ? emailR.value     : {};
+      const band6Res     = band6R.status     === 'fulfilled' ? band6R.value     : {};
+      const bcRes        = bcR.status        === 'fulfilled' ? bcR.value        : {};
+
+      // Track source health
+      const srcStatus = {
+        'Spend':        spendR.status     === 'fulfilled' && !spendRes?.error,
+        'Google Ads':   campaignsR.status === 'fulfilled' && !campaignsRes?.error,
+        'Email':        emailR.status     === 'fulfilled' && !emailRes?.error,
+        'Band 6':       band6R.status     === 'fulfilled' && !band6Res?.error,
+        'BigCommerce':  bcR.status        === 'fulfilled' && !bcRes?.error,
+      };
+      setSources(srcStatus);
 
       setStatus('analysing');
 
@@ -237,6 +256,7 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
             band6:     band6Res,
             spend:     spendRes,
             bc:        bcRes,
+            sources:   srcStatus,
           },
         }),
       });
@@ -291,6 +311,19 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
                 {status === 'fetching' ? 'Loading campaign data…' : 'Claude is analysing…'}
               </p>
             )}
+            {/* Data source status pills */}
+            {(status === 'ready' || status === 'error') && Object.keys(sources).length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {Object.entries(sources).map(([name, ok]) => (
+                  <span
+                    key={name}
+                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${ok ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-500'}`}
+                  >
+                    {ok ? '✓' : '✗'} {name}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <button
             onClick={refresh}
@@ -341,14 +374,12 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
 
         {/* Empty state */}
         {status === 'ready' && visible.length === 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 p-10 text-center">
-            <div className="text-4xl mb-3">✅</div>
-            <p className="font-semibold text-gray-700 mb-1">All clear</p>
-            <p className="text-sm text-gray-500 mb-4">No action items found. Refresh to re-analyse.</p>
-            <button
-              onClick={refresh}
-              className="text-xs text-blue-600 hover:text-blue-700 underline"
-            >
+          <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
+            <div className="text-3xl mb-3">🔄</div>
+            <p className="font-semibold text-gray-700 mb-1">No insights generated</p>
+            <p className="text-sm text-gray-500 mb-1">This usually means some data sources didn't connect.</p>
+            <p className="text-xs text-gray-400 mb-4">Check the source status above — red pills mean that data isn't available yet.</p>
+            <button onClick={refresh} className="text-xs text-blue-600 hover:text-blue-700 underline">
               Refresh now
             </button>
           </div>
