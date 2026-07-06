@@ -15,7 +15,7 @@ export interface Campaign {
 }
 
 export interface ColumnMap {
-  promoCode: string;
+  promoCode: string | undefined; // optional — column may not exist on older boards
   type: string;
   month: string;
   dateRange: string;

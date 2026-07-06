@@ -63,9 +63,11 @@ export async function getColumnMap(boardId: string): Promise<ColumnMap> {
     if (!col) throw new Error(`Column "${title}" not found on board. Re-run /api/setup-board.`);
     return col.id;
   };
+  const findOptional = (title: string): string | undefined =>
+    cols.find(c => c.title === title)?.id;
 
   const map: ColumnMap = {
-    promoCode: find('Promo Code'),
+    promoCode: findOptional('Promo Code'),
     type:      find('Type'),
     month:     find('Month'),
     dateRange: find('Date Range'),
@@ -102,7 +104,7 @@ function itemToCampaign(item: {
   return {
     id:         item.id,
     name:       item.name,
-    promoCode:  colValue(cv, colMap.promoCode),
+    promoCode:  colMap.promoCode ? colValue(cv, colMap.promoCode) : '',
     type:       colValue(cv, colMap.type),
     month:      colValue(cv, colMap.month),
     dateRange:  colValue(cv, colMap.dateRange),
@@ -279,7 +281,7 @@ function buildColumnValues(
 ): Record<string, unknown> {
   const cols: Record<string, unknown> = {};
 
-  if (campaign.promoCode !== undefined) cols[colMap.promoCode] = campaign.promoCode;
+  if (campaign.promoCode !== undefined && colMap.promoCode) cols[colMap.promoCode] = campaign.promoCode;
   if (campaign.type      !== undefined) cols[colMap.type]      = campaign.type;
   if (campaign.month     !== undefined) cols[colMap.month]     = campaign.month;
   if (campaign.dateRange !== undefined) cols[colMap.dateRange] = campaign.dateRange;
