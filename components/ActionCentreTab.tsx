@@ -185,10 +185,11 @@ function computeBaselineInsights(
   const etzEmails = sentEmails.filter(e => isETZ(e.name ?? ''));
 
   // ── Per-brand: worst open rate ────────────────────────────────────────────
-  for (const [brandLabel, brandEmails, promoType] of [
-    ['Pascal Press', ppEmails,  'NAPLAN prep workbooks'] as const,
-    ['Excel Test Zone', etzEmails, 'HSC exam practice papers'] as const,
-  ]) {
+  const brandGroups: Array<{ brandLabel: string; brandEmails: any[]; promoType: string }> = [
+    { brandLabel: 'Pascal Press', brandEmails: ppEmails, promoType: 'NAPLAN prep workbooks' },
+    { brandLabel: 'Excel Test Zone', brandEmails: etzEmails, promoType: 'HSC exam practice papers' },
+  ];
+  for (const { brandLabel, brandEmails, promoType } of brandGroups) {
     const worst = [...brandEmails].sort((a, b) => (a.openRate ?? 0) - (b.openRate ?? 0))[0];
     if (worst && (worst.openRate ?? 0) < 0.20) {
       const name = (worst.name ?? 'campaign').slice(0, 55);
