@@ -400,6 +400,21 @@ export default function EmailTab() {
     : allCampaigns.filter(c => detectBrand(c.name, c.fromName) === brandFilter);
   const revenueMap     = buildRevenueMap(revenueData?.byCampaign ?? []);
   const gaConnected    = revenueData?.connected ?? false;
+
+  // Filter GA4 revenue campaigns by brand using campaign name prefix
+  const filterRevByBrand = (list: CampaignRevenue[]): CampaignRevenue[] => {
+    if (brandFilter === 'All') return list;
+    return list.filter(c => {
+      const n = c.campaignName.toLowerCase();
+      if (brandFilter === 'Blake Education') return n.startsWith('be_') || n.includes('blake');
+      if (brandFilter === 'Excel Test Zone') return n.startsWith('etz') || n.includes('etz');
+      // Pascal Press: pp_ prefix or not an ETZ/BE campaign
+      return !n.startsWith('etz') && !n.includes('etz') && !n.startsWith('be_') && !n.includes('blake');
+    });
+  };
+  const filteredRevCampaigns     = filterRevByBrand(revenueData?.byCampaign ?? []);
+  const filteredPrevRevCampaigns = filterRevByBrand(prevRevData?.byCampaign ?? []);
+
   const totalSends     = campaigns.reduce((s, c) => s + c.sends, 0);
   const totalDelivered = campaigns.reduce((s, c) => s + c.delivered, 0);
   const totalOpens     = campaigns.reduce((s, c) => s + c.opens, 0);
@@ -410,7 +425,8 @@ export default function EmailTab() {
   const avgOpenRate    = safeDiv(totalOpens, totalDelivered);
   const avgClickRate   = safeDiv(totalClicks, totalDelivered);
   const avgCtor        = safeDiv(totalClicks, totalOpens);
-  const totalRevenue   = revenueData?.totalRevenue ?? 0;
+  const totalRevenue   = filteredRevCampaigns.reduce((s, c) => s + c.revenue, 0);
+  const totalRevTx     = filteredRevCampaigns.reduce((s, c) => s + c.transactions, 0);
   const revPerSend     = safeDiv(totalRevenue, totalSends);
 
   const prevSends      = prevData?.totalSends ?? 0;
@@ -419,13 +435,13 @@ export default function EmailTab() {
   const prevDelivRate  = safeDiv(prevDelivered, prevSends);
   const prevUnsubRate  = safeDiv(prevUnsubs, prevSends);
   const prevCtor       = safeDiv(prevData?.totalClicks ?? 0, prevData?.totalOpens ?? 0);
-  const prevRevenue    = prevRevData?.totalRevenue ?? 0;
+  const prevRevenue    = filteredPrevRevCampaigns.reduce((s, c) => s + c.revenue, 0);
   const prevRevPerSend = safeDiv(prevRevenue, prevSends);
   const hasMoM         = !!selectedMonth && !!prevData?.connected;
 
   const bestOpenRate   = [...campaigns].filter(c => c.sends >= 100).sort((a, b) => b.openRate - a.openRate)[0] ?? null;
   const bestCtor       = [...campaigns].filter(c => c.opens >= 50).sort((a, b) => b.clickToOpen - a.clickToOpen)[0] ?? null;
-  const topRevCampaign = (revenueData?.byCampaign ?? []).filter(c => c.campaignName !== '(not set)').sort((a, b) => b.revenue - a.revenue)[0] ?? null;
+  const topRevCampaign = filteredRevCampaigns.filter(c => c.campaignName !== '(not set)').sort((a, b) => b.revenue - a.revenue)[0] ?? null;
 
   const handleSort = (col: SortKey) => {
     if (sortKey === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -575,7 +591,7 @@ export default function EmailTab() {
               warn={unsubRate > 0.005} />
             <StatCard label="Revenue (GA4)"
               value={revLoading ? '…' : gaConnected ? fmtAUD(totalRevenue) : '—'}
-              sub={revLoading ? 'loading…' : gaConnected ? `${fmt(revenueData?.totalTx ?? 0)} transactions` : 'GA4 not connected'}
+              sub={revLoading ? 'loading…' : gaConnected ? `${fmt(totalRevTx)} transactions` : 'GA4 not connected'}
               delta={hasMoM && gaConnected ? <MomDelta curr={totalRevenue} prev={prevRevenue} /> : undefined} />
             <StatCard label="Revenue per Send"
               value={revLoading ? '…' : gaConnected && revPerSend > 0 ? `$${revPerSend.toFixed(3)}` : '—'}
@@ -592,7 +608,7 @@ export default function EmailTab() {
               </button>
               {showGa4Panel && (
                 <div className="border-t border-gray-100 divide-y divide-gray-50">
-                  {(revenueData?.byCampaign ?? []).slice().sort((a, b) => b.revenue - a.revenue).map(c => {
+                  {filteredRevCampaigns.slice().sort((a, b) => b.revenue - a.revenue).map(c => {
                     const isMatched = matchedGa4Keys.has(c.campaignName);
                     return (
                       <div key={c.campaignName} className="flex items-center justify-between px-5 py-2.5">
