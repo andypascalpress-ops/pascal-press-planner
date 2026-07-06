@@ -102,7 +102,7 @@ export async function GET() {
     // Highest revenue → top performers
     const topProducts = [...allProducts].sort((a, b) => b.revenue - a.revenue).slice(0, 12);
     // Lowest revenue → worst performers (rolling 30 days)
-    const bottomProducts = [...allProducts].sort((a, b) => a.revenue - b.revenue).slice(0, 10);
+    const bottomProducts = [...allProducts].sort((a, b) => a.revenue - b.revenue).slice(0, 30);
 
     // ── 4. Abandoned carts summary ──
     const abandonedValue = abandoned.reduce(
