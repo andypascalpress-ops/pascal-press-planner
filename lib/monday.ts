@@ -177,40 +177,28 @@ export async function updateCampaign(id: string, campaign: Partial<Campaign>): P
   const boardId = await getBoardId();
   const colMap = await getColumnMap(boardId);
 
-  const mutations: string[] = [];
-  const variables: Record<string, unknown> = { boardId, itemId: id };
-
-  // Update item name if provided
-  if (campaign.name !== undefined) {
-    mutations.push(`
-      rename: change_item_name(item_id: $itemId, board_id: $boardId, name: $name) { id }
-    `);
-    variables.name = campaign.name;
-  }
-
-  // Build column values for everything except name
-  const { name: _n, id: _id, ...rest } = campaign as Campaign;
+  const { id: _id, ...rest } = campaign as Campaign;
   const colValues = buildColumnValues(rest as Omit<Campaign, 'id'>, colMap);
 
-  if (Object.keys(colValues).length > 0) {
-    mutations.push(`
-      update: change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) {
-        id name column_values { id text }
-      }
-    `);
-    variables.cols = JSON.stringify(colValues);
+  // Include item name rename in column values (Monday.com accepts "name" key in change_multiple_column_values)
+  if (campaign.name !== undefined) {
+    colValues['name'] = campaign.name;
   }
 
-  if (mutations.length === 0) {
-    // Nothing to update; fetch and return current
+  if (Object.keys(colValues).length === 0) {
     const campaigns = await getCampaigns();
     return campaigns.find(c => c.id === id) ?? { id, ...campaign } as Campaign;
   }
 
-  const query = `mutation($boardId:ID!,$itemId:ID!${variables.name !== undefined ? ',$name:String!' : ''}${variables.cols !== undefined ? ',$cols:JSON!' : ''}){${mutations.join('\n')}}`;
-  const data = await mondayRequest(query, variables);
+  const data = await mondayRequest(`
+    mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+      update: change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) {
+        id name column_values { id text }
+      }
+    }
+  `, { boardId, itemId: id, cols: JSON.stringify(colValues) });
 
-  const updated = data.update ?? data.rename;
+  const updated = data.update;
   if (updated && updated.column_values) return itemToCampaign(updated, colMap);
 
   // Fallback: refetch
