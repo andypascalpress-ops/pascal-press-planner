@@ -92,10 +92,10 @@ export async function GET() {
       }
     }
 
-    const topProducts = Object.values(productMap)
-      .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 12)
-      .map(p => ({ ...p, revenue: Math.round(p.revenue * 100) / 100 }));
+    const sorted = Object.values(productMap).sort((a, b) => b.revenue - a.revenue);
+    const topProducts = sorted.slice(0, 12).map(p => ({ ...p, revenue: Math.round(p.revenue * 100) / 100 }));
+    // Bottom performers — products with sales but lowest revenue this month
+    const bottomProducts = sorted.slice(-5).reverse().map(p => ({ ...p, revenue: Math.round(p.revenue * 100) / 100 }));
 
     // 4. Abandoned carts = Incomplete orders in last 30 days
     const abandonedRes = await fetch(
@@ -112,6 +112,7 @@ export async function GET() {
     return NextResponse.json({
       connected: true,
       topProducts,
+      bottomProducts,
       abandonedCarts: {
         count: abandoned.length,
         value: Math.round(abandonedValue * 100) / 100,

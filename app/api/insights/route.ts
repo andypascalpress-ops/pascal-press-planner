@@ -73,8 +73,9 @@ export async function POST(req: NextRequest) {
     const emails = (emailData?.campaigns ?? emailData?.emails ?? []).slice(0, 6);
 
     // ── BigCommerce ───────────────────────────────────────────────────────────
-    const topProducts = (bc?.topProducts  ?? []).slice(0, 5);
-    const abandoned   = bc?.abandonedCarts ?? { count: 0, value: 0 };
+    const topProducts    = (bc?.topProducts    ?? []).slice(0, 5);
+    const bottomProducts = (bc?.bottomProducts ?? []).slice(0, 5);
+    const abandoned      = bc?.abandonedCarts  ?? { count: 0, value: 0 };
 
     // ── Band 6 ────────────────────────────────────────────────────────────────
     const b6 = band6Data?.summary ?? band6Data ?? {};
@@ -108,8 +109,11 @@ export async function POST(req: NextRequest) {
       topProducts.length
         ? 'Top products:\n' + topProducts.map((p: any) => `  ${p.name}: ${p.quantity ?? 0} units, ${money(p.revenue)}`).join('\n')
         : '  (BigCommerce product data unavailable)',
+      bottomProducts.length
+        ? 'WORST performing products (lowest revenue this month):\n' + bottomProducts.map((p: any) => `  ${p.name}: ${p.quantity ?? 0} units, ${money(p.revenue)}`).join('\n')
+        : '',
       `Abandoned carts: ${abandoned.count} carts, ${money(abandoned.value)}`,
-    ].join('\n');
+    ].filter(Boolean).join('\n');
 
     const b6Section = Object.keys(b6).length
       ? JSON.stringify(b6)
@@ -140,7 +144,11 @@ ${bcSection}
 === BAND 6 TRACKER ===
 ${b6Section}
 
-IMPORTANT: You MUST return exactly 4–6 insights. Do NOT return an empty array. If live campaign data is missing, generate strategic Term 3 recommendations based on what you know about PP and ETZ (e.g. budget pacing, NAPLAN/HSC timing, email best practices, seasonal product campaigns). Name specific products, campaign types, and audience segments where possible.
+IMPORTANT: You MUST return exactly 4–6 insights. Do NOT return an empty array. Focus on:
+- GOOGLE ADS: Call out specific named campaigns to pause (zero conversions), scale (high ROAS), or restructure (low CTR). Use actual campaign names from the data above.
+- EMAIL: Name the specific email campaign with the issue. Recommend subject line, segmentation, or send-time fix.
+- BIGCOMMERCE: For the WORST performing products listed above, recommend a specific campaign type (e.g. Google Ads ad group, HubSpot email, discount), audience, and message. Do not just name the product — give an actionable campaign suggestion.
+- If live data is missing, generate strategic Term 3 recommendations for PP/ETZ (NAPLAN prep, HSC timing, Back to School). Name specific products, audiences, and timing.
 
 Return ONLY a valid JSON array — no markdown fences, no preamble:
 [{
