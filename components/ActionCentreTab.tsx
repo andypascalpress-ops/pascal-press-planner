@@ -206,19 +206,19 @@ function computeBaselineInsights(
   }
 
   // ── Per-brand: no campaigns sent this month — proactive suggestion ─────────
-  const ppSuggestion = [
-    month === 6 ? 'Term 3 has just started — send a NAPLAN prep campaign now to capture parents buying workbooks for Year 3–9 students. Subject line: "Your child's NAPLAN prep starts here".' : null,
-    month === 7 ? 'August is peak Back to School prep research time. A Pascal Press "prepare for next year" email with grade-specific workbook recommendations would convert well.' : null,
-    month === 8 ? 'September — plan your Back to School email sequence now (3 sends: Oct, Nov, Jan). Early preparation emails for Pascal Press outperform January sends.' : null,
-    'Send a Pascal Press product spotlight email featuring your top NAPLAN workbooks for the current term.',
-  ].find(Boolean) as string;
+  const ppSuggestion: string = ((): string => {
+    if (month === 6) return 'Term 3 has just started — send a NAPLAN prep campaign now to capture parents buying workbooks for Year 3-9 students. Subject: "Your child NAPLAN prep starts here".';
+    if (month === 7) return 'August is peak Back to School prep research time. A Pascal Press "prepare for next year" email with grade-specific workbook recommendations would convert well.';
+    if (month === 8) return 'September — plan your Back to School email sequence now (3 sends: Oct, Nov, Jan). Early prep emails for Pascal Press outperform January sends.';
+    return 'Send a Pascal Press product spotlight email featuring your top NAPLAN workbooks for the current term.';
+  })();
 
-  const etzSuggestion = [
-    month === 6 ? 'Term 3 has started — ETZ should send an HSC exam countdown email immediately. Students sitting HSC in October have under 14 weeks. Subject: "14 weeks to your HSC — are you exam-ready?"' : null,
-    month === 7 ? 'August is when HSC students sit trial exams — the highest-urgency window for ETZ. Send a "trial exam coming up? Practice now" email to your full student list.' : null,
-    month === 8 ? 'HSC exams are 6–8 weeks away. ETZ should send a final exam prep push email with a specific call-to-action to purchase practice papers.' : null,
-    'Send an ETZ NAPLAN/HSC practice paper reminder to re-engage students who haven't purchased this term.',
-  ].find(Boolean) as string;
+  const etzSuggestion: string = ((): string => {
+    if (month === 6) return 'Term 3 has started — ETZ should send an HSC exam countdown email immediately. Students sitting HSC in October have under 14 weeks. Subject: "14 weeks to your HSC — are you exam-ready?"';
+    if (month === 7) return 'August is peak ETZ season — HSC trial exams are happening now. Send a "trial exam coming up? Practice now" email to your full student list.';
+    if (month === 8) return 'HSC exams are 6-8 weeks away. ETZ should send a final exam prep push email with a CTA to purchase practice papers.';
+    return 'Send an ETZ NAPLAN/HSC practice paper reminder to re-engage students who have not purchased this term.';
+  })();
 
   if (ppEmails.length === 0) {
     insights.push({

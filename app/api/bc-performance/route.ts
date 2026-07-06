@@ -75,7 +75,7 @@ export async function GET() {
     const validOrders30: BCOrder[] = (Array.isArray(orders30Raw) ? orders30Raw : []).filter((o: BCOrder) => !excluded.has(o.status));
 
     // Helper: fetch line items for a set of orders and aggregate into a product map
-    async function buildProductMap(orders: BCOrder[]) {
+    const buildProductMap = async (orders: BCOrder[]): Promise<Record<string, { name: string; quantity: number; revenue: number }>> => {
       const results = await Promise.allSettled(
         orders.slice(0, 40).map(o =>
           fetch(`${BC_BASE}/orders/${o.id}/products`, { headers: bcHeaders() })
@@ -106,37 +106,4 @@ export async function GET() {
     const sorted30  = Object.values(productMap30).sort((a, b) => b.revenue - a.revenue);
     const topProducts    = sorted.slice(0, 12).map(p => ({ ...p, revenue: Math.round(p.revenue * 100) / 100 }));
     // Bottom performers = last 30 days, lowest revenue products that had at least 1 sale
-    const bottomProducts = sorted30.slice(-5).reverse().map(p => ({ ...p, revenue: Math.round(p.revenue * 100) / 100 }));
-
-    // 4. Abandoned carts = Incomplete orders in last 30 days
-    const abandonedRes = await fetch(
-      `${BC_BASE}/orders?min_date_created=${thirtyDaysAgo.toISOString()}&status_id=0&limit=100`,
-      { headers: bcHeaders() },
-    );
-    const abandonedRaw = abandonedRes.ok ? await abandonedRes.json() : [];
-    const abandoned = Array.isArray(abandonedRaw) ? abandonedRaw : [];
-    const abandonedValue = abandoned.reduce(
-      (s: number, o: BCOrder) => s + parseFloat(o.total_inc_tax || '0'),
-      0,
-    );
-
-    return NextResponse.json({
-      connected: true,
-      topProducts,
-      bottomProducts,
-      abandonedCarts: {
-        count: abandoned.length,
-        value: Math.round(abandonedValue * 100) / 100,
-      },
-    });
-
-  } catch (e) {
-    console.error('[bc-performance]', e);
-    return NextResponse.json({
-      connected:      false,
-      topProducts:    [],
-      abandonedCarts: { count: 0, value: 0 },
-      error:          String(e),
-    });
-  }
-}
+    const botto
