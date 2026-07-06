@@ -141,7 +141,7 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
                         <div
                           key={c.id}
                           className="group relative w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium text-white"
-                          style={{ backgroundColor: CAMPAIGN_COLORS[c.type] || CAMPAIGN_COLORS['Other'] }}
+                          style={{ backgroundColor: c.color || CAMPAIGN_COLORS[c.type] || CAMPAIGN_COLORS['Other'] }}
                         >
                           <button className="w-full text-left" onClick={() => onEdit(c)}>
                             <div className="flex items-center justify-between gap-1 pr-4">

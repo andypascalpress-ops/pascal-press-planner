@@ -216,7 +216,7 @@ export default function CampaignCalendarGrid({ campaigns, onEdit, onAddForMonth 
                     style={{ gridAutoRows: '24px' }}
                   >
                     {bars.map((bar, bi) => {
-                      const color = CAMPAIGN_COLORS[bar.c.type] || '#888';
+                      const color = bar.c.color || CAMPAIGN_COLORS[bar.c.type] || '#888';
                       return (
                         <button
                           key={bi}
@@ -257,7 +257,7 @@ export default function CampaignCalendarGrid({ campaigns, onEdit, onAddForMonth 
                 key={c.id}
                 onClick={() => onEdit(c)}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs text-white hover:opacity-80 transition-opacity"
-                style={{ backgroundColor: CAMPAIGN_COLORS[c.type] || '#888' }}
+                style={{ backgroundColor: c.color || CAMPAIGN_COLORS[c.type] || '#888' }}
               >
                 {c.name}
                 {c.campaignCode && (

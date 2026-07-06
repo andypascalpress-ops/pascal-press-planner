@@ -4,6 +4,13 @@ import { useState, useEffect } from 'react';
 import { Campaign } from '@/lib/types';
 import { CAMPAIGN_TYPES, FY_MONTHS } from '@/lib/constants';
 
+const PRESET_COLORS = [
+  '#1976D2','#0288D1','#1565C0','#4527A0',
+  '#7b2d8b','#AD1457','#E91E63','#C62828',
+  '#E65100','#F57F17','#2E7D32','#558B2F',
+  '#00897B','#00695C','#37474F','#1a1a2e',
+];
+
 const MONTH_NAMES_EN = [
   'January','February','March','April','May','June',
   'July','August','September','October','November','December',
@@ -62,6 +69,9 @@ const EMPTY: Omit<Campaign, 'id'> = {
   startDate: '',
   endDate: '',
   dateRange: '',
+  color: '',
+  discount: '',
+  offerInfo: '',
   revenue: 0,
   orders: 0,
   unitsSold: 0,
@@ -288,6 +298,65 @@ export default function CampaignModal({ campaign, defaultMonth, defaultFY, onSav
             </div>
           </div>
 
+          {/* Campaign Colour */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Campaign Colour
+              <span className="ml-1.5 text-xs font-normal text-gray-400">(leave blank to use campaign type colour)</span>
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Auto/none swatch */}
+              <button
+                type="button"
+                onClick={() => set('color', '')}
+                title="Auto — use campaign type colour"
+                className={`w-7 h-7 rounded-full border-2 flex items-center justify-center transition-all text-[9px] leading-none font-medium ${
+                  !form.color
+                    ? 'border-gray-700 ring-2 ring-offset-1 ring-gray-400 bg-gray-100 text-gray-600'
+                    : 'border-dashed border-gray-300 text-gray-400 hover:border-gray-500 bg-white'
+                }`}
+              >auto</button>
+              {PRESET_COLORS.map(c => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => set('color', c)}
+                  title={c}
+                  className={`w-7 h-7 rounded-full border-2 transition-all hover:scale-110 ${
+                    form.color === c
+                      ? 'border-gray-700 ring-2 ring-offset-1 ring-gray-400 scale-110'
+                      : 'border-white shadow-sm'
+                  }`}
+                  style={{ backgroundColor: c }}
+                />
+              ))}
+              {/* Custom colour input */}
+              <label
+                title="Custom colour"
+                className={`w-7 h-7 rounded-full border-2 flex items-center justify-center cursor-pointer relative overflow-hidden transition-all hover:scale-110 ${
+                  form.color && !PRESET_COLORS.includes(form.color)
+                    ? 'border-gray-700 ring-2 ring-offset-1 ring-gray-400 scale-110'
+                    : 'border-dashed border-gray-300 hover:border-gray-500'
+                }`}
+                style={form.color && !PRESET_COLORS.includes(form.color) ? { backgroundColor: form.color } : {}}
+              >
+                {(!form.color || PRESET_COLORS.includes(form.color)) && (
+                  <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                    <circle cx="6.5" cy="6.5" r="5" stroke="#9ca3af" strokeWidth="1.5"/>
+                    <line x1="6.5" y1="3" x2="6.5" y2="10" stroke="#9ca3af" strokeWidth="1.5" strokeLinecap="round"/>
+                    <line x1="3" y1="6.5" x2="10" y2="6.5" stroke="#9ca3af" strokeWidth="1.5" strokeLinecap="round"/>
+                  </svg>
+                )}
+                <input
+                  type="color"
+                  value={form.color || '#3b82f6'}
+                  onChange={e => set('color', e.target.value)}
+                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                />
+              </label>
+            </div>
+          </div>
+
           {/* Row: Promo Code + Start Date + End Date */}
           <div className="grid grid-cols-3 gap-4">
             <div>
@@ -317,6 +386,30 @@ export default function CampaignModal({ campaign, defaultMonth, defaultFY, onSav
                 min={form.startDate || undefined}
                 onChange={e => set('endDate', e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          {/* Row: Discount + Offer Info */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Discount</label>
+              <input
+                type="text"
+                value={form.discount}
+                onChange={e => set('discount', e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="e.g. 15% off or $10 off"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Offer Information</label>
+              <input
+                type="text"
+                value={form.offerInfo}
+                onChange={e => set('offerInfo', e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="e.g. Free shipping on orders over $50"
               />
             </div>
           </div>

@@ -71,6 +71,9 @@ export async function getColumnMap(boardId: string): Promise<ColumnMap> {
     promoCode:    findOptional('Promo Code'),
     startDate:    findOptional('Start Date'),
     endDate:      findOptional('End Date'),
+    color:        findOptional('Color'),
+    discount:     findOptional('Discount'),
+    offerInfo:    findOptional('Offer Info'),
     type:         find('Type'),
     month:     find('Month'),
     dateRange: find('Date Range'),
@@ -111,6 +114,9 @@ function itemToCampaign(item: {
     promoCode:    colMap.promoCode    ? colValue(cv, colMap.promoCode)    : '',
     startDate:    colMap.startDate    ? colValue(cv, colMap.startDate)    : '',
     endDate:      colMap.endDate      ? colValue(cv, colMap.endDate)      : '',
+    color:        colMap.color        ? colValue(cv, colMap.color)        : '',
+    discount:     colMap.discount     ? colValue(cv, colMap.discount)     : '',
+    offerInfo:    colMap.offerInfo    ? colValue(cv, colMap.offerInfo)    : '',
     type:       colValue(cv, colMap.type),
     month:      colValue(cv, colMap.month),
     dateRange:  colValue(cv, colMap.dateRange),
@@ -279,6 +285,9 @@ function buildColumnValues(
   if (campaign.promoCode    !== undefined && colMap.promoCode)    cols[colMap.promoCode]    = campaign.promoCode;
   if (campaign.startDate    !== undefined && colMap.startDate)    cols[colMap.startDate]    = campaign.startDate;
   if (campaign.endDate      !== undefined && colMap.endDate)      cols[colMap.endDate]      = campaign.endDate;
+  if (campaign.color        !== undefined && colMap.color)        cols[colMap.color]        = campaign.color;
+  if (campaign.discount     !== undefined && colMap.discount)     cols[colMap.discount]     = campaign.discount;
+  if (campaign.offerInfo    !== undefined && colMap.offerInfo)    cols[colMap.offerInfo]    = { text: campaign.offerInfo };
   if (campaign.type      !== undefined) cols[colMap.type]      = campaign.type;
   if (campaign.month     !== undefined) cols[colMap.month]     = campaign.month;
   if (campaign.dateRange !== undefined) cols[colMap.dateRange] = campaign.dateRange;

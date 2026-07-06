@@ -8,6 +8,9 @@ export interface Campaign {
   startDate: string;  // ISO "YYYY-MM-DD"
   endDate: string;    // ISO "YYYY-MM-DD"
   dateRange: string;  // display string, computed from startDate/endDate on save
+  color: string;      // hex colour, e.g. "#1976D2"; empty = use type colour
+  discount: string;   // e.g. "15%" or "$10 off"
+  offerInfo: string;  // offer description
   revenue: number;
   orders: number;
   unitsSold: number;
@@ -22,6 +25,9 @@ export interface ColumnMap {
   promoCode: string | undefined;    // optional — column may not exist on older boards
   startDate: string | undefined;    // optional — column may not exist on older boards
   endDate: string | undefined;      // optional — column may not exist on older boards
+  color: string | undefined;        // optional — column may not exist on older boards
+  discount: string | undefined;     // optional — column may not exist on older boards
+  offerInfo: string | undefined;    // optional — column may not exist on older boards
   type: string;
   month: string;
   dateRange: string;
