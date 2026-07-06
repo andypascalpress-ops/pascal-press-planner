@@ -277,18 +277,19 @@ function computeBaselineInsights(
     });
   }
 
-  // ── BigCommerce: worst performing products ────────────────────────────────
+  // ── BigCommerce: worst performing products (last 30 days) ───────────────
   const bottomProducts: any[] = bcData?.bottomProducts ?? [];
-  if (bottomProducts.length >= 2 && bcData?.connected) {
-    const names = bottomProducts.slice(0, 3).map((p: any) => p.name).join(', ');
-    const revs  = bottomProducts.slice(0, 3).map((p: any) => fmt(p.revenue)).join(' / ');
+  if (bottomProducts.length >= 1 && bcData?.connected) {
+    const show  = bottomProducts.slice(0, 5);
+    const names = show.map((p: any) => p.name).join(', ');
+    const lines = show.map((p: any) => `${p.name} (${fmt(p.revenue)}, ${p.quantity} units)`).join(' · ');
     insights.push({
       id: 'bc-worst-products', severity: 'opportunity', category: 'bigcommerce',
-      title:   'Lowest-selling products this month need a campaign push',
-      body:    `"${names.slice(0, 100)}" are generating the least revenue this month (${revs}). A targeted discount, dedicated email, or new Google Ads ad group for these titles could significantly lift their visibility.`,
-      metric:  `Bottom ${bottomProducts.slice(0, 3).length} products · ${revs}`,
-      chatPrompt: `These BigCommerce products have the lowest revenue this month: ${names} (${revs}). What specific marketing campaigns — Google Ads ad groups, email promotions, or discount offers — would be most effective for boosting their sales? Suggest audience targeting and messaging for each.`,
-      action:  'Create targeted campaign',
+      title:   `Lowest-selling products — last 30 days`,
+      body:    `These products had the fewest sales over the last 30 days: ${lines}. A targeted email, Google Ads ad group, or limited-time discount could meaningfully lift their revenue.`,
+      metric:  `${show.length} products · bottom performers · 30 days`,
+      chatPrompt: `Our BigCommerce store's lowest-selling products in the last 30 days are: ${names}. For each one, recommend a specific marketing action — a Google Ads ad group to create, a HubSpot email segment to target, or a discount/offer to run. Include suggested ad copy or subject lines.`,
+      action:  'Plan product campaigns',
     });
   }
 
