@@ -11,6 +11,7 @@ import FinanceTab from '@/components/FinanceTab';
 import SpendModal from '@/components/SpendModal';
 import EmailTab from '@/components/EmailTab';
 import OverviewTab from '@/components/OverviewTab';
+import ActionCentreTab from '@/components/ActionCentreTab';
 
 export default function Home() {
   // ── Campaign state ──
@@ -27,6 +28,7 @@ export default function Home() {
   const [selectedFY, setSelectedFY] = useState<FYFilter>('FY26');
   const [view, setView] = useState<ViewMode>('overview');
   const [chatOpen, setChatOpen] = useState(false);
+  const [chatPrompt, setChatPrompt] = useState('');
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [lastSynced, setLastSynced] = useState<string | undefined>();
@@ -237,6 +239,13 @@ export default function Home() {
     }
   };
 
+  // ── Action Centre callbacks ──
+
+  const openChatWithPrompt = useCallback((prompt: string) => {
+    setChatPrompt(prompt);
+    setChatOpen(true);
+  }, []);
+
   // ── Modal helpers ──
 
   const openAddModal = (month?: string) => {
@@ -282,6 +291,8 @@ export default function Home() {
   const topCampaigns  = [...filteredCampaigns].sort((a, b) => (b.revenue || 0) - (a.revenue || 0)).slice(0, 3);
   const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
   const FMT = new Intl.NumberFormat('en-AU');
+
+  const isCampaignView = view !== 'finance' && view !== 'email' && view !== 'overview' && view !== 'action';
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -369,10 +380,19 @@ export default function Home() {
                 </svg>
                 <span className="hidden sm:inline">Email</span>
               </button>
+              <button
+                onClick={() => setView('action')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${view === 'action' ? 'bg-orange-500 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="7,1 9,5.5 14,6 10.5,9.5 11.5,14 7,11.5 2.5,14 3.5,9.5 0,6 5,5.5"/>
+                </svg>
+                <span className="hidden sm:inline">Actions</span>
+              </button>
             </div>
 
-            {/* Add Campaign (hidden on Finance and Email tabs) */}
-            {view !== 'finance' && view !== 'email' && view !== 'overview' && (
+            {/* Add Campaign (hidden on Finance, Email, Overview, Action tabs) */}
+            {isCampaignView && (
               <button
                 onClick={() => openAddModal()}
                 disabled={saving}
@@ -386,7 +406,7 @@ export default function Home() {
             <button
               onClick={() => {
                 if (view === 'finance') { setSpendLoading(true); fetchSpendRecords(); }
-                else if (view !== 'email') { setLoading(true); fetchCampaigns(); }
+                else if (view !== 'email' && view !== 'action') { setLoading(true); fetchCampaigns(); }
               }}
               title="Refresh data"
               className="p-1.5 text-gray-400 hover:text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
@@ -413,7 +433,7 @@ export default function Home() {
         </div>
 
         {/* ── Sub-stats bar (campaign views only) ── */}
-        {view !== 'finance' && view !== 'email' && view !== 'overview' && !loading && !error && (
+        {isCampaignView && !loading && !error && (
           <div className="flex items-center gap-5 px-6 py-2 border-t border-gray-100 text-sm text-gray-600 flex-wrap">
             <span><strong className="text-gray-900">{filteredCampaigns.length}</strong> campaigns</span>
             <span><strong className="text-gray-900">{completeCount}</strong> complete</span>
@@ -441,7 +461,7 @@ export default function Home() {
         <div className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ${chatOpen ? 'sm:mr-[420px]' : ''}`}>
 
           {/* Campaign views */}
-          {view !== 'finance' && view !== 'email' && view !== 'overview' && (
+          {isCampaignView && (
             loading ? (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center">
@@ -549,11 +569,33 @@ export default function Home() {
 
           {/* Email view */}
           {view === 'email' && <EmailTab />}
+
+          {/* Action Centre view */}
+          {view === 'action' && (
+            <ActionCentreTab
+              onNavigate={(tab) => setView(tab as ViewMode)}
+              onOpenChat={openChatWithPrompt}
+              onAddSpend={(brand) => {
+                setView('finance');
+                setTimeout(() => openAddSpendModal((brand ?? 'Pascal Press') as SpendBrand), 100);
+              }}
+              onAddCampaign={() => {
+                setView('calendar');
+                setTimeout(() => openAddModal(), 100);
+              }}
+            />
+          )}
         </div>
       </main>
 
       {/* ── Chat Panel ── */}
-      <ChatPanel isOpen={chatOpen} onClose={() => setChatOpen(false)} onCampaignCreated={fetchCampaigns} />
+      <ChatPanel
+        isOpen={chatOpen}
+        onClose={() => setChatOpen(false)}
+        onCampaignCreated={fetchCampaigns}
+        initialPrompt={chatPrompt}
+        onInitialPromptUsed={() => setChatPrompt('')}
+      />
 
       {/* ── Campaign Modal ── */}
       {modalOpen && (
@@ -578,7 +620,7 @@ export default function Home() {
       )}
 
       {/* ── Mobile FAB — Add Campaign ── */}
-      {view !== 'finance' && view !== 'email' && view !== 'overview' && (
+      {isCampaignView && (
         <button
           onClick={() => openAddModal()}
           disabled={saving}
@@ -592,23 +634,27 @@ export default function Home() {
       <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg z-30 flex items-stretch">
         <button onClick={() => setView('overview')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'overview' ? 'text-blue-600' : 'text-gray-400'}`}>
           <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="1" width="5" height="5" rx="1"/><rect x="8" y="1" width="5" height="5" rx="1"/><rect x="1" y="8" width="5" height="5" rx="1"/><rect x="8" y="8" width="5" height="5" rx="1"/></svg>
-          <span className="text-[10px] font-medium leading-none mt-0.5">Overview</span>
+          <span className="text-[9px] font-medium leading-none mt-0.5">Overview</span>
         </button>
         <button onClick={() => setView('calendar')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'calendar' ? 'text-blue-600' : 'text-gray-400'}`}>
           <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="2" width="12" height="11" rx="1.5"/><line x1="1" y1="5.5" x2="13" y2="5.5"/><line x1="4.5" y1="1" x2="4.5" y2="4"/><line x1="9.5" y1="1" x2="9.5" y2="4"/></svg>
-          <span className="text-[10px] font-medium leading-none mt-0.5">Calendar</span>
+          <span className="text-[9px] font-medium leading-none mt-0.5">Calendar</span>
         </button>
         <button onClick={() => setView('list')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'list' ? 'text-blue-600' : 'text-gray-400'}`}>
           <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="4" y1="3.5" x2="13" y2="3.5"/><line x1="4" y1="7" x2="13" y2="7"/><line x1="4" y1="10.5" x2="13" y2="10.5"/><circle cx="1.5" cy="3.5" r="0.8" fill="currentColor" stroke="none"/><circle cx="1.5" cy="7" r="0.8" fill="currentColor" stroke="none"/><circle cx="1.5" cy="10.5" r="0.8" fill="currentColor" stroke="none"/></svg>
-          <span className="text-[10px] font-medium leading-none mt-0.5">List</span>
+          <span className="text-[9px] font-medium leading-none mt-0.5">List</span>
         </button>
         <button onClick={() => setView('finance')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'finance' ? 'text-blue-600' : 'text-gray-400'}`}>
           <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="7" width="3" height="6" rx="0.5"/><rect x="5.5" y="4" width="3" height="9" rx="0.5"/><rect x="10" y="1" width="3" height="12" rx="0.5"/></svg>
-          <span className="text-[10px] font-medium leading-none mt-0.5">Finance</span>
+          <span className="text-[9px] font-medium leading-none mt-0.5">Finance</span>
         </button>
         <button onClick={() => setView('email')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'email' ? 'text-blue-600' : 'text-gray-400'}`}>
           <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="2.5" width="12" height="9" rx="1"/><polyline points="1,2.5 7,8 13,2.5"/></svg>
-          <span className="text-[10px] font-medium leading-none mt-0.5">Email</span>
+          <span className="text-[9px] font-medium leading-none mt-0.5">Email</span>
+        </button>
+        <button onClick={() => setView('action')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'action' ? 'text-orange-500' : 'text-gray-400'}`}>
+          <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="7,1 9,5.5 14,6 10.5,9.5 11.5,14 7,11.5 2.5,14 3.5,9.5 0,6 5,5.5"/></svg>
+          <span className="text-[9px] font-medium leading-none mt-0.5">Actions</span>
         </button>
       </nav>
 

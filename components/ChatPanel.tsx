@@ -7,6 +7,8 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   onCampaignCreated?: () => void;
+  initialPrompt?: string;
+  onInitialPromptUsed?: () => void;
 }
 
 const SUGGESTIONS = [
@@ -18,7 +20,7 @@ const SUGGESTIONS = [
   'Add a Sale campaign for August called PP_Winter_Sale_2026',
 ];
 
-export default function ChatPanel({ isOpen, onClose, onCampaignCreated }: Props) {
+export default function ChatPanel({ isOpen, onClose, onCampaignCreated, initialPrompt, onInitialPromptUsed }: Props) {
   const [messages, setMessages]   = useState<ChatMessage[]>([]);
   const [input,    setInput]      = useState('');
   const [loading,  setLoading]    = useState(false);
@@ -33,6 +35,15 @@ export default function ChatPanel({ isOpen, onClose, onCampaignCreated }: Props)
   useEffect(() => {
     if (isOpen) inputRef.current?.focus();
   }, [isOpen]);
+
+  // Pre-fill input when the Action Centre fires a prompt
+  useEffect(() => {
+    if (initialPrompt) {
+      setInput(initialPrompt);
+      setTimeout(() => inputRef.current?.focus(), 50);
+      onInitialPromptUsed?.();
+    }
+  }, [initialPrompt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const send = async (text: string) => {
     if (!text.trim() || loading) return;
