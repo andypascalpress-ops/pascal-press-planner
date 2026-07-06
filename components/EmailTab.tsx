@@ -401,20 +401,6 @@ export default function EmailTab() {
   const revenueMap     = buildRevenueMap(revenueData?.byCampaign ?? []);
   const gaConnected    = revenueData?.connected ?? false;
 
-  // Filter GA4 revenue campaigns by brand using campaign name prefix
-  const filterRevByBrand = (list: CampaignRevenue[]): CampaignRevenue[] => {
-    if (brandFilter === 'All') return list;
-    return list.filter(c => {
-      const n = c.campaignName.toLowerCase();
-      if (brandFilter === 'Blake Education') return n.startsWith('be_') || n.includes('blake');
-      if (brandFilter === 'Excel Test Zone') return n.startsWith('etz') || n.includes('etz');
-      // Pascal Press: pp_ prefix or not an ETZ/BE campaign
-      return !n.startsWith('etz') && !n.includes('etz') && !n.startsWith('be_') && !n.includes('blake');
-    });
-  };
-  const filteredRevCampaigns     = filterRevByBrand(revenueData?.byCampaign ?? []);
-  const filteredPrevRevCampaigns = filterRevByBrand(prevRevData?.byCampaign ?? []);
-
   const totalSends     = campaigns.reduce((s, c) => s + c.sends, 0);
   const totalDelivered = campaigns.reduce((s, c) => s + c.delivered, 0);
   const totalOpens     = campaigns.reduce((s, c) => s + c.opens, 0);
@@ -425,9 +411,50 @@ export default function EmailTab() {
   const avgOpenRate    = safeDiv(totalOpens, totalDelivered);
   const avgClickRate   = safeDiv(totalClicks, totalDelivered);
   const avgCtor        = safeDiv(totalClicks, totalOpens);
-  const totalRevenue   = filteredRevCampaigns.reduce((s, c) => s + c.revenue, 0);
-  const totalRevTx     = filteredRevCampaigns.reduce((s, c) => s + c.transactions, 0);
-  const revPerSend     = safeDiv(totalRevenue, totalSends);
+
+  // Derive brand-accurate revenue by matching filtered email campaigns to GA4 data.
+  // This avoids relying on GA4 campaign name prefixes (which aren't consistent).
+  const matchedRevByBrand = (() => {
+    if (brandFilter === 'All') {
+      return { revenue: revenueData?.totalRevenue ?? 0, tx: revenueData?.totalTx ?? 0, keys: new Set<string>() };
+    }
+    const seen = new Set<string>();
+    let revenue = 0, tx = 0;
+    for (const c of campaigns) {
+      const match = lookupRevenue(c.name, c.hsCampaignName, revenueMap);
+      if (match && !seen.has(match.campaignName)) {
+        seen.add(match.campaignName);
+        revenue += match.revenue;
+        tx += match.transactions;
+      }
+    }
+    return { revenue, tx, keys: seen };
+  })();
+
+  const totalRevenue = matchedRevByBrand.revenue;
+  const totalRevTx   = matchedRevByBrand.tx;
+  const revPerSend   = safeDiv(totalRevenue, totalSends);
+
+  // GA4 panel list — filtered to matched brand campaigns (or all if no filter)
+  const filteredRevCampaigns = brandFilter === 'All'
+    ? (revenueData?.byCampaign ?? [])
+    : (revenueData?.byCampaign ?? []).filter(c => matchedRevByBrand.keys.has(c.campaignName));
+
+  // Previous month revenue — same matching approach
+  const prevRevMap = buildRevenueMap(prevRevData?.byCampaign ?? []);
+  const prevCampaignsFiltered = brandFilter === 'All'
+    ? (prevData?.campaigns ?? [])
+    : (prevData?.campaigns ?? []).filter(c => detectBrand(c.name, c.fromName) === brandFilter);
+  const prevRevenue = (() => {
+    if (brandFilter === 'All') return prevRevData?.totalRevenue ?? 0;
+    const seen = new Set<string>();
+    let rev = 0;
+    for (const c of prevCampaignsFiltered) {
+      const match = lookupRevenue(c.name, c.hsCampaignName, prevRevMap);
+      if (match && !seen.has(match.campaignName)) { seen.add(match.campaignName); rev += match.revenue; }
+    }
+    return rev;
+  })();
 
   const prevSends      = prevData?.totalSends ?? 0;
   const prevDelivered  = (prevData?.campaigns ?? []).reduce((s, c) => s + c.delivered, 0);
@@ -435,7 +462,6 @@ export default function EmailTab() {
   const prevDelivRate  = safeDiv(prevDelivered, prevSends);
   const prevUnsubRate  = safeDiv(prevUnsubs, prevSends);
   const prevCtor       = safeDiv(prevData?.totalClicks ?? 0, prevData?.totalOpens ?? 0);
-  const prevRevenue    = filteredPrevRevCampaigns.reduce((s, c) => s + c.revenue, 0);
   const prevRevPerSend = safeDiv(prevRevenue, prevSends);
   const hasMoM         = !!selectedMonth && !!prevData?.connected;
 
