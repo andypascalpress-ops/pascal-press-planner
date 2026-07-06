@@ -356,34 +356,43 @@ function InsightCard({ insight, rank, onDismiss, onOpenChat }: {
   onOpenChat: (prompt: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const s   = SEV[insight.severity] ?? SEV.info;
-  const cat = CAT_LABELS[insight.category] ?? insight.category;
-
+  const CH: Record<string, { bg: string; text: string; border: string; bar: string; label: string }> = {
+    'google-ads':  { bg: 'bg-orange-50',  text: 'text-orange-700',  border: 'border-orange-200',  bar: 'bg-orange-500',  label: 'Google Ads'    },
+    'email':       { bg: 'bg-blue-50',    text: 'text-blue-700',    border: 'border-blue-200',    bar: 'bg-blue-500',    label: 'Email'         },
+    'bigcommerce': { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', bar: 'bg-emerald-500', label: 'BigCommerce'   },
+    'seasonal':    { bg: 'bg-purple-50',  text: 'text-purple-700',  border: 'border-purple-200',  bar: 'bg-purple-500',  label: 'Seasonal'      },
+    'band6':       { bg: 'bg-indigo-50',  text: 'text-indigo-700',  border: 'border-indigo-200',  bar: 'bg-indigo-500',  label: 'Band 6'        },
+    'budget':      { bg: 'bg-red-50',     text: 'text-red-700',     border: 'border-red-200',     bar: 'bg-red-500',     label: 'Budget'        },
+  };
+  const SEV_LEFT: Record<string, string> = {
+    critical: 'border-l-red-500', warning: 'border-l-amber-400',
+    opportunity: 'border-l-blue-500', info: 'border-l-gray-300',
+  };
+  const SEV_DOT: Record<string, string> = {
+    critical: 'bg-red-500', warning: 'bg-amber-400', opportunity: 'bg-blue-500', info: 'bg-gray-400',
+  };
+  const ch = CH[insight.category] ?? CH['budget'];
   return (
-    <div className={`bg-white rounded-xl border border-l-4 ${s.left} border-gray-200 p-4`}>
-      <div className="flex items-start gap-2 mb-2">
-        <span className="text-gray-400 font-mono text-xs font-medium mt-0.5 shrink-0">#{rank}</span>
-        <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-0">
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${s.badge}`}>
-            {insight.severity.charAt(0).toUpperCase() + insight.severity.slice(1)}
+    <div className={`bg-white rounded-xl border border-l-4 ${SEV_LEFT[insight.severity] ?? SEV_LEFT.info} border-gray-200 p-4`}>
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wide ${ch.bg} ${ch.text} ${ch.border}`}>
+            {ch.label}
           </span>
-          <span className="text-xs text-gray-500 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full font-medium">
-            {cat}
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${SEV[insight.severity]?.badge ?? ''}`}>
+            {insight.severity === 'opportunity' ? 'Opportunity' : insight.severity.charAt(0).toUpperCase() + insight.severity.slice(1)}
           </span>
         </div>
-        <button onClick={() => onDismiss(insight.id)}
-          className="text-gray-300 hover:text-gray-500 text-xl leading-none shrink-0 -mt-0.5">×</button>
+        <button onClick={() => onDismiss(insight.id)} className="text-gray-300 hover:text-gray-500 text-xl leading-none shrink-0 -mt-0.5">×</button>
       </div>
-      <h4 className="text-sm font-semibold text-gray-800 mb-2 leading-snug">{insight.title}</h4>
+      <h4 className="text-sm font-bold text-gray-900 mb-1.5 leading-snug">{insight.title}</h4>
       {insight.metric && (
-        <div className="inline-flex items-center gap-1.5 text-xs font-mono text-gray-600 bg-gray-50 border border-gray-200 rounded px-2 py-1 mb-2">
-          <span className={`w-1.5 h-1.5 rounded-full ${s.dot} shrink-0`} />
+        <div className={`inline-flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded-lg mb-2 ${ch.bg} ${ch.text}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${SEV_DOT[insight.severity] ?? 'bg-gray-400'} shrink-0`} />
           {insight.metric}
         </div>
       )}
-      <p className={`text-sm text-gray-600 leading-relaxed ${expanded ? '' : 'line-clamp-3'}`}>
-        {insight.body}
-      </p>
+      <p className={`text-sm text-gray-600 leading-relaxed ${expanded ? '' : 'line-clamp-3'}`}>{insight.body}</p>
       {insight.body.length > 180 && (
         <button onClick={() => setExpanded(v => !v)} className="text-xs text-blue-500 hover:text-blue-700 mt-1">
           {expanded ? 'Show less ↑' : 'Read more ↓'}
@@ -391,15 +400,13 @@ function InsightCard({ insight, rank, onDismiss, onOpenChat }: {
       )}
       <div className="flex items-center gap-2 mt-3 flex-wrap">
         <button onClick={() => onOpenChat(insight.chatPrompt)}
-          className="inline-flex items-center gap-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-colors">
-          <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M14 2H2a1 1 0 00-1 1v8a1 1 0 001 1h2v3l3-3h7a1 1 0 001-1V3a1 1 0 00-1-1z"/>
-          </svg>
+          className="inline-flex items-center gap-1.5 text-xs font-semibold bg-gray-900 hover:bg-gray-800 text-white px-3 py-1.5 rounded-lg transition-colors">
+          <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor"><path d="M14 2H2a1 1 0 00-1 1v8a1 1 0 001 1h2v3l3-3h7a1 1 0 001-1V3a1 1 0 00-1-1z"/></svg>
           Ask Claude
         </button>
         {insight.action && (
-          <span className="text-xs text-gray-500 bg-gray-100 border border-gray-200 px-2.5 py-1.5 rounded-lg">
-            {insight.action}
+          <span className={`text-xs font-medium px-2.5 py-1.5 rounded-lg border ${ch.bg} ${ch.text} ${ch.border}`}>
+            → {insight.action}
           </span>
         )}
       </div>
@@ -432,8 +439,11 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
   const [errorMsg,    setErrorMsg]    = useState('');
   const [sources,     setSources]     = useState<Record<string, boolean>>({});
   const [aiLabel,     setAiLabel]     = useState('');
-  const [bottomProds, setBottomProds] = useState<any[]>([]);
+  const [bottomProds,  setBottomProds]  = useState<any[]>([]);
   const [showAllWorst, setShowAllWorst]  = useState(false);
+  const [spendData,    setSpendData]    = useState<any[]>([]);
+  const [emailSnap,    setEmailSnap]    = useState<any>({});
+  const [campaignSnap, setCampaignSnap] = useState<any>({});
 
   const dismiss = useCallback((id: string) => {
     setDismissed(prev => {
@@ -481,6 +491,9 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
     };
     setSources(srcStatus);
     setBottomProds(bcRes?.bottomProducts ?? []);
+    setSpendData(Array.isArray(spendRes) ? spendRes : []);
+    setEmailSnap(emailRes ?? {});
+    setCampaignSnap(campaignsRes ?? {});
 
     // ── Step 1: compute baseline rule-based insights immediately ─────────────
     const baseline = computeBaselineInsights(spendRes, emailRes, band6Res, campaignsRes, bcRes);
@@ -533,10 +546,39 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
   const isLoading    = status === 'fetching' || status === 'analysing';
   const dismissedCnt = [...dismissed].filter(id => insights.some(i => i.id === id)).length;
 
+  // ── Derived values for dashboard sections ───────────────────────────────
+  const now          = new Date();
+  const monthName    = now.toLocaleString('en-AU', { month: 'long', timeZone: 'Australia/Sydney' });
+  const dayOfMonth   = now.getDate();
+  const daysInMonth  = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const monthPct     = (dayOfMonth / daysInMonth) * 100;
+
+  const monthRecs    = spendData.filter(r => (r.month ?? '').toLowerCase() === monthName.toLowerCase());
+  const ppSpent      = monthRecs.filter(r => r.brand === 'Pascal Press'    && (r.channel ?? '').toLowerCase().includes('google')).reduce((s, r) => s + Number(r.actualSpend ?? 0), 0);
+  const etzSpent     = monthRecs.filter(r => r.brand === 'Excel Test Zone' && (r.channel ?? '').toLowerCase().includes('google')).reduce((s, r) => s + Number(r.actualSpend ?? 0), 0);
+
+  const allEmails:  any[] = emailSnap?.campaigns ?? emailSnap?.emails ?? [];
+  const isETZMail        = (n: string) => /ETZ/i.test(n) || n.toUpperCase().startsWith('ETZ');
+  const ppMails          = allEmails.filter(e => !isETZMail(e.name ?? ''));
+  const etzMails         = allEmails.filter(e =>  isETZMail(e.name ?? ''));
+  const ppAvgOpen        = ppMails.length  ? ppMails.reduce((s, e)  => s + (e.openRate ?? 0), 0) / ppMails.length  : 0;
+  const etzAvgOpen       = etzMails.length ? etzMails.reduce((s, e) => s + (e.openRate ?? 0), 0) / etzMails.length : 0;
+
+  const bcConnected      = bottomProds.length > 0;
+  const fmtMoney         = (n: number) => `$${Math.round(n).toLocaleString('en-AU')}`;
+
+  const pacingStatus     = (spent: number, budget: number) => {
+    if (budget === 0) return 'unknown';
+    const pct = (spent / budget) * 100;
+    if (pct < monthPct - 15) return 'under';
+    if (pct > monthPct + 15) return 'over';
+    return 'on-track';
+  };
+
   return (
     <div className="flex flex-col h-full bg-gray-50 overflow-hidden">
 
-      {/* Header */}
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="bg-white border-b border-gray-200 px-4 py-3 sm:px-6 shrink-0">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -545,41 +587,23 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
                 <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
               </svg>
               Marketing Intelligence
-              {aiLabel && (
-                <span className="ml-1 text-[10px] font-medium text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">
-                  {aiLabel}
-                </span>
-              )}
+              {aiLabel && <span className="ml-1 text-[10px] font-medium text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">{aiLabel}</span>}
             </h2>
             {status === 'ready' && lastUpdated && (
               <p className="text-xs text-gray-400 mt-0.5">
                 {fmtDate(lastUpdated)} · {fmtTime(lastUpdated)}
-                {visible.length > 0 && (
-                  <span className="ml-1.5">{visible.length} item{visible.length !== 1 ? 's' : ''}</span>
-                )}
+                {visible.length > 0 && <span className="ml-1.5">{visible.length} action{visible.length !== 1 ? 's' : ''}</span>}
               </p>
             )}
             {isLoading && (
               <p className="text-xs text-blue-500 mt-0.5 animate-pulse">
-                {status === 'fetching' ? 'Loading data…' : insights.length > 0 ? 'Claude is enhancing insights…' : 'Analysing…'}
+                {status === 'fetching' ? 'Loading channel data…' : insights.length > 0 ? 'Claude is analysing your campaigns…' : 'Analysing…'}
               </p>
-            )}
-            {/* Source status pills */}
-            {Object.keys(sources).length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-1.5">
-                {Object.entries(sources).map(([name, ok]) => (
-                  <span key={name}
-                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${ok ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-500'}`}>
-                    {ok ? '✓' : '✗'} {name}
-                  </span>
-                ))}
-              </div>
             )}
           </div>
           <button onClick={refresh} disabled={isLoading}
             className="shrink-0 flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 px-2.5 py-1.5 rounded-lg disabled:opacity-50 transition-colors">
-            <svg className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`}
-              viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M14 8a6 6 0 01-6 6 6 6 0 01-6-6 6 6 0 016-6" strokeLinecap="round"/>
               <path d="M14 4V8h-4" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
@@ -588,41 +612,176 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
         </div>
       </div>
 
-      {/* Body */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 space-y-6">
+      {/* ── Body ───────────────────────────────────────────────────────────── */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 space-y-5">
 
-        {/* Loading skeletons — only shown before baseline insights are ready */}
+        {/* Loading skeletons */}
         {isLoading && insights.length === 0 && (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse shrink-0" />
-              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                Loading campaign data…
-              </span>
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Loading channel data…</span>
             </div>
             {[0, 1, 2].map(i => <SkeletonCard key={i} index={i} />)}
           </div>
         )}
 
-        {/* AI enhancing banner — shown while Claude runs after baseline is ready */}
+        {/* AI enhancing banner */}
         {status === 'analysing' && insights.length > 0 && (
           <div className="flex items-center gap-2 text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
             <svg className="w-3.5 h-3.5 animate-spin shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M14 8a6 6 0 01-6 6 6 6 0 01-6-6 6 6 0 016-6" strokeLinecap="round"/>
               <path d="M14 4V8h-4" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-                        Claude is analysing your campaigns for deeper insights…
+            Claude is analysing your campaigns for deeper insights…
           </div>
         )}
 
-        {/* Priority Actions */}
+        {/* ── Channel Health Overview ──────────────────────────────────────── */}
+        {(status === 'ready' || status === 'analysing') && (
+          <section>
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Channel Health — {monthName}</p>
+            <div className="grid grid-cols-3 gap-2">
+              {/* Google Ads */}
+              {(() => {
+                const totalSpent = ppSpent + etzSpent;
+                const totalBudget = PP_BUDGET + ETZ_BUDGET;
+                const st = totalSpent > 0 ? pacingStatus(totalSpent, totalBudget) : 'unknown';
+                const colors = st === 'on-track' ? 'bg-green-50 border-green-200 text-green-700' : st === 'under' ? 'bg-amber-50 border-amber-200 text-amber-700' : st === 'over' ? 'bg-red-50 border-red-200 text-red-700' : 'bg-gray-50 border-gray-200 text-gray-500';
+                return (
+                  <div className={`rounded-xl border p-3 ${colors}`}>
+                    <div className="text-[9px] font-bold uppercase tracking-widest opacity-60 mb-1.5">Google Ads</div>
+                    <div className="text-xl font-black leading-none mb-1">{totalSpent > 0 ? fmtMoney(totalSpent) : '—'}</div>
+                    <div className="text-[10px] opacity-75">{totalSpent > 0 ? `of ${fmtMoney(totalBudget)} · ${Math.round((totalSpent/totalBudget)*100)}%` : 'no spend data'}</div>
+                    <div className={`mt-2 text-[9px] font-bold uppercase ${st === 'on-track' ? '' : 'opacity-90'}`}>
+                      {st === 'on-track' ? '✓ On track' : st === 'under' ? '⚠ Under pace' : st === 'over' ? '⚠ Over pace' : '○ No data'}
+                    </div>
+                  </div>
+                );
+              })()}
+              {/* Email */}
+              {(() => {
+                const total = ppMails.length + etzMails.length;
+                const ok = total > 0;
+                const colors = ok ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-red-50 border-red-200 text-red-700';
+                return (
+                  <div className={`rounded-xl border p-3 ${colors}`}>
+                    <div className="text-[9px] font-bold uppercase tracking-widest opacity-60 mb-1.5">Email</div>
+                    <div className="text-xl font-black leading-none mb-1">{total}</div>
+                    <div className="text-[10px] opacity-75">campaign{total !== 1 ? 's' : ''} sent</div>
+                    <div className="mt-2 text-[9px] font-bold uppercase">
+                      {ppMails.length > 0 && etzMails.length > 0 ? '✓ Both brands' : ppMails.length > 0 ? '⚠ PP only' : etzMails.length > 0 ? '⚠ ETZ only' : '✗ None sent'}
+                    </div>
+                  </div>
+                );
+              })()}
+              {/* BigCommerce */}
+              {(() => {
+                const colors = bcConnected ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-gray-50 border-gray-200 text-gray-500';
+                return (
+                  <div className={`rounded-xl border p-3 ${colors}`}>
+                    <div className="text-[9px] font-bold uppercase tracking-widest opacity-60 mb-1.5">BigCommerce</div>
+                    <div className="text-xl font-black leading-none mb-1">{bottomProds.length > 0 ? bottomProds.length : '—'}</div>
+                    <div className="text-[10px] opacity-75">products tracked</div>
+                    <div className="mt-2 text-[9px] font-bold uppercase">
+                      {bcConnected ? '✓ Connected' : '○ No data'}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </section>
+        )}
+
+        {/* ── Google Ads Budget Pacing ─────────────────────────────────────── */}
+        {(status === 'ready' || status === 'analysing') && (
+          <section>
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Google Ads Budget Pacing</p>
+            <div className="space-y-2">
+              {([
+                { label: 'Pascal Press', spent: ppSpent, budget: PP_BUDGET, brand: 'pascal-press' },
+                { label: 'Excel Test Zone', spent: etzSpent, budget: ETZ_BUDGET, brand: 'excel-test-zone' },
+              ] as const).map(({ label, spent, budget }) => {
+                const spentPct   = budget > 0 ? Math.min((spent / budget) * 100, 100) : 0;
+                const expPct     = Math.min(monthPct, 100);
+                const st         = pacingStatus(spent, budget);
+                const barColor   = st === 'under' ? 'bg-amber-400' : st === 'over' ? 'bg-red-500' : 'bg-green-500';
+                const stLabel    = st === 'under' ? `⚠ ${fmtMoney(Math.abs(spent - (monthPct/100)*budget))} under pace` : st === 'over' ? `⚠ ${fmtMoney(spent - (monthPct/100)*budget)} over pace` : '✓ On pace';
+                const stColor    = st === 'under' ? 'text-amber-600' : st === 'over' ? 'text-red-600' : 'text-green-600';
+                return (
+                  <div key={label} className="bg-white rounded-xl border border-gray-200 p-4">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-xs font-bold text-gray-800">{label}</span>
+                      <span className={`text-[11px] font-semibold ${stColor}`}>{stLabel}</span>
+                    </div>
+                    <div className="relative h-3 bg-gray-100 rounded-full overflow-visible mb-2.5">
+                      {/* Expected pace marker */}
+                      <div className="absolute top-1/2 -translate-y-1/2 w-0.5 h-5 bg-gray-400 z-10 rounded-full" style={{ left: `${expPct}%` }}>
+                        <span className="absolute -top-5 left-1 text-[9px] text-gray-400 whitespace-nowrap">target</span>
+                      </div>
+                      <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${spentPct}%` }} />
+                    </div>
+                    <div className="flex justify-between text-[10px] text-gray-400">
+                      <span className="font-semibold text-gray-600">{fmtMoney(spent)} spent · {Math.round(spentPct)}% of budget</span>
+                      <span>Budget: {fmtMoney(budget)} · Day {dayOfMonth}/{daysInMonth}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* ── Email Performance ────────────────────────────────────────────── */}
+        {(status === 'ready' || status === 'analysing') && (
+          <section>
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Email Campaigns — {monthName}</p>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { brand: 'Pascal Press', mails: ppMails, avgOpen: ppAvgOpen, color: 'blue' },
+                { brand: 'Excel Test Zone', mails: etzMails, avgOpen: etzAvgOpen, color: 'indigo' },
+              ].map(({ brand, mails, avgOpen, color }) => {
+                const sent = mails.length > 0;
+                const openPct = (avgOpen * 100).toFixed(1);
+                const shortBrand = brand === 'Pascal Press' ? 'PP' : 'ETZ';
+                return (
+                  <div key={brand} className={`bg-white rounded-xl border ${sent ? 'border-gray-200' : 'border-red-200'} p-3`}>
+                    <div className={`text-[9px] font-bold uppercase tracking-widest mb-1.5 ${sent ? 'text-gray-400' : 'text-red-400'}`}>{shortBrand}</div>
+                    <div className={`text-xl font-black leading-none mb-0.5 ${sent ? 'text-gray-900' : 'text-red-500'}`}>{mails.length}</div>
+                    <div className="text-[10px] text-gray-400 mb-2">campaign{mails.length !== 1 ? 's' : ''} sent</div>
+                    {sent ? (
+                      <>
+                        <div className="text-xs font-semibold text-gray-700">{openPct}% avg open</div>
+                        <div className="text-[10px] text-gray-400">{(mails.reduce((s,e)=>(s+(e.sends??0)),0)).toLocaleString()} total sends</div>
+                      </>
+                    ) : (
+                      <div className="text-[10px] text-red-500 font-medium">No campaigns this month</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* Source status pills */}
+        {Object.keys(sources).length > 0 && (status === 'ready' || status === 'analysing') && (
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(sources).map(([name, ok]) => (
+              <span key={name} className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${ok ? 'bg-green-50 text-green-600 border-green-200' : 'bg-red-50 text-red-500 border-red-200'}`}>
+                {ok ? '✓' : '✗'} {name}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* ── Priority Actions (critical + warning) ────────────────────────── */}
         {critical.length > 0 && (
           <section>
-            <SectionHead count={critical.length} label="Priority Actions"
-              icon={<svg className="w-4 h-4 text-red-500 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
-              </svg>}
-            />
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+              <span className="w-2 h-2 bg-red-500 rounded-full inline-block"/>
+              Needs Attention ({critical.length})
+            </p>
             <div className="space-y-3">
               {critical.map((ins, i) => (
                 <InsightCard key={ins.id} rank={i + 1} insight={ins} onDismiss={dismiss} onOpenChat={onOpenChat} />
@@ -631,14 +790,13 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
           </section>
         )}
 
-        {/* Opportunities */}
+        {/* ── Opportunities ────────────────────────────────────────────────── */}
         {opps.length > 0 && (
           <section>
-            <SectionHead count={opps.length} label="Opportunities"
-              icon={<svg className="w-4 h-4 text-blue-500 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.298.082-.58.195-.844a3 3 0 10-4.39 0c.113.263.18.546.195.844h4z"/>
-              </svg>}
-            />
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+              <span className="w-2 h-2 bg-blue-500 rounded-full inline-block"/>
+              Opportunities ({opps.length})
+            </p>
             <div className="space-y-3">
               {opps.map((ins, i) => (
                 <InsightCard key={ins.id} rank={i + 1} insight={ins} onDismiss={dismiss} onOpenChat={onOpenChat} />
@@ -647,14 +805,13 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
           </section>
         )}
 
-        {/* Performance Notes */}
+        {/* ── Performance Notes ─────────────────────────────────────────────── */}
         {infoItems.length > 0 && (
           <section>
-            <SectionHead count={infoItems.length} label="Performance Notes"
-              icon={<svg className="w-4 h-4 text-gray-400 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"/>
-              </svg>}
-            />
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+              <span className="w-2 h-2 bg-gray-400 rounded-full inline-block"/>
+              Notes ({infoItems.length})
+            </p>
             <div className="space-y-3">
               {infoItems.map((ins, i) => (
                 <InsightCard key={ins.id} rank={i + 1} insight={ins} onDismiss={dismiss} onOpenChat={onOpenChat} />
@@ -663,19 +820,8 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
           </section>
         )}
 
-        {/* Restore dismissed */}
-        {dismissedCnt > 0 && (status === 'ready' || status === 'analysing') && (
-          <div className="text-center py-1">
-            <button onClick={restoreDismissed}
-              className="text-xs text-gray-400 hover:text-gray-600 underline">
-              Restore {dismissedCnt} dismissed item{dismissedCnt !== 1 ? 's' : ''}
-            </button>
-          </div>
-        )}
-
-        {/* Worst Performing Products — BigCommerce rolling 30 days */}
+        {/* ── Worst Performing Products — BigCommerce rolling 30 days ─────── */}
         {bottomProds.length > 0 && (() => {
-          // ── Pattern analysis ──────────────────────────────────────────────
           type PatternGroup = { label: string; count: number; names: string[] };
           const SERIES = ['Excel', 'NAPLAN', 'HSC', 'Targeting', 'Selective', 'Science', 'Maths', 'English', 'Reading', 'Writing', 'Grammar', 'History', 'Geography', 'Spelling'];
           const groupMap: Record<string, string[]> = {};
@@ -698,58 +844,55 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
 
           return (
             <section>
-              <div className="flex items-center gap-2 mb-3">
-                <svg className="w-4 h-4 text-red-400 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z" clipRule="evenodd"/>
-                </svg>
-                <h3 className="text-xs font-bold text-gray-600 uppercase tracking-wider">Worst Performing Products</h3>
-                <span className="text-xs text-gray-400 font-medium">({bottomProds.length} · last 30 days)</span>
-              </div>
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                <span className="w-2 h-2 bg-red-400 rounded-full inline-block"/>
+                Worst Performing Products — Last 30 Days ({bottomProds.length})
+              </p>
 
               {/* Pattern callouts */}
-              {patterns.length > 0 && (
+              {patterns.length > 0 ? (
                 <div className="space-y-2 mb-3">
                   {patterns.map((pg) => (
-                    <div key={pg.label} className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                      <svg className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+                    <div key={pg.label} className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                      <svg className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
                         <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
                       </svg>
-                      <div className="min-w-0">
-                        <span className="text-xs font-semibold text-amber-800">Pattern: {pg.label}</span>
-                        <span className="text-xs text-amber-700 ml-1.5">— {pg.count} products underperforming</span>
-                        <button
-                          onClick={() => onOpenChat(`Our BigCommerce data shows ${pg.count} "${pg.label}" products are among the worst performers in the last 30 days: ${pg.names.slice(0,5).join(', ')}${pg.names.length > 5 ? '...' : ''}. Is this a pricing issue, visibility issue, or seasonal pattern? What specific actions should we take to improve sales for this series?`)}
-                          className="ml-2 text-[10px] text-amber-600 underline hover:text-amber-800">
-                          Ask Claude
-                        </button>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-bold text-amber-800">Series pattern: {pg.label} — {pg.count} underperforming products</div>
+                        <div className="text-[11px] text-amber-700 mt-0.5 truncate">{pg.names.slice(0, 4).join(' · ')}</div>
                       </div>
+                      <button onClick={() => onOpenChat(`Our BigCommerce store has ${pg.count} "${pg.label}" products all underperforming in the last 30 days: ${pg.names.slice(0,5).join(', ')}. Is this a pricing issue, a visibility/SEO issue, or a seasonal pattern? What specific campaigns should we run to fix this?`)}
+                        className="shrink-0 text-[10px] font-semibold text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-2.5 py-1 rounded-lg transition-colors">
+                        Ask Claude
+                      </button>
                     </div>
                   ))}
-                  {patterns.length === 0 && bottomProds.length >= 5 && (
-                    <div className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-                      No clear series pattern — underperformance appears spread across different product lines.
-                    </div>
-                  )}
                 </div>
-              )}
-              {patterns.length === 0 && bottomProds.length >= 5 && (
-                <div className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-3">
-                  No clear series pattern detected — underperformance is spread across different product lines.
+              ) : bottomProds.length >= 5 ? (
+                <div className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 mb-3">
+                  <span className="font-semibold">No series pattern detected</span> — underperformance is spread randomly across product lines, not concentrated in one series.
                 </div>
-              )}
+              ) : null}
 
               {/* Product list */}
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 bg-gray-50">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Product Name</span>
+                  <div className="flex items-center gap-6">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Sold</span>
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide w-16 text-right">Revenue</span>
+                  </div>
+                </div>
                 {visible.map((p: any, i: number) => (
-                  <div key={p.name + i} className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 last:border-b-0">
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <span className="text-[10px] font-mono text-gray-400 w-5 shrink-0">#{i + 1}</span>
-                      <span className="text-xs text-gray-700 font-medium truncate">{p.name}</span>
+                  <div key={p.name + i} className="flex items-center justify-between px-4 py-2.5 border-b border-gray-50 last:border-b-0 hover:bg-gray-50 transition-colors">
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <span className="text-[10px] font-mono text-gray-300 w-5 shrink-0 text-right">#{i + 1}</span>
+                      <span className="text-xs text-gray-800 font-medium truncate">{p.name}</span>
                     </div>
-                    <div className="flex items-center gap-4 shrink-0 ml-3">
-                      <span className="text-[11px] text-gray-400">{p.quantity} sold</span>
-                      <span className="text-xs font-semibold text-red-500 font-mono">
-                        ${Math.round(p.revenue).toLocaleString('en-AU')}
+                    <div className="flex items-center gap-6 shrink-0 ml-3">
+                      <span className="text-xs text-gray-400 w-8 text-center">{p.quantity}</span>
+                      <span className="text-xs font-bold text-red-500 font-mono w-16 text-right">
+                        {fmtMoney(p.revenue)}
                       </span>
                     </div>
                   </div>
@@ -758,42 +901,51 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
 
               {bottomProds.length > 10 && (
                 <button onClick={() => setShowAllWorst(v => !v)}
-                  className="mt-2 text-xs text-blue-500 hover:text-blue-700 w-full text-center">
-                  {showAllWorst ? `Show less ↑` : `Show all ${bottomProds.length} products ↓`}
+                  className="mt-2.5 text-xs font-medium text-blue-500 hover:text-blue-700 w-full text-center py-1">
+                  {showAllWorst ? `↑ Show fewer` : `↓ Show all ${bottomProds.length} products`}
                 </button>
               )}
-              <p className="text-[10px] text-gray-400 mt-1.5">Rolling 30-day window · updates on refresh</p>
+              <p className="text-[10px] text-gray-400 mt-1.5">Rolling 30-day window · refreshes on each page load</p>
             </section>
           );
         })()}
 
-        {/* Quick Actions */}
+        {/* ── Restore dismissed ─────────────────────────────────────────────── */}
+        {dismissedCnt > 0 && status === 'ready' && (
+          <div className="text-center">
+            <button onClick={restoreDismissed} className="text-xs text-gray-400 hover:text-gray-600 underline">
+              Restore {dismissedCnt} dismissed item{dismissedCnt !== 1 ? 's' : ''}
+            </button>
+          </div>
+        )}
+
+        {/* ── Quick Chat Prompts ────────────────────────────────────────────── */}
         {(status === 'ready' || status === 'analysing') && (
           <section className="bg-white rounded-xl border border-gray-200 p-4">
-            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Quick Actions</h3>
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Quick Analysis</p>
             <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => onOpenChat('Give me a detailed Google Ads performance breakdown for Pascal Press and Excel Test Zone this month. List each campaign by name with ROAS, CTR, and cost. Tell me which campaigns to pause, scale, or restructure, and why.')}
-                className="text-left text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg p-2.5 transition-colors">
-                <div className="font-semibold text-gray-700 mb-0.5">🎯 Google Ads Breakdown</div>
-                <div className="text-gray-500">Campaign-by-campaign ROAS</div>
+              <button onClick={() => onOpenChat(`It is ${monthName}, day ${dayOfMonth} of ${daysInMonth}. Pascal Press Google Ads: ${fmtMoney(ppSpent)} spent of ${fmtMoney(PP_BUDGET)} budget. Excel Test Zone: ${fmtMoney(etzSpent)} of ${fmtMoney(ETZ_BUDGET)}. Expected spend at this point in month: PP ${fmtMoney((monthPct/100)*PP_BUDGET)}, ETZ ${fmtMoney((monthPct/100)*ETZ_BUDGET)}. Tell me specifically which brand needs the most urgent action, what to change in Google Ads, and give me exact budget adjustments.`)}
+                className="text-left text-xs bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-xl p-3 transition-colors">
+                <div className="font-bold text-orange-800 mb-0.5">🎯 Google Ads Plan</div>
+                <div className="text-orange-600 text-[11px]">Budget adjustments + priorities</div>
               </button>
-              <button onClick={() => onOpenChat('Analyse our HubSpot email campaigns from this month. Which subject lines worked best? Which audience segments have the highest open rate? Give me 3 concrete changes to improve open rates and click-through rates.')}
-                className="text-left text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg p-2.5 transition-colors">
-                <div className="font-semibold text-gray-700 mb-0.5">📧 Email Deep Dive</div>
-                <div className="text-gray-500">Subject lines + segments</div>
+              <button onClick={() => onOpenChat(`Pascal Press sent ${ppMails.length} email campaigns this month (avg ${(ppAvgOpen*100).toFixed(1)}% open rate). Excel Test Zone sent ${etzMails.length} (avg ${(etzAvgOpen*100).toFixed(1)}% open). It is ${monthName} — Term 3 season. What campaigns should each brand send this week? Give me subject lines, send timing, and audience for each.`)}
+                className="text-left text-xs bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl p-3 transition-colors">
+                <div className="font-bold text-blue-800 mb-0.5">📧 Email Strategy</div>
+                <div className="text-blue-600 text-[11px]">PP + ETZ campaigns to send</div>
               </button>
               <button onClick={() => {
-                const names = bottomProds.slice(0, 3).map((p: any) => p.name).join(', ');
-                onOpenChat(`Our BigCommerce worst-performing products in the last 30 days are: ${names || 'data unavailable'}. For each product recommend a specific campaign — a Google Ads ad group, a HubSpot email segment to target, or a discount offer — with suggested copy or subject lines.`);
+                const names = bottomProds.slice(0, 5).map((p: any) => p.name).join(', ');
+                onOpenChat(`Our ${bottomProds.length} worst-performing BigCommerce products in the last 30 days are: ${names || 'data loading'}. For the top 5, recommend specific actions: (1) a Google Ads ad group with keywords and bid type, (2) a HubSpot email segment and subject line, or (3) a discount offer. Be specific with numbers.`);
               }}
-                className="text-left text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg p-2.5 transition-colors">
-                <div className="font-semibold text-gray-700 mb-0.5">🛒 Product Campaigns</div>
-                <div className="text-gray-500">Get campaign ideas for worst sellers</div>
+                className="text-left text-xs bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl p-3 transition-colors">
+                <div className="font-bold text-emerald-800 mb-0.5">🛒 Product Campaigns</div>
+                <div className="text-emerald-600 text-[11px]">Boost worst sellers with ads</div>
               </button>
               <button onClick={() => onNavigate('calendar')}
-                className="text-left text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg p-2.5 transition-colors">
-                <div className="font-semibold text-gray-700 mb-0.5">📅 Campaign Calendar</div>
-                <div className="text-gray-500">View & plan campaigns</div>
+                className="text-left text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl p-3 transition-colors">
+                <div className="font-bold text-gray-700 mb-0.5">📅 Campaign Calendar</div>
+                <div className="text-gray-500 text-[11px]">View &amp; plan all campaigns</div>
               </button>
             </div>
           </section>
