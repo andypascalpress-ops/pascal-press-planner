@@ -92,9 +92,24 @@ function toAESTYearMonth(publishDate: string | number | undefined | null): strin
     ts = new Date(publishDate).getTime();
   }
   if (isNaN(ts)) return '';
-  // Shift to AEST (UTC+10) then read UTC fields to get the local AEST date
   const d = new Date(ts + 10 * 60 * 60 * 1000);
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Convert a HubSpot publishDate to "YYYY-MM-DD" in AEST. Returns '' if unparseable. */
+function toAESTDate(publishDate: string | number | undefined | null): string {
+  if (publishDate == null) return '';
+  let ts: number;
+  if (typeof publishDate === 'number') {
+    ts = publishDate;
+  } else if (/^\d{10,}$/.test(publishDate)) {
+    ts = parseInt(publishDate, 10);
+  } else {
+    ts = new Date(publishDate).getTime();
+  }
+  if (isNaN(ts)) return '';
+  const d = new Date(ts + 10 * 60 * 60 * 1000);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
 
 // ─── API calls ───────────────────────────────────────────────────────────────
@@ -187,7 +202,10 @@ async function fetchStatsForRows(
  * Fetch all sent marketing email campaigns, optionally filtered to a YYYY-MM month.
  * Statistics are fetched via the v1 email campaigns API (counters endpoint).
  */
-export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary> {
+export async function fetchEmailCampaigns(
+  month?: string,
+  options?: { dateRange?: { start: string; end: string } },
+): Promise<EmailSummary> {
   if (!process.env.HUBSPOT_API_KEY) {
     return {
       campaigns:   [], connected: false, statsLoaded: false,
@@ -196,16 +214,26 @@ export async function fetchEmailCampaigns(month?: string): Promise<EmailSummary>
     };
   }
 
+  const dr = options?.dateRange;
+
   try {
-    // Step 1: fetch PUBLISHED email list with early-exit when month is specified.
-    // Emails are sorted newest-first (-publishDate), so once we see a row from
-    // before the target month we can stop paginating.
+    // Step 1: fetch PUBLISHED email list with early-exit when a filter is specified.
+    // Emails are sorted newest-first (-publishDate).
     let after: string | undefined;
     const allRows: HsEmailRow[] = [];
     do {
       const page = await fetchEmailPage(after);
       const rows = page.results;
-      if (month) {
+      if (dr) {
+        // Date-range mode: include rows whose AEST date falls within [start, end]
+        for (const r of rows) {
+          const d = toAESTDate(r.publishDate);
+          if (d >= dr.start && d <= dr.end) allRows.push(r);
+        }
+        // Early exit: stop once the last row in this page is older than our start
+        const lastDate = toAESTDate(rows[rows.length - 1]?.publishDate);
+        if (lastDate && lastDate < dr.start) break;
+      } else if (month) {
         for (const r of rows) {
           if (toAESTYearMonth(r.publishDate) === month) allRows.push(r);
         }

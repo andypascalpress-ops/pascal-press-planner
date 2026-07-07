@@ -80,13 +80,16 @@ interface BCCustomer {
   date_created: string;
 }
 
-export async function fetchPPRevenue(month: string): Promise<RevenueData> {
+export async function fetchPPRevenue(
+  month: string,
+  dateRange?: { start: string; end: string },
+): Promise<RevenueData> {
   if (!STORE_HASH || !ACCESS_TOKEN) {
     return { totalRevenue: 0, googlePaidRevenue: 0, googleOrganicRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'bigcommerce', connected: false };
   }
 
   try {
-    const { start, end } = monthRange(month);
+    const { start, end } = dateRange ?? monthRange(month);
 
     // Use AEST (UTC+10) to match BigCommerce dashboard date range.
     const orders = await fetchAllPages<BCOrder>('/orders', {

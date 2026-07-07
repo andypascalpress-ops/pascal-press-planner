@@ -34,6 +34,13 @@ function monthUnixRange(month: string): { gte: number; lte: number } {
   };
 }
 
+function dateRangeUnix(start: string, end: string): { gte: number; lte: number } {
+  return {
+    gte: Math.floor(new Date(`${start}T00:00:00Z`).getTime() / 1000),
+    lte: Math.floor(new Date(`${end}T23:59:59Z`).getTime()   / 1000),
+  };
+}
+
 interface StripeChargeExpanded {
   id: string;
   amount: number;
@@ -60,7 +67,7 @@ async function hasPriorCharge(customerId: string, beforeUnix: number): Promise<b
 
 export async function fetchETZStripeRevenue(
   month: string,
-  options?: { accurate?: boolean },
+  options?: { accurate?: boolean; dateRange?: { start: string; end: string } },
 ): Promise<RevenueData> {
   // accurate defaults to true (exact new/returning via prior-charge lookup)
   const accurate = options?.accurate !== false;
@@ -70,7 +77,9 @@ export async function fetchETZStripeRevenue(
   }
 
   try {
-    const { gte, lte } = monthUnixRange(month);
+    const { gte, lte } = options?.dateRange
+      ? dateRangeUnix(options.dateRange.start, options.dateRange.end)
+      : monthUnixRange(month);
 
     let totalCents  = 0;
     let totalOrders = 0;

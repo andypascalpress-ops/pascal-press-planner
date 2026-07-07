@@ -102,9 +102,9 @@ export async function GET(request: Request) {
             ? fetchMonthlySpend(etzCfg, startDate, endDate)
             : fetchMonthlySpend(ppCfg,  startDate, endDate, { contains: 'ETZ' }))
         : noAds(),
-      fetchPPRevenue(month),
-      fetchETZStripeRevenue(month),
-      fetchEmailCampaigns(month),
+      fetchPPRevenue(month, { start: startDate, end: endDate }),
+      fetchETZStripeRevenue(month, { dateRange: { start: startDate, end: endDate } }),
+      fetchEmailCampaigns(month, { dateRange: { start: startDate, end: endDate } }),
     ]);
 
   const ppSpend  = ppAdsResult.status  === 'fulfilled'

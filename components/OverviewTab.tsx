@@ -398,15 +398,6 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
           ))}
         </div>
 
-        {/* Non-monthly range note */}
-        {!isMonthly && (
-          <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm.75 3.5a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM7.25 7a.75.75 0 011.5 0v4a.75.75 0 01-1.5 0V7z"/>
-            </svg>
-            Google Ads spend reflects the selected period. Revenue and email data are always shown monthly.
-          </div>
-        )}
 
         {/* ── Alerts ── */}
         {visibleAlerts.length > 0 && (
