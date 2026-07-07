@@ -46,19 +46,17 @@ function monthRange(month: string): { start: string; end: string } {
 
 /** Convert YYYY-MM-DD to RFC 2822 format with AEST offset — required by BigCommerce v2 API */
 function toRFC2822(dateStr: string, endOfDay = false): string {
-  const DAYS  = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const DAYS   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  // Parse as AEST (UTC+10) by treating the date as local midnight in UTC+10
   const [year, mon, day] = dateStr.split('-').map(Number);
-  // Create date at AEST midnight: subtract 10h to get UTC equivalent
-  const utcMs = Date.UTC(year!, mon! - 1, day!) - 10 * 60 * 60 * 1000;
-  const d = new Date(utcMs);
+  // Use UTC noon to reliably get the correct day-of-week for the given calendar date
+  const d   = new Date(Date.UTC(year!, mon! - 1, day!, 12, 0, 0));
   const dow = DAYS[d.getUTCDay()]!;
-  const dd  = String(d.getUTCDate()).padStart(2, '0');
-  const mmm = MONTHS[d.getUTCMonth()]!;
-  const yyyy = d.getUTCFullYear();
+  const dd  = String(day!).padStart(2, '0');
+  const mmm = MONTHS[mon! - 1]!;
   const time = endOfDay ? '23:59:59' : '00:00:00';
-  return `${dow}, ${dd} ${mmm} ${yyyy} ${time} +1000`;
+  // +1000 tells BigCommerce this datetime is in AEST (UTC+10)
+  return `${dow}, ${dd} ${mmm} ${year} ${time} +1000`;
 }
 
 async function fetchAllPages<T>(path: string, params: Record<string, string>): Promise<T[]> {
