@@ -13,6 +13,7 @@ interface BrandData {
   orders:       number;
   revConnected: boolean;
   adsConnected: boolean;
+  adsError?:    string | null;
 }
 
 interface OverviewData {
@@ -104,12 +105,14 @@ function KpiCard({ label, value, sub, valueClass = '' }: {
   );
 }
 
-function BudgetBar({ spend, budget, dayPct }: { spend: number; budget: number; dayPct: number }) {
+function BudgetBar({ spend, budget, dayPct, isMonthly = true }: {
+  spend: number; budget: number; dayPct: number; isMonthly?: boolean;
+}) {
   const spendPct = budget > 0 ? Math.min(spend / budget, 1.05) : 0;
   const barColor = budgetBarColor(spend / (budget || 1));
 
-  // Projected end-of-month spend — only meaningful after day 2 (dayPct > ~0.05)
-  const projected = dayPct > 0.05 && spend > 0 ? spend / dayPct : null;
+  // Projected end-of-month spend — only meaningful for monthly views after day 2
+  const projected = isMonthly && dayPct > 0.05 && spend > 0 ? spend / dayPct : null;
   const projPct   = projected && budget > 0 ? projected / budget : null;
   const projClass = projPct == null ? ''
     : projPct > 1.1  ? 'text-red-600 font-medium'
@@ -126,10 +129,10 @@ function BudgetBar({ spend, budget, dayPct }: { spend: number; budget: number; d
     <div className="space-y-1">
       <div className="flex justify-between text-xs text-gray-500">
         <span>{AUD.format(spend)} spent</span>
-        <span>{AUD.format(budget)} budget</span>
+        <span>{AUD.format(budget)} monthly budget</span>
       </div>
       <div className="relative h-2 bg-gray-100 rounded-full overflow-hidden">
-        {/* Ghost bar — projected month-end spend */}
+        {/* Ghost bar — projected month-end spend (monthly view only) */}
         {projPct != null && (
           <div
             className="absolute h-full rounded-full bg-gray-300 opacity-40"
@@ -141,18 +144,23 @@ function BudgetBar({ spend, budget, dayPct }: { spend: number; budget: number; d
           className={`h-full rounded-full transition-all ${barColor}`}
           style={{ width: `${Math.min(spendPct * 100, 100)}%` }}
         />
-        {/* Day marker */}
-        <div
-          className="absolute top-0 bottom-0 w-0.5 bg-gray-400 opacity-60"
-          style={{ left: `${dayPct * 100}%` }}
-          title={`${Math.round(dayPct * 100)}% through month`}
-        />
+        {/* Day marker — only for monthly view */}
+        {isMonthly && (
+          <div
+            className="absolute top-0 bottom-0 w-0.5 bg-gray-400 opacity-60"
+            style={{ left: `${dayPct * 100}%` }}
+            title={`${Math.round(dayPct * 100)}% through month`}
+          />
+        )}
       </div>
       <div className="flex justify-between text-xs">
         <span className={budget > 0 && spend / budget > 1.0 ? 'text-red-600 font-medium' : 'text-gray-500'}>
-          {budget > 0 ? PCT(spend / budget) : '—'} used
+          {budget > 0 ? PCT(spend / budget) : '—'} of monthly budget
         </span>
-        <span className="text-gray-400">{Math.round(dayPct * 100)}% of month elapsed</span>
+        {isMonthly
+          ? <span className="text-gray-400">{Math.round(dayPct * 100)}% of month elapsed</span>
+          : <span className="text-gray-400">monthly budget {AUD.format(budget)}</span>
+        }
       </div>
       {projected != null && (
         <div className="flex items-center gap-1.5 text-xs pt-0.5">
@@ -164,10 +172,11 @@ function BudgetBar({ spend, budget, dayPct }: { spend: number; budget: number; d
   );
 }
 
-function BrandCard({ name, data, dayPct, onNavigate }: {
+function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
   name: string;
   data: BrandData;
   dayPct: number;
+  isMonthly: boolean;
   onNavigate: () => void;
 }) {
   const tagColor = name === 'Pascal Press' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700';
@@ -202,9 +211,12 @@ function BrandCard({ name, data, dayPct, onNavigate }: {
 
       {/* Budget bar */}
       {data.adsConnected ? (
-        <BudgetBar spend={data.spend} budget={data.budget} dayPct={dayPct} />
+        <BudgetBar spend={data.spend} budget={data.budget} dayPct={dayPct} isMonthly={isMonthly} />
       ) : (
-        <div className="text-xs text-gray-400 italic">Google Ads not connected</div>
+        <div className="text-xs text-gray-400 italic">
+          Google Ads not connected
+          {data.adsError && <p className="text-[10px] text-red-400 font-mono mt-0.5 break-all">{data.adsError}</p>}
+        </div>
       )}
     </div>
   );
@@ -471,8 +483,8 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
 
         {/* ── Brand cards ── */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <BrandCard name="Pascal Press"    data={pp}  dayPct={dayPct} onNavigate={() => onNavigate('finance')} />
-          <BrandCard name="Excel Test Zone" data={etz} dayPct={dayPct} onNavigate={() => onNavigate('finance')} />
+          <BrandCard name="Pascal Press"    data={pp}  dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
+          <BrandCard name="Excel Test Zone" data={etz} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
         </div>
 
         {/* ── Band 6 Tracker ── */}

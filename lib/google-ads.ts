@@ -74,7 +74,7 @@ async function getAccessToken(cfg: GoogleAdsConfig): Promise<string> {
 // ─── GAQL search ──────────────────────────────────────────────────────────────
 
 interface GaqlRow {
-  segments?: { month?: string };
+  segments?: { month?: string; date?: string };
   campaign?: { name?: string; status?: string };
   adGroup?:  { name?: string; status?: string };
   metrics?: {
@@ -146,15 +146,17 @@ export async function fetchMonthlySpend(
     }
   }
 
+  // Use segments.date (not segments.month) — some account types reject segments.month
+  // on short date ranges. Aggregate by month manually in code instead.
   const query = `
     SELECT
-      segments.month,
+      segments.date,
       metrics.cost_micros,
       metrics.conversions_value
     FROM campaign
     WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
     ${nameClause}
-    ORDER BY segments.month
+    ORDER BY segments.date
   `;
 
   const rows = await gaqlSearch(cfg, accessToken, query);
@@ -163,9 +165,9 @@ export async function fetchMonthlySpend(
   const byMonth: Record<string, { spend: number; revenue: number }> = {};
 
   for (const row of rows) {
-    // segments.month is returned as 'YYYY-MM-DD' (first day of month)
-    const raw = row.segments?.month ?? '';
-    const monthKey = raw.slice(5, 7); // '2026-01-01' → '01'
+    // segments.date is returned as 'YYYY-MM-DD'
+    const raw = row.segments?.date ?? '';
+    const monthKey = raw.slice(5, 7); // '2026-07-07' → '07'
     const monthName = MONTH_NAMES[monthKey];
     if (!monthName) continue;
 
