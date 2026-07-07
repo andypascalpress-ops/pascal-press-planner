@@ -9,18 +9,26 @@ interface Props {
   campaigns: Campaign[];
   selectedFY: string;
   onEdit: (campaign: Campaign) => void;
-  onAddForMonth: (month: string) => void;
+  onAddForMonth: (month: string, brand?: string) => void;
   onDelete: (id: string) => void;
 }
 
 type CalMode = 'cards' | 'grid';
+type BrandFilter = 'All Brands' | 'Pascal Press' | 'Excel Test Zone';
+
+const BRAND_TABS: BrandFilter[] = ['All Brands', 'Pascal Press', 'Excel Test Zone'];
 
 export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMonth, onDelete }: Props) {
-  const [selectedType, setSelectedType] = useState<string | null>(null);
-  const [calMode, setCalMode] = useState<CalMode>('grid');
+  const [selectedType,  setSelectedType]  = useState<string | null>(null);
+  const [calMode,       setCalMode]       = useState<CalMode>('grid');
+  const [selectedBrand, setSelectedBrand] = useState<BrandFilter>('All Brands');
   const months = FY_MONTHS;
 
-  const visibleCampaigns = selectedType ? campaigns.filter(c => c.type === selectedType) : campaigns;
+  const brandFiltered   = selectedBrand === 'All Brands' ? campaigns : campaigns.filter(c => c.brand === selectedBrand);
+  const visibleCampaigns = selectedType ? brandFiltered.filter(c => c.type === selectedType) : brandFiltered;
+
+  const addForMonth = (month: string) =>
+    onAddForMonth(month, selectedBrand === 'All Brands' ? undefined : selectedBrand);
 
   const campaignsByMonth: Record<string, Campaign[]> = {};
   for (const m of months) campaignsByMonth[m] = [];
@@ -34,6 +42,25 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
 
   return (
     <div className="flex-1 overflow-y-auto flex flex-col">
+      {/* Brand tabs */}
+      <div className="flex items-center gap-1 px-6 py-2 bg-white border-b border-gray-100 shrink-0">
+        {BRAND_TABS.map(b => (
+          <button
+            key={b}
+            onClick={() => setSelectedBrand(b)}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+              selectedBrand === b
+                ? b === 'Pascal Press'     ? 'bg-blue-600 text-white'
+                : b === 'Excel Test Zone'  ? 'bg-orange-500 text-white'
+                :                           'bg-gray-800 text-white'
+                : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'
+            }`}
+          >
+            {b}
+          </button>
+        ))}
+      </div>
+
       {/* Summary + mode toggle bar */}
       <div className="flex items-center justify-between px-6 py-3 bg-white border-b border-gray-200 text-sm text-gray-600 shrink-0">
         <div className="flex items-center gap-5 flex-wrap">
@@ -99,7 +126,7 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
         <CampaignCalendarGrid
           campaigns={visibleCampaigns}
           onEdit={onEdit}
-          onAddForMonth={onAddForMonth}
+          onAddForMonth={addForMonth}
         />
       )}
 
@@ -124,7 +151,7 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
                       )}
                     </div>
                     <button
-                      onClick={() => onAddForMonth(month)}
+                      onClick={() => addForMonth(month)}
                       className="w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 hover:bg-blue-100 hover:text-blue-600 text-gray-400 text-lg leading-none transition-colors"
                       title={`Add campaign for ${month}`}
                     >

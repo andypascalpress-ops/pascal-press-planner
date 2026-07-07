@@ -252,9 +252,10 @@ export default function Home() {
 
   // ── Modal helpers ──
 
-  const openAddModal = (month?: string) => {
+  const openAddModal = (month?: string, brand?: string) => {
     setEditingCampaign(null);
     setDefaultMonth(month);
+    setDefaultSpendBrand(brand as SpendBrand | undefined);
     setModalOpen(true);
   };
 
@@ -267,6 +268,7 @@ export default function Home() {
   const closeModal = () => {
     setModalOpen(false);
     setEditingCampaign(null);
+    setDefaultSpendBrand(undefined);
     setDefaultMonth(undefined);
   };
 
