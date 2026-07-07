@@ -44,6 +44,23 @@ function monthRange(month: string): { start: string; end: string } {
   };
 }
 
+/** Convert YYYY-MM-DD to RFC 2822 format with AEST offset — required by BigCommerce v2 API */
+function toRFC2822(dateStr: string, endOfDay = false): string {
+  const DAYS  = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  // Parse as AEST (UTC+10) by treating the date as local midnight in UTC+10
+  const [year, mon, day] = dateStr.split('-').map(Number);
+  // Create date at AEST midnight: subtract 10h to get UTC equivalent
+  const utcMs = Date.UTC(year!, mon! - 1, day!) - 10 * 60 * 60 * 1000;
+  const d = new Date(utcMs);
+  const dow = DAYS[d.getUTCDay()]!;
+  const dd  = String(d.getUTCDate()).padStart(2, '0');
+  const mmm = MONTHS[d.getUTCMonth()]!;
+  const yyyy = d.getUTCFullYear();
+  const time = endOfDay ? '23:59:59' : '00:00:00';
+  return `${dow}, ${dd} ${mmm} ${yyyy} ${time} +1000`;
+}
+
 async function fetchAllPages<T>(path: string, params: Record<string, string>): Promise<T[]> {
   const results: T[] = [];
   let page = 1;
@@ -91,10 +108,10 @@ export async function fetchPPRevenue(
   try {
     const { start, end } = dateRange ?? monthRange(month);
 
-    // Use AEST (UTC+10) to match BigCommerce dashboard date range.
+    // BigCommerce v2 requires RFC 2822 date format for date filters.
     const orders = await fetchAllPages<BCOrder>('/orders', {
-      min_date_created: `${start}T00:00:00+10:00`,
-      max_date_created: `${end}T23:59:59+10:00`,
+      min_date_created: toRFC2822(start),
+      max_date_created: toRFC2822(end, true),
     });
 
     // Exclude statuses that BC's revenue dashboard doesn't count.

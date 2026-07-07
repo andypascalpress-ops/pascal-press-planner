@@ -60,11 +60,16 @@ function toAESTDateStr(d: Date): string {
   return aest.toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
+/** BigCommerce v2 requires RFC 2822 format for date filter params */
 function bcDateParam(dateStr: string, endOfDay = false): string {
-  const dt = endOfDay
-    ? `${dateStr}T23:59:59+10:00`
-    : `${dateStr}T00:00:00+10:00`;
-  return encodeURIComponent(dt);
+  const DAYS   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const [year, mon, day] = dateStr.split('-').map(Number);
+  const utcMs = Date.UTC(year!, mon! - 1, day!) - 10 * 60 * 60 * 1000;
+  const d = new Date(utcMs);
+  const time = endOfDay ? '23:59:59' : '00:00:00';
+  const rfc = `${DAYS[d.getUTCDay()]}, ${String(d.getUTCDate()).padStart(2, '0')} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} ${time} +1000`;
+  return encodeURIComponent(rfc);
 }
 
 async function fetchProductsForPeriod(
