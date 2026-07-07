@@ -22,6 +22,7 @@ interface OverviewData {
   currentDay:   number;
   pp:           BrandData;
   etz:          BrandData;
+  hsc:          BrandData;
   combined: {
     spend:   number;
     revenue: number;
@@ -367,7 +368,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
     );
   }
 
-  const { month, daysInMonth, currentDay, pp, etz, combined, email, alerts, rangeLabel, isMonthly } = data;
+  const { month, daysInMonth, currentDay, pp, etz, hsc, combined, email, alerts, rangeLabel, isMonthly } = data;
   const dayPct = currentDay / daysInMonth;
   const visibleAlerts = alerts.filter(a => !dismissed.has(a.id));
 
@@ -459,13 +460,13 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
           <KpiCard
             label="Total Revenue"
             value={AUD.format(combined.revenue)}
-            sub="PP + ETZ this month"
+            sub="PP + ETZ + HSC this month"
             valueClass="text-emerald-700"
           />
           <KpiCard
             label="Total Ad Spend"
             value={AUD.format(combined.spend)}
-            sub={`of ${AUD.format((pp.budget + etz.budget))} budget`}
+            sub={`of ${AUD.format((pp.budget + etz.budget + hsc.budget))} budget`}
           />
           <KpiCard
             label="Combined ROAS"
@@ -483,8 +484,9 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
 
         {/* ── Brand cards ── */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <BrandCard name="Pascal Press"    data={pp}  dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
-          <BrandCard name="Excel Test Zone" data={etz} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
+          <BrandCard name="Pascal Press"      data={pp}  dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
+          <BrandCard name="Excel Test Zone"   data={etz} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
+          <BrandCard name="Excel HSC Copilot" data={hsc} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
         </div>
 
         {/* ── Band 6 Tracker ── */}

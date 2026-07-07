@@ -8,7 +8,7 @@
 import { NextResponse } from 'next/server';
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
 import { fetchPPRevenue } from '@/lib/bigcommerce-revenue';
-import { fetchETZStripeRevenue } from '@/lib/stripe-revenue';
+import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-revenue';
 import { fetchEmailCampaigns } from '@/lib/hubspot-email';
 import { MONTHLY_GOOGLE_BUDGETS } from '@/lib/constants';
 import { OverviewAlert } from '@/lib/types';
@@ -84,15 +84,16 @@ export async function GET(request: Request) {
   const rangeParam = (searchParams.get('range') ?? 'mtd') as RangeParam;
   const { startDate, endDate, month, daysInMonth, currentDay, rangeLabel, isMonthly } = deriveRange(rangeParam);
 
-  let ppCfg, etzCfg;
+  let ppCfg, etzCfg, hscCfg;
   try { ppCfg  = buildConfig('pp');  } catch (e) { console.error('[overview] buildConfig(pp) failed:', e);  }
   try { etzCfg = buildConfig('etz'); } catch (e) { console.error('[overview] buildConfig(etz) failed:', e); }
+  try { hscCfg = buildConfig('hsc'); } catch (e) { console.error('[overview] buildConfig(hsc) failed:', e); }
 
   const useOwnEtzAccount = month >= ETZ_START_MONTH;
 
   const noAds = () => Promise.reject(new Error('Google Ads config missing'));
 
-  const [ppAdsResult, etzAdsResult, ppRevResult, etzRevResult, emailResult] =
+  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, emailResult] =
     await Promise.allSettled([
       ppCfg
         ? fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' })
@@ -102,8 +103,12 @@ export async function GET(request: Request) {
             ? fetchMonthlySpend(etzCfg, startDate, endDate)
             : fetchMonthlySpend(ppCfg,  startDate, endDate, { contains: 'ETZ' }))
         : noAds(),
+      hscCfg
+        ? fetchMonthlySpend(hscCfg, startDate, endDate)
+        : noAds(),
       fetchPPRevenue(month, { start: startDate, end: endDate }),
       fetchETZStripeRevenue(month, { dateRange: { start: startDate, end: endDate } }),
+      fetchHSCStripeRevenue(month, { dateRange: { start: startDate, end: endDate } }),
       fetchEmailCampaigns(month, { dateRange: { start: startDate, end: endDate } }),
     ]);
 
@@ -111,21 +116,27 @@ export async function GET(request: Request) {
     ? ppAdsResult.value.reduce( (s, r) => s + r.actualSpend, 0) : 0;
   const etzSpend = etzAdsResult.status === 'fulfilled'
     ? etzAdsResult.value.reduce((s, r) => s + r.actualSpend, 0) : 0;
+  const hscSpend = hscAdsResult.status === 'fulfilled'
+    ? hscAdsResult.value.reduce((s, r) => s + r.actualSpend, 0) : 0;
 
   const ppRev  = ppRevResult.status  === 'fulfilled' ? ppRevResult.value  : null;
   const etzRev = etzRevResult.status === 'fulfilled' ? etzRevResult.value : null;
+  const hscRev = hscRevResult.status === 'fulfilled' ? hscRevResult.value : null;
   const email  = emailResult.status  === 'fulfilled' ? emailResult.value  : null;
 
   const ppRevenue  = ppRev?.totalRevenue  ?? 0;
   const etzRevenue = etzRev?.totalRevenue ?? 0;
+  const hscRevenue = hscRev?.totalRevenue ?? 0;
 
-  const ppBudget  = MONTHLY_GOOGLE_BUDGETS['Pascal Press']    ?? 0;
-  const etzBudget = MONTHLY_GOOGLE_BUDGETS['Excel Test Zone'] ?? 0;
+  const ppBudget  = MONTHLY_GOOGLE_BUDGETS['Pascal Press']      ?? 0;
+  const etzBudget = MONTHLY_GOOGLE_BUDGETS['Excel Test Zone']   ?? 0;
+  const hscBudget = MONTHLY_GOOGLE_BUDGETS['Excel HSC Copilot'] ?? 0;
 
   const ppRoas  = ppSpend  > 0 ? Math.round((ppRevenue  / ppSpend)  * 10) / 10 : 0;
   const etzRoas = etzSpend > 0 ? Math.round((etzRevenue / etzSpend) * 10) / 10 : 0;
-  const combinedRoas = (ppSpend + etzSpend) > 0
-    ? Math.round(((ppRevenue + etzRevenue) / (ppSpend + etzSpend)) * 10) / 10
+  const hscRoas = hscSpend > 0 ? Math.round((hscRevenue / hscSpend) * 10) / 10 : 0;
+  const combinedRoas = (ppSpend + etzSpend + hscSpend) > 0
+    ? Math.round(((ppRevenue + etzRevenue + hscRevenue) / (ppSpend + etzSpend + hscSpend)) * 10) / 10
     : 0;
 
   // Fraction of month elapsed
@@ -165,6 +176,22 @@ export async function GET(request: Request) {
       message: `Excel Test Zone is overpacing — ${Math.round(etzSpendPct * 100)}% budget used vs ${Math.round(dayPct * 100)}% through the month.` });
   }
 
+  // ── Excel HSC Copilot budget alerts ───────────────────────────────────────
+  const hscSpendPct = hscBudget > 0 ? hscSpend / hscBudget : 0;
+  if (hscSpendPct > 1.0) {
+    alerts.push({ id: 'hsc-over', severity: 'danger', brand: 'Excel HSC Copilot',
+      message: `Excel HSC Copilot is over budget — ${Math.round(hscSpendPct * 100)}% of the $${hscBudget.toLocaleString()} monthly budget used.` });
+  } else if (hscSpendPct > 0.85) {
+    alerts.push({ id: 'hsc-near', severity: 'warning', brand: 'Excel HSC Copilot',
+      message: `Excel HSC Copilot is at ${Math.round(hscSpendPct * 100)}% of budget with ${daysInMonth - currentDay} days remaining.` });
+  } else if (currentDay > 7 && hscSpendPct < dayPct - 0.20) {
+    alerts.push({ id: 'hsc-under', severity: 'info', brand: 'Excel HSC Copilot',
+      message: `Excel HSC Copilot is underpacing — ${Math.round(hscSpendPct * 100)}% budget used vs ${Math.round(dayPct * 100)}% through the month.` });
+  } else if (hscSpendPct > dayPct + 0.20) {
+    alerts.push({ id: 'hsc-fast', severity: 'warning', brand: 'Excel HSC Copilot',
+      message: `Excel HSC Copilot is overpacing — ${Math.round(hscSpendPct * 100)}% budget used vs ${Math.round(dayPct * 100)}% through the month.` });
+  }
+
   // ── ROAS alerts ────────────────────────────────────────────────────────────
   if (ppSpend > 100 && ppRoas < 3) {
     alerts.push({ id: 'pp-roas', severity: 'warning', brand: 'Pascal Press',
@@ -186,8 +213,10 @@ export async function GET(request: Request) {
   // Debug: surface rejection reasons so we can diagnose Google Ads failures
   const ppAdsError  = ppAdsResult.status  === 'rejected' ? String(ppAdsResult.reason)  : null;
   const etzAdsError = etzAdsResult.status === 'rejected' ? String(etzAdsResult.reason) : null;
+  const hscAdsError = hscAdsResult.status === 'rejected' ? String(hscAdsResult.reason) : null;
   if (ppAdsError)  console.error('[overview] PP Google Ads error:',  ppAdsError);
   if (etzAdsError) console.error('[overview] ETZ Google Ads error:', etzAdsError);
+  if (hscAdsError) console.error('[overview] HSC Google Ads error:', hscAdsError);
 
   return NextResponse.json({
     month,
@@ -215,9 +244,19 @@ export async function GET(request: Request) {
       adsConnected: etzAdsResult.status === 'fulfilled',
       adsError:     etzAdsError,
     },
+    hsc: {
+      spend:        Math.round(hscSpend * 100) / 100,
+      budget:       hscBudget,
+      revenue:      Math.round(hscRevenue * 100) / 100,
+      roas:         hscRoas,
+      orders:       hscRev?.totalOrders ?? 0,
+      revConnected: hscRev?.connected   ?? false,
+      adsConnected: hscAdsResult.status === 'fulfilled',
+      adsError:     hscAdsError,
+    },
     combined: {
-      spend:   Math.round((ppSpend   + etzSpend)   * 100) / 100,
-      revenue: Math.round((ppRevenue + etzRevenue) * 100) / 100,
+      spend:   Math.round((ppSpend   + etzSpend   + hscSpend)   * 100) / 100,
+      revenue: Math.round((ppRevenue + etzRevenue + hscRevenue) * 100) / 100,
       roas:    combinedRoas,
     },
     email: email ? {

@@ -17,11 +17,12 @@
 
 import { RevenueData } from './bigcommerce-revenue';
 
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY ?? '';
+const STRIPE_SECRET_KEY     = process.env.STRIPE_SECRET_KEY     ?? '';
+const STRIPE_HSC_SECRET_KEY = process.env.STRIPE_HSC_SECRET_KEY ?? '';
 const STRIPE_BASE = 'https://api.stripe.com/v1';
 
-function stripeHeaders() {
-  return { Authorization: `Bearer ${STRIPE_SECRET_KEY}` };
+function stripeHeaders(key: string) {
+  return { Authorization: `Bearer ${key}` };
 }
 
 function monthUnixRange(month: string): { gte: number; lte: number } {
@@ -53,26 +54,26 @@ interface StripeChargeExpanded {
 interface StripeList<T> { data: T[]; has_more: boolean; }
 
 /** Returns true if the customer had any succeeded charge created before `beforeUnix`. */
-async function hasPriorCharge(customerId: string, beforeUnix: number): Promise<boolean> {
+async function hasPriorCharge(customerId: string, beforeUnix: number, secretKey: string): Promise<boolean> {
   const params = new URLSearchParams({
     customer: customerId,
     'created[lt]': String(beforeUnix),
     limit: '1',
   });
-  const res = await fetch(`${STRIPE_BASE}/charges?${params}`, { headers: stripeHeaders() });
+  const res = await fetch(`${STRIPE_BASE}/charges?${params}`, { headers: stripeHeaders(secretKey) });
   if (!res.ok) return false;
   const data: StripeList<{ paid: boolean; status: string }> = await res.json();
   return data.data.some(c => c.paid && c.status === 'succeeded');
 }
 
-export async function fetchETZStripeRevenue(
+async function fetchStripeRevenueWithKey(
+  secretKey: string,
   month: string,
   options?: { accurate?: boolean; dateRange?: { start: string; end: string } },
 ): Promise<RevenueData> {
-  // accurate defaults to true (exact new/returning via prior-charge lookup)
   const accurate = options?.accurate !== false;
 
-  if (!STRIPE_SECRET_KEY) {
+  if (!secretKey) {
     return { totalRevenue: 0, googlePaidRevenue: 0, googleOrganicRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'stripe', connected: false };
   }
 
@@ -97,7 +98,7 @@ export async function fetchETZStripeRevenue(
       });
       if (startingAfter) params.set('starting_after', startingAfter);
 
-      const res = await fetch(`${STRIPE_BASE}/charges?${params}`, { headers: stripeHeaders() });
+      const res = await fetch(`${STRIPE_BASE}/charges?${params}`, { headers: stripeHeaders(secretKey) });
       if (!res.ok) {
         const err = await res.text();
         throw new Error(`Stripe charges error (${res.status}): ${err.slice(0, 200)}`);
@@ -136,7 +137,7 @@ export async function fetchETZStripeRevenue(
 
     if (accurate) {
       // Exact mode: check actual prior charge history in parallel.
-      const checks = qualifying.map(([id]) => hasPriorCharge(id, gte));
+      const checks = qualifying.map(([id]) => hasPriorCharge(id, gte, secretKey));
       const results = await Promise.all(checks);
       for (const hasPrior of results) {
         if (hasPrior) returningCustomers++;
@@ -166,4 +167,18 @@ export async function fetchETZStripeRevenue(
     console.error('[stripe-revenue]', err);
     return { totalRevenue: 0, googlePaidRevenue: 0, googleOrganicRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'stripe', connected: false };
   }
+}
+
+export async function fetchETZStripeRevenue(
+  month: string,
+  options?: { accurate?: boolean; dateRange?: { start: string; end: string } },
+): Promise<RevenueData> {
+  return fetchStripeRevenueWithKey(STRIPE_SECRET_KEY, month, options);
+}
+
+export async function fetchHSCStripeRevenue(
+  month: string,
+  options?: { accurate?: boolean; dateRange?: { start: string; end: string } },
+): Promise<RevenueData> {
+  return fetchStripeRevenueWithKey(STRIPE_HSC_SECRET_KEY, month, options);
 }

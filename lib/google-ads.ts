@@ -319,12 +319,14 @@ export async function fetchAdGroupPerformance(
 
 // ─── Config builder ───────────────────────────────────────────────────────────
 
-export function buildConfig(brand: 'pp' | 'etz'): GoogleAdsConfig {
+export function buildConfig(brand: 'pp' | 'etz' | 'hsc'): GoogleAdsConfig {
   // ETZ falls back to PP account when GOOGLE_ADS_ETZ_CUSTOMER_ID is not yet set
   // (while ETZ campaigns still live under the PP account, filtered by name)
   const customerId = brand === 'pp'
     ? process.env.GOOGLE_ADS_PP_CUSTOMER_ID
-    : (process.env.GOOGLE_ADS_ETZ_CUSTOMER_ID || process.env.GOOGLE_ADS_PP_CUSTOMER_ID);
+    : brand === 'hsc'
+      ? process.env.GOOGLE_ADS_HSC_CUSTOMER_ID
+      : (process.env.GOOGLE_ADS_ETZ_CUSTOMER_ID || process.env.GOOGLE_ADS_PP_CUSTOMER_ID);
 
   const required = {
     developerToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
@@ -337,7 +339,7 @@ export function buildConfig(brand: 'pp' | 'etz'): GoogleAdsConfig {
   const missing = Object.entries(required)
     .filter(([, v]) => !v)
     .map(([k]) => k === 'customerId'
-      ? 'GOOGLE_ADS_PP_CUSTOMER_ID'
+      ? (brand === 'hsc' ? 'GOOGLE_ADS_HSC_CUSTOMER_ID' : 'GOOGLE_ADS_PP_CUSTOMER_ID')
       : `GOOGLE_ADS_${k.replace(/([A-Z])/g, '_$1').toUpperCase()}`
     );
 
@@ -355,7 +357,4 @@ export function buildConfig(brand: 'pp' | 'etz'): GoogleAdsConfig {
   };
 }
 
-/** Returns true when ETZ has its own dedicated Google Ads sub-account */
-export function etzHasOwnAccount(): boolean {
-  return !!process.env.GOOGLE_ADS_ETZ_CUSTOMER_ID;
-}
+/** Returns true when ET
