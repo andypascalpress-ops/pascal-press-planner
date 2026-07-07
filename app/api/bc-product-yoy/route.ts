@@ -73,7 +73,7 @@ async function fetchProductsForPeriod(
 ): Promise<Map<string, ProductMetrics>> {
   const url = `${BC_BASE}/orders?min_date_created=${bcDateParam(start)}&max_date_created=${bcDateParam(end, true)}&limit=100`;
   const res = await fetch(url, { headers: bcHeaders() });
-  const raw = res.ok ? await res.json() : [];
+  const raw = (res.ok && res.status !== 204) ? await res.json() : [];
   const allOrders: BCOrder[] = Array.isArray(raw) ? raw : [];
   const valid = allOrders.filter(o => !EXCLUDED.has(o.status));
 
@@ -81,7 +81,7 @@ async function fetchProductsForPeriod(
   const lineItemResults = await Promise.allSettled(
     valid.slice(0, 40).map(o =>
       fetch(`${BC_BASE}/orders/${o.id}/products`, { headers: bcHeaders() })
-        .then(r => r.ok ? r.json() as Promise<BCLineItem[]> : []),
+        .then(r => (r.ok && r.status !== 204) ? r.json() as Promise<BCLineItem[]> : []),
     ),
   );
 
