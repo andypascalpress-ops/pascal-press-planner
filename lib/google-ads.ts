@@ -358,3 +358,7 @@ export function buildConfig(brand: 'pp' | 'etz' | 'hsc'): GoogleAdsConfig {
 }
 
 /** Returns true when ET
+Z has its own dedicated Google Ads sub-account */
+export function etzHasOwnAccount(): boolean {
+  return !!process.env.GOOGLE_ADS_ETZ_CUSTOMER_ID;
+}
