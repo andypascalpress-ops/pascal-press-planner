@@ -33,7 +33,9 @@ interface OverviewData {
     totalSends:    number;
     campaignCount: number;
   } | null;
-  alerts: OverviewAlert[];
+  alerts:     OverviewAlert[];
+  rangeLabel:  string;
+  isMonthly:   boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -296,11 +298,22 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
   const [band6,      setBand6]      = useState<Band6Data | null>(null);
   const [band6Loading, setBand6Loading] = useState(true);
 
+  type DateRange = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth';
+  const RANGE_OPTIONS: { key: DateRange; label: string }[] = [
+    { key: 'today',     label: 'Today'        },
+    { key: 'yesterday', label: 'Yesterday'     },
+    { key: 'last7',     label: 'Last 7 days'   },
+    { key: 'last30',    label: 'Last 30 days'  },
+    { key: 'mtd',       label: 'Month to date' },
+    { key: 'lastmonth', label: 'Last month'    },
+  ];
+  const [dateRange, setDateRange] = useState<DateRange>('mtd');
+
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/overview');
+      const res = await fetch(`/api/overview?range=${dateRange}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setData(await res.json());
     } catch (e) {
@@ -308,7 +321,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [dateRange]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -342,7 +355,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
     );
   }
 
-  const { month, daysInMonth, currentDay, pp, etz, combined, email, alerts } = data;
+  const { month, daysInMonth, currentDay, pp, etz, combined, email, alerts, rangeLabel, isMonthly } = data;
   const dayPct = currentDay / daysInMonth;
   const visibleAlerts = alerts.filter(a => !dismissed.has(a.id));
 
@@ -351,14 +364,14 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
       <div className="max-w-5xl mx-auto px-4 md:px-6 py-6 space-y-6">
 
         {/* ── Header ── */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Executive Overview</h2>
-            <p className="text-sm text-gray-500">{monthLabel(month)} · Day {currentDay} of {daysInMonth}</p>
+            <p className="text-sm text-gray-500">{rangeLabel ?? monthLabel(month)}</p>
           </div>
           <button
             onClick={load}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors shrink-0"
           >
             <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M11 6.5a4.5 4.5 0 1 1-.9-2.7"/>
@@ -367,6 +380,33 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
             Refresh
           </button>
         </div>
+
+        {/* ── Date range selector ── */}
+        <div className="flex flex-wrap gap-1.5">
+          {RANGE_OPTIONS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setDateRange(key)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                dateRange === key
+                  ? 'bg-gray-900 text-white border-gray-900'
+                  : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400 hover:text-gray-800'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Non-monthly range note */}
+        {!isMonthly && (
+          <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm.75 3.5a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM7.25 7a.75.75 0 011.5 0v4a.75.75 0 01-1.5 0V7z"/>
+            </svg>
+            Google Ads spend reflects the selected period. Revenue and email data are always shown monthly.
+          </div>
+        )}
 
         {/* ── Alerts ── */}
         {visibleAlerts.length > 0 && (

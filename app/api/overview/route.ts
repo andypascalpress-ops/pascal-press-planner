@@ -13,24 +13,76 @@ import { fetchEmailCampaigns } from '@/lib/hubspot-email';
 import { MONTHLY_GOOGLE_BUDGETS } from '@/lib/constants';
 import { OverviewAlert } from '@/lib/types';
 
-export const revalidate = 300; // 5-minute cache
+export const dynamic = 'force-dynamic'; // range param must be read at request time
 
 const ETZ_START_MONTH = '2026-07';
 
-function currentYearMonth(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+type RangeParam = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth';
+
+function toYMD(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-export async function GET() {
-  const month = currentYearMonth();
-  const [yearS, monS] = month.split('-');
-  const year = parseInt(yearS!, 10);
-  const mon  = parseInt(monS!,  10);
-  const daysInMonth = new Date(year, mon, 0).getDate();
-  const currentDay  = new Date().getDate();
-  const startDate   = `${month}-01`;
-  const endDate     = `${month}-${String(daysInMonth).padStart(2, '0')}`;
+function deriveRange(range: RangeParam): {
+  startDate: string; endDate: string;
+  month: string; daysInMonth: number; currentDay: number;
+  rangeLabel: string; isMonthly: boolean;
+} {
+  const now  = new Date();
+  const ym   = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const dIM  = (y: number, m: number) => new Date(y, m, 0).getDate(); // days in month (1-based m)
+
+  switch (range) {
+    case 'today': {
+      const s = toYMD(now);
+      return { startDate: s, endDate: s, month: ym(now),
+        daysInMonth: dIM(now.getFullYear(), now.getMonth() + 1), currentDay: now.getDate(),
+        rangeLabel: 'Today', isMonthly: false };
+    }
+    case 'yesterday': {
+      const y = new Date(now); y.setDate(y.getDate() - 1);
+      const s = toYMD(y);
+      return { startDate: s, endDate: s, month: ym(y),
+        daysInMonth: dIM(y.getFullYear(), y.getMonth() + 1), currentDay: y.getDate(),
+        rangeLabel: 'Yesterday', isMonthly: false };
+    }
+    case 'last7': {
+      const s = new Date(now); s.setDate(s.getDate() - 6);
+      return { startDate: toYMD(s), endDate: toYMD(now), month: ym(now),
+        daysInMonth: dIM(now.getFullYear(), now.getMonth() + 1), currentDay: now.getDate(),
+        rangeLabel: 'Last 7 days', isMonthly: false };
+    }
+    case 'last30': {
+      const s = new Date(now); s.setDate(s.getDate() - 29);
+      return { startDate: toYMD(s), endDate: toYMD(now), month: ym(now),
+        daysInMonth: dIM(now.getFullYear(), now.getMonth() + 1), currentDay: now.getDate(),
+        rangeLabel: 'Last 30 days', isMonthly: false };
+    }
+    case 'lastmonth': {
+      const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const month = ym(lm);
+      const days  = dIM(lm.getFullYear(), lm.getMonth() + 1);
+      const label = lm.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
+      return { startDate: `${month}-01`, endDate: `${month}-${String(days).padStart(2, '0')}`,
+        month, daysInMonth: days, currentDay: days,
+        rangeLabel: label, isMonthly: true };
+    }
+    case 'mtd':
+    default: {
+      const month = ym(now);
+      const days  = dIM(now.getFullYear(), now.getMonth() + 1);
+      const label = now.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
+      return { startDate: `${month}-01`, endDate: toYMD(now),
+        month, daysInMonth: days, currentDay: now.getDate(),
+        rangeLabel: `${label} (MTD)`, isMonthly: true };
+    }
+  }
+}
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const rangeParam = (searchParams.get('range') ?? 'mtd') as RangeParam;
+  const { startDate, endDate, month, daysInMonth, currentDay, rangeLabel, isMonthly } = deriveRange(rangeParam);
 
   let ppCfg, etzCfg;
   try { ppCfg  = buildConfig('pp');  } catch (e) { console.error('[overview] buildConfig(pp) failed:', e);  }
@@ -141,6 +193,8 @@ export async function GET() {
     month,
     daysInMonth,
     currentDay,
+    rangeLabel,
+    isMonthly,
     pp: {
       spend:        Math.round(ppSpend  * 100) / 100,
       budget:       ppBudget,
