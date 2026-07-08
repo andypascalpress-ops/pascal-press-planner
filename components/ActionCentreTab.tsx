@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import ProductsSubTab from './ProductsSubTab';
+import AbandonedCartsSubTab from './AbandonedCartsSubTab';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,7 +25,7 @@ interface Props {
 }
 
 type Status = 'idle' | 'fetching' | 'analysing' | 'ready' | 'error';
-type SubTab = 'actions' | 'products';
+type SubTab = 'actions' | 'products' | 'carts';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -612,7 +613,7 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
 
       {/* ── Sub-tab bar ──────────────────────────────────────────────────────── */}
       <div className="bg-white border-b border-gray-200 px-4 sm:px-6 shrink-0 flex gap-1">
-        {(['actions', 'products'] as SubTab[]).map(t => (
+        {(['actions', 'products', 'carts'] as SubTab[]).map(t => (
           <button
             key={t}
             onClick={() => setSubTab(t)}
@@ -622,7 +623,7 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
                 : 'border-transparent text-gray-400 hover:text-gray-600'
             }`}
           >
-            {t === 'actions' ? 'Action Items' : 'Products'}
+            {t === 'actions' ? 'Action Items' : t === 'products' ? 'Products' : 'Abandoned Carts'}
           </button>
         ))}
       </div>
@@ -632,6 +633,7 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
 
         {/* Products sub-tab */}
         {subTab === 'products' && <ProductsSubTab />}
+        {subTab === 'carts' && <AbandonedCartsSubTab />}
 
         {/* Actions sub-tab */}
         {subTab === 'actions' && <>
