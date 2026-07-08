@@ -86,12 +86,9 @@ async function fetchMonthOrders(yearMon: string): Promise<BCOrder[]> {
   const end   = lastDayOfMonth(yearMon);
   let page = 1;
   while (true) {
-    const qs  = new URLSearchParams({
-      min_date_created: bcDateParam(start),
-      max_date_created: bcDateParam(end, true),
-      limit: '250', page: String(page),
-    });
-    const res = await fetch(`${BC_BASE}/orders?${qs}`, { headers: bcHeaders() });
+    // bcDateParam returns pre-encoded values — build URL manually, not via URLSearchParams
+    const url = `${BC_BASE}/orders?min_date_created=${bcDateParam(start)}&max_date_created=${bcDateParam(end, true)}&limit=250&page=${page}`;
+    const res = await fetch(url, { headers: bcHeaders() });
     if (res.status === 204 || res.status === 404) break;
     if (!res.ok) throw new Error(`BigCommerce /orders -> ${res.status}`);
     const data: BCOrder[] = await res.json();
