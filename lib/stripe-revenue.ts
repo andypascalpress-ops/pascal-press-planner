@@ -36,9 +36,10 @@ function monthUnixRange(month: string): { gte: number; lte: number } {
 }
 
 function dateRangeUnix(start: string, end: string): { gte: number; lte: number } {
+  // Use +10:00 so date boundaries align with AEST midnight, not UTC midnight
   return {
-    gte: Math.floor(new Date(`${start}T00:00:00Z`).getTime() / 1000),
-    lte: Math.floor(new Date(`${end}T23:59:59Z`).getTime()   / 1000),
+    gte: Math.floor(new Date(`${start}T00:00:00+10:00`).getTime() / 1000),
+    lte: Math.floor(new Date(`${end}T23:59:59+10:00`).getTime()   / 1000),
   };
 }
 
