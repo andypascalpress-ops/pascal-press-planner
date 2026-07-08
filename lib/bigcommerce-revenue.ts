@@ -202,4 +202,25 @@ export async function fetchPPRevenue(
       }
       for (const c of customers) {
         // "New" if the account was created within this calendar month.
-      
+        const regDate = (c.date_created ?? '').split('T')[0] ?? '';
+        if (regDate >= start && regDate <= end) {
+          newCustomers++;
+        } else {
+          returningCustomers++;
+        }
+      }
+    }
+
+    return {
+      totalRevenue, googlePaidRevenue, googleOrganicRevenue,
+      totalOrders, newCustomers, returningCustomers,
+      source: 'bigcommerce', connected: true,
+    };
+  } catch {
+    return { totalRevenue: 0, googlePaidRevenue: 0, googleOrganicRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'bigcommerce', connected: false };
+  }
+}
+
+export function placeholderETZRevenue(): RevenueData {
+  return { totalRevenue: 0, googlePaidRevenue: 0, googleOrganicRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'stripe', connected: false };
+}

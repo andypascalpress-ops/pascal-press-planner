@@ -234,4 +234,6 @@ export async function GET(request: Request) {
 
   } catch (e) {
     console.error('[bc-product-yoy]', e);
-    return Ne
+    return NextResponse.json({ connected: false, error: String(e) }, { status: 500 });
+  }
+}
