@@ -19,7 +19,7 @@ const EXCLUDED = new Set([
   'Cancelled', 'Refunded', 'Declined', 'Incomplete', 'Awaiting Payment', 'Manual Verification Required',
 ]);
 
-interface BCOrder    { id: number; total_inc_tax: string; status: string; }
+interface BCOrder    { id: number; total_inc_tax: string; status: string; date_created: string; }
 interface BCLineItem { name: string; sku: string; quantity: number; price_inc_tax: string; }
 
 export interface ProductMetrics { revenue: number; orders: number; units: number; aov: number; }
@@ -62,6 +62,47 @@ function bcDateParam(dateStr: string, endOfDay = false): string {
   return encodeURIComponent(rfc);
 }
 
+/** Parse BC's RFC 2822 date_created and return YYYY-MM-DD in AEST */
+function orderDateAEST(bcDateCreated: string): string {
+  return toAESTDateStr(new Date(bcDateCreated));
+}
+
+/** Last day of month as YYYY-MM-DD */
+function lastDayOfMonth(yearMon: string): string {
+  const [y, m] = yearMon.split('-').map(Number);
+  return new Date(y!, m!, 0).toISOString().split('T')[0]!;
+}
+
+/** Advance a YYYY-MM string by one month */
+function nextMonth(yearMon: string): string {
+  const [y, m] = yearMon.split('-').map(Number);
+  return m! === 12 ? `${y! + 1}-01` : `${y}-${String(m! + 1).padStart(2, '0')}`;
+}
+
+/** Fetch all pages of orders for a single calendar month using BC month-level filter */
+async function fetchMonthOrders(yearMon: string): Promise<BCOrder[]> {
+  const results: BCOrder[] = [];
+  const start = `${yearMon}-01`;
+  const end   = lastDayOfMonth(yearMon);
+  let page = 1;
+  while (true) {
+    const qs  = new URLSearchParams({
+      min_date_created: bcDateParam(start),
+      max_date_created: bcDateParam(end, true),
+      limit: '250', page: String(page),
+    });
+    const res = await fetch(`${BC_BASE}/orders?${qs}`, { headers: bcHeaders() });
+    if (res.status === 204 || res.status === 404) break;
+    if (!res.ok) throw new Error(`BigCommerce /orders -> ${res.status}`);
+    const data: BCOrder[] = await res.json();
+    if (!Array.isArray(data) || data.length === 0) break;
+    results.push(...data);
+    if (data.length < 250) break;
+    page++;
+  }
+  return results;
+}
+
 type RangeKey = '30d' | '60d' | '90d' | 'mtd' | 'lastmonth';
 
 function deriveRanges(range: RangeKey, today: string): {
@@ -97,11 +138,22 @@ function deriveRanges(range: RangeKey, today: string): {
 }
 
 async function fetchProductsForPeriod(start: string, end: string): Promise<Map<string, ProductMetrics>> {
-  const url = `${BC_BASE}/orders?min_date_created=${bcDateParam(start)}&max_date_created=${bcDateParam(end, true)}&limit=100`;
-  const res = await fetch(url, { headers: bcHeaders() });
-  const raw = (res.ok && res.status !== 204) ? await res.json() : [];
-  const allOrders: BCOrder[] = Array.isArray(raw) ? raw : [];
-  const valid = allOrders.filter(o => !EXCLUDED.has(o.status));
+  // Fetch month-level orders (BC's sub-day date filter is unreliable), then JS post-filter
+  const startMonth = start.slice(0, 7);
+  const endMonth   = end.slice(0, 7);
+  let allOrders: BCOrder[] = [];
+  let cur = startMonth;
+  while (cur <= endMonth) {
+    const mo = await fetchMonthOrders(cur);
+    allOrders.push(...mo);
+    cur = nextMonth(cur);
+  }
+  // Filter to exact date range using AEST date parsed from each order's date_created
+  const filtered = allOrders.filter(o => {
+    const d = orderDateAEST(o.date_created);
+    return d >= start && d <= end;
+  });
+  const valid = filtered.filter(o => !EXCLUDED.has(o.status));
 
   const lineItemResults = await Promise.allSettled(
     valid.slice(0, 40).map(o =>
@@ -182,6 +234,4 @@ export async function GET(request: Request) {
 
   } catch (e) {
     console.error('[bc-product-yoy]', e);
-    return NextResponse.json({ connected: false, error: String(e) }, { status: 500 });
-  }
-}
+    return Ne

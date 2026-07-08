@@ -59,6 +59,23 @@ function toRFC2822(dateStr: string, endOfDay = false): string {
   return `${dow}, ${dd} ${mmm} ${year} ${time} +1000`;
 }
 
+/** Convert a Date to YYYY-MM-DD in AEST (UTC+10) */
+function toAESTDateStr(d: Date): string {
+  const aest = new Date(d.getTime() + 10 * 60 * 60 * 1000);
+  return aest.toISOString().slice(0, 10);
+}
+
+/** Parse BC's RFC 2822 date_created field and return YYYY-MM-DD in AEST */
+function orderDateAEST(bcDateCreated: string): string {
+  return toAESTDateStr(new Date(bcDateCreated));
+}
+
+/** Last day of month as YYYY-MM-DD */
+function lastDayOfMonth(yearMon: string): string {
+  const [y, m] = yearMon.split('-').map(Number);
+  return new Date(y!, m!, 0).toISOString().split('T')[0]!;
+}
+
 async function fetchAllPages<T>(path: string, params: Record<string, string>): Promise<T[]> {
   const results: T[] = [];
   let page = 1;
@@ -106,10 +123,25 @@ export async function fetchPPRevenue(
   try {
     const { start, end } = dateRange ?? monthRange(month);
 
-    // BigCommerce v2 requires RFC 2822 date format for date filters.
-    const orders = await fetchAllPages<BCOrder>('/orders', {
-      min_date_created: toRFC2822(start),
-      max_date_created: toRFC2822(end, true),
+    // Fetch month-level orders from BC (month filter is reliable; sub-day filter is not).
+    // Then filter by date_created in JS to get the exact range — this is bulletproof.
+    const startMonth = start.slice(0, 7);
+    const endMonth   = end.slice(0, 7);
+    let allOrders: BCOrder[] = [];
+    let cur = startMonth;
+    while (cur <= endMonth) {
+      const mOrders = await fetchAllPages<BCOrder>('/orders', {
+        min_date_created: toRFC2822(`${cur}-01`),
+        max_date_created: toRFC2822(lastDayOfMonth(cur), true),
+      });
+      allOrders.push(...mOrders);
+      const [y, m] = cur.split('-').map(Number);
+      cur = m! === 12 ? `${y! + 1}-01` : `${y}-${String(m! + 1).padStart(2, '0')}`;
+    }
+    // Filter to exact date range using AEST date from order's date_created
+    const orders = allOrders.filter(o => {
+      const d = orderDateAEST(o.date_created);
+      return d >= start && d <= end;
     });
 
     // Exclude statuses that BC's revenue dashboard doesn't count.
@@ -170,25 +202,4 @@ export async function fetchPPRevenue(
       }
       for (const c of customers) {
         // "New" if the account was created within this calendar month.
-        const regDate = (c.date_created ?? '').split('T')[0] ?? '';
-        if (regDate >= start && regDate <= end) {
-          newCustomers++;
-        } else {
-          returningCustomers++;
-        }
-      }
-    }
-
-    return {
-      totalRevenue, googlePaidRevenue, googleOrganicRevenue,
-      totalOrders, newCustomers, returningCustomers,
-      source: 'bigcommerce', connected: true,
-    };
-  } catch {
-    return { totalRevenue: 0, googlePaidRevenue: 0, googleOrganicRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'bigcommerce', connected: false };
-  }
-}
-
-export function placeholderETZRevenue(): RevenueData {
-  return { totalRevenue: 0, googlePaidRevenue: 0, googleOrganicRevenue: 0, totalOrders: 0, newCustomers: 0, returningCustomers: 0, source: 'stripe', connected: false };
-}
+      

@@ -20,7 +20,9 @@ const ETZ_START_MONTH = '2026-07';
 type RangeParam = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth';
 
 function toYMD(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  // Vercel runs in UTC — shift to AEST (UTC+10) so "today" matches the Australian calendar date
+  const aest = new Date(d.getTime() + 10 * 60 * 60 * 1000);
+  return aest.toISOString().slice(0, 10);
 }
 
 function deriveRange(range: RangeParam): {
@@ -29,51 +31,64 @@ function deriveRange(range: RangeParam): {
   rangeLabel: string; isMonthly: boolean;
 } {
   const now  = new Date();
-  const ym   = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   const dIM  = (y: number, m: number) => new Date(y, m, 0).getDate(); // days in month (1-based m)
+
+  // Parse AEST components from toYMD — avoids UTC/local divergence on Vercel
+  const todayAEST = toYMD(now);
+  const aY = parseInt(todayAEST.slice(0, 4));
+  const aM = parseInt(todayAEST.slice(5, 7));
+  const aD = parseInt(todayAEST.slice(8, 10));
+  const ym = (dateStr: string) => dateStr.slice(0, 7);
+
+  // Helper: subtract N days from an AEST date string
+  const subDays = (ymd: string, n: number) => {
+    const d = new Date(`${ymd}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - n);
+    return d.toISOString().slice(0, 10);
+  };
 
   switch (range) {
     case 'today': {
-      const s = toYMD(now);
-      return { startDate: s, endDate: s, month: ym(now),
-        daysInMonth: dIM(now.getFullYear(), now.getMonth() + 1), currentDay: now.getDate(),
+      return { startDate: todayAEST, endDate: todayAEST, month: ym(todayAEST),
+        daysInMonth: dIM(aY, aM), currentDay: aD,
         rangeLabel: 'Today', isMonthly: false };
     }
     case 'yesterday': {
-      const y = new Date(now); y.setDate(y.getDate() - 1);
-      const s = toYMD(y);
-      return { startDate: s, endDate: s, month: ym(y),
-        daysInMonth: dIM(y.getFullYear(), y.getMonth() + 1), currentDay: y.getDate(),
+      const s = subDays(todayAEST, 1);
+      const yY = parseInt(s.slice(0, 4)), yM = parseInt(s.slice(5, 7)), yD = parseInt(s.slice(8, 10));
+      return { startDate: s, endDate: s, month: ym(s),
+        daysInMonth: dIM(yY, yM), currentDay: yD,
         rangeLabel: 'Yesterday', isMonthly: false };
     }
     case 'last7': {
-      const s = new Date(now); s.setDate(s.getDate() - 6);
-      return { startDate: toYMD(s), endDate: toYMD(now), month: ym(now),
-        daysInMonth: dIM(now.getFullYear(), now.getMonth() + 1), currentDay: now.getDate(),
+      const s = subDays(todayAEST, 6);
+      return { startDate: s, endDate: todayAEST, month: ym(todayAEST),
+        daysInMonth: dIM(aY, aM), currentDay: aD,
         rangeLabel: 'Last 7 days', isMonthly: false };
     }
     case 'last30': {
-      const s = new Date(now); s.setDate(s.getDate() - 29);
-      return { startDate: toYMD(s), endDate: toYMD(now), month: ym(now),
-        daysInMonth: dIM(now.getFullYear(), now.getMonth() + 1), currentDay: now.getDate(),
+      const s = subDays(todayAEST, 29);
+      return { startDate: s, endDate: todayAEST, month: ym(todayAEST),
+        daysInMonth: dIM(aY, aM), currentDay: aD,
         rangeLabel: 'Last 30 days', isMonthly: false };
     }
     case 'lastmonth': {
-      const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const month = ym(lm);
-      const days  = dIM(lm.getFullYear(), lm.getMonth() + 1);
-      const label = lm.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
+      const lmY = aM === 1 ? aY - 1 : aY;
+      const lmM = aM === 1 ? 12 : aM - 1;
+      const month = `${lmY}-${String(lmM).padStart(2, '0')}`;
+      const days  = dIM(lmY, lmM);
+      const label = new Date(`${month}-15T12:00:00Z`).toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
       return { startDate: `${month}-01`, endDate: `${month}-${String(days).padStart(2, '0')}`,
         month, daysInMonth: days, currentDay: days,
         rangeLabel: label, isMonthly: true };
     }
     case 'mtd':
     default: {
-      const month = ym(now);
-      const days  = dIM(now.getFullYear(), now.getMonth() + 1);
-      const label = now.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
-      return { startDate: `${month}-01`, endDate: toYMD(now),
-        month, daysInMonth: days, currentDay: now.getDate(),
+      const month = ym(todayAEST);
+      const days  = dIM(aY, aM);
+      const label = new Date(`${todayAEST}T12:00:00Z`).toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
+      return { startDate: `${month}-01`, endDate: todayAEST,
+        month, daysInMonth: days, currentDay: aD,
         rangeLabel: `${label} (MTD)`, isMonthly: true };
     }
   }
