@@ -20,9 +20,13 @@ const ETZ_START_MONTH = '2026-07';
 type RangeParam = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth';
 
 function toYMD(d: Date): string {
-  // Vercel runs in UTC — shift to AEST (UTC+10) so "today" matches the Australian calendar date
-  const aest = new Date(d.getTime() + 10 * 60 * 60 * 1000);
-  return aest.toISOString().slice(0, 10);
+  // Vercel runs in UTC — use Australia/Sydney so "today" follows AEST/AEDT (not fixed +10)
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Australia/Sydney',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
 }
 
 function deriveRange(range: RangeParam): {

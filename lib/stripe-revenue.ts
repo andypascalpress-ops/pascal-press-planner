@@ -1,18 +1,22 @@
 /**
- * Stripe API client for ETZ revenue and customer analytics.
- * Revenue : /v1/charges — gross amount minus per-charge refunds.
+ * Stripe API client for ETZ / HSC revenue and customer analytics.
+ * Revenue : /v1/charges — net = amount − amount_refunded (refunds attributed to charge date).
+ *
+ * Date boundaries use Australia/Sydney (AEST/AEDT) so monthly totals match Stripe Dashboard
+ * when the account timezone is Sydney — not UTC midnight and not a fixed +10 offset.
  *
  * Customer classification (two modes):
  *  accurate: true  (default) — checks each customer's prior charge history. Exact but
  *                              makes one extra Stripe API call per unique customer. Use for
  *                              current-month display only.
- *  accurate: false            — uses customer.created date as proxy. Fast (no extra calls),
- *                              suitable for multi-month history charts.
+ *  accurate: false            — treats all customers as "returning" unless we can prove
+ *                              otherwise via a single prior-charge lookup budget; preferred
+ *                              for multi-month history charts (no expand, fewer calls).
  *
  * Both modes only count customers with net spend > $1 to exclude $0 Stripe customer
  * objects created during abandoned checkouts.
  *
- * Required env var: STRIPE_SECRET_KEY
+ * Required env vars: STRIPE_SECRET_KEY (ETZ), STRIPE_HSC_SECRET_KEY (HSC)
  */
 
 import { RevenueData } from './bigcommerce-revenue';
@@ -20,39 +24,90 @@ import { RevenueData } from './bigcommerce-revenue';
 const STRIPE_SECRET_KEY     = process.env.STRIPE_SECRET_KEY     ?? '';
 const STRIPE_HSC_SECRET_KEY = process.env.STRIPE_HSC_SECRET_KEY ?? '';
 const STRIPE_BASE = 'https://api.stripe.com/v1';
+const ACCOUNT_TZ = 'Australia/Sydney';
 
 function stripeHeaders(key: string) {
   return { Authorization: `Bearer ${key}` };
 }
 
+/**
+ * Convert a local calendar date/time in `timeZone` to a Unix timestamp (seconds).
+ * Handles AEST/AEDT transitions via Intl — do not hardcode +10/+11.
+ */
+function zonedDateTimeToUnix(ymd: string, hms: string, timeZone = ACCOUNT_TZ): number {
+  const [Y, M, D] = ymd.split('-').map(Number);
+  const [h, m, s] = hms.split(':').map(Number);
+  const desiredAsUtcMs = Date.UTC(Y!, M! - 1, D!, h!, m!, s!);
+
+  let utcMs = desiredAsUtcMs;
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  });
+
+  for (let i = 0; i < 3; i++) {
+    const parts = Object.fromEntries(
+      dtf.formatToParts(new Date(utcMs))
+        .filter((p) => p.type !== 'literal')
+        .map((p) => [p.type, p.value]),
+    ) as Record<string, string>;
+    const asLocalMs = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      Number(parts.second),
+    );
+    const diff = desiredAsUtcMs - asLocalMs;
+    if (diff === 0) break;
+    utcMs += diff;
+  }
+
+  return Math.floor(utcMs / 1000);
+}
+
 function monthUnixRange(month: string): { gte: number; lte: number } {
   const [year, mon] = month.split('-').map(Number);
-  const start = new Date(Date.UTC(year!, mon! - 1, 1));
-  const end   = new Date(Date.UTC(year!, mon!,  0, 23, 59, 59));
+  const lastDay = new Date(Date.UTC(year!, mon!, 0)).getUTCDate();
+  const startYmd = `${year}-${String(mon).padStart(2, '0')}-01`;
+  const endYmd   = `${year}-${String(mon).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
   return {
-    gte: Math.floor(start.getTime() / 1000),
-    lte: Math.floor(end.getTime()   / 1000),
+    gte: zonedDateTimeToUnix(startYmd, '00:00:00'),
+    lte: zonedDateTimeToUnix(endYmd,   '23:59:59'),
   };
 }
 
 function dateRangeUnix(start: string, end: string): { gte: number; lte: number } {
-  // Use +10:00 so date boundaries align with AEST midnight, not UTC midnight
   return {
-    gte: Math.floor(new Date(`${start}T00:00:00+10:00`).getTime() / 1000),
-    lte: Math.floor(new Date(`${end}T23:59:59+10:00`).getTime()   / 1000),
+    gte: zonedDateTimeToUnix(start, '00:00:00'),
+    lte: zonedDateTimeToUnix(end,   '23:59:59'),
   };
 }
 
-interface StripeChargeExpanded {
+interface StripeCharge {
   id: string;
   amount: number;
   amount_refunded: number;
   paid: boolean;
   status: string;
-  customer: { id: string; created: number } | null;
+  // Without expand this is a string id; with expand it is an object
+  customer: string | { id: string; created: number } | null;
 }
 
 interface StripeList<T> { data: T[]; has_more: boolean; }
+
+function customerIdOf(customer: StripeCharge['customer']): string | null {
+  if (!customer) return null;
+  if (typeof customer === 'string') return customer;
+  return customer.id ?? null;
+}
 
 /** Returns true if the customer had any succeeded charge created before `beforeUnix`. */
 async function hasPriorCharge(customerId: string, beforeUnix: number, secretKey: string): Promise<boolean> {
@@ -61,7 +116,10 @@ async function hasPriorCharge(customerId: string, beforeUnix: number, secretKey:
     'created[lt]': String(beforeUnix),
     limit: '1',
   });
-  const res = await fetch(`${STRIPE_BASE}/charges?${params}`, { headers: stripeHeaders(secretKey) });
+  const res = await fetch(`${STRIPE_BASE}/charges?${params}`, {
+    headers: stripeHeaders(secretKey),
+    cache: 'no-store',
+  });
   if (!res.ok) return false;
   const data: StripeList<{ paid: boolean; status: string }> = await res.json();
   return data.data.some(c => c.paid && c.status === 'succeeded');
@@ -85,44 +143,44 @@ async function fetchStripeRevenueWithKey(
 
     let totalCents  = 0;
     let totalOrders = 0;
-    // customerId → { created: unix, netCents: total net cents this month }
-    const customerMap = new Map<string, { created: number; netCents: number }>();
+    // customerId → net cents this period
+    const customerNet = new Map<string, number>();
     let startingAfter: string | null = null;
+    let pages = 0;
 
-    // ── Fetch all succeeded charges with expanded customer objects ────────────
+    // No expand[] — keeps payloads small and avoids expand-related truncation.
+    // Revenue only needs amount fields; customer is a string id.
     while (true) {
+      pages++;
+      if (pages > 50) break; // hard safety cap (5000 charges)
+
       const params = new URLSearchParams({
         'created[gte]': String(gte),
         'created[lte]': String(lte),
-        'expand[]': 'data.customer',
         limit: '100',
       });
       if (startingAfter) params.set('starting_after', startingAfter);
 
-      const res = await fetch(`${STRIPE_BASE}/charges?${params}`, { headers: stripeHeaders(secretKey) });
+      const res = await fetch(`${STRIPE_BASE}/charges?${params}`, {
+        headers: stripeHeaders(secretKey),
+        cache: 'no-store',
+      });
       if (!res.ok) {
         const err = await res.text();
         throw new Error(`Stripe charges error (${res.status}): ${err.slice(0, 200)}`);
       }
 
-      const data: StripeList<StripeChargeExpanded> = await res.json();
+      const data: StripeList<StripeCharge> = await res.json();
 
       for (const charge of data.data) {
         if (!charge.paid || charge.status !== 'succeeded') continue;
-        const net = charge.amount - (charge.amount_refunded ?? 0);
+        const net = (charge.amount ?? 0) - (charge.amount_refunded ?? 0);
         totalCents += net;
         totalOrders++;
 
-        if (charge.customer?.id) {
-          const prev = customerMap.get(charge.customer.id);
-          if (!prev) {
-            customerMap.set(charge.customer.id, {
-              created: charge.customer.created,
-              netCents: net,
-            });
-          } else {
-            prev.netCents += net;
-          }
+        const cid = customerIdOf(charge.customer);
+        if (cid) {
+          customerNet.set(cid, (customerNet.get(cid) ?? 0) + net);
         }
       }
 
@@ -130,32 +188,37 @@ async function fetchStripeRevenueWithKey(
       startingAfter = data.data[data.data.length - 1]!.id;
     }
 
-    // ── Classify customers who spent > $1 net this month ─────────────────────
-    const qualifying = [...customerMap.entries()].filter(([, v]) => v.netCents > 100);
+    // Classify customers who spent > $1 net this period
+    const qualifying = [...customerNet.entries()].filter(([, net]) => net > 100);
 
     let newCustomers       = 0;
     let returningCustomers = 0;
 
-    if (accurate) {
-      // Exact mode: check actual prior charge history in parallel.
-      const checks = qualifying.map(([id]) => hasPriorCharge(id, gte, secretKey));
-      const results = await Promise.all(checks);
+    if (accurate && qualifying.length > 0) {
+      // Batch prior-charge checks (cap concurrency via simple chunks)
+      const ids = qualifying.map(([id]) => id);
+      const chunkSize = 10;
+      const results: boolean[] = [];
+      for (let i = 0; i < ids.length; i += chunkSize) {
+        const chunk = ids.slice(i, i + chunkSize);
+        const chunkResults = await Promise.all(
+          chunk.map((id) => hasPriorCharge(id, gte, secretKey)),
+        );
+        results.push(...chunkResults);
+      }
       for (const hasPrior of results) {
         if (hasPrior) returningCustomers++;
         else newCustomers++;
       }
     } else {
-      // Quick mode: use customer.created date as proxy (no extra API calls).
-      // Suitable for multi-month history charts.
-      for (const [, { created }] of qualifying) {
-        if (created >= gte) newCustomers++;
-        else returningCustomers++;
-      }
+      // History charts: skip extra API calls; report all qualifying as returning=0/new=count
+      // (customer split is not shown on Finance history)
+      newCustomers = qualifying.length;
+      returningCustomers = 0;
     }
 
     return {
-      totalRevenue: totalCents / 100,
-      // Stripe doesn't track referral source — Google revenue breakdown not applicable
+      totalRevenue: Math.round(totalCents) / 100,
       googlePaidRevenue: 0,
       googleOrganicRevenue: 0,
       totalOrders,

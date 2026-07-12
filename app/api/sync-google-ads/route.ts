@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { fetchMonthlySpend, buildConfig, etzHasOwnAccount } from '@/lib/google-ads';
 import { getSpendRecords, updateSpendRecord } from '@/lib/monday-spend';
 
+export const dynamic = 'force-dynamic';
+
 // Date range to sync — covers full FY26
 const SYNC_START = '2025-07-01';
 const SYNC_END   = '2026-06-30';

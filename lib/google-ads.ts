@@ -63,6 +63,7 @@ async function getAccessToken(cfg: GoogleAdsConfig): Promise<string> {
       refresh_token: cfg.refreshToken,
       grant_type:    'refresh_token',
     }),
+    cache: 'no-store',
   });
   const data = await parseJsonOrThrow(res, 'Google OAuth');
   if (!data.access_token) {
@@ -107,6 +108,7 @@ async function gaqlSearch(
     method: 'POST',
     headers,
     body: JSON.stringify({ query }),
+    cache: 'no-store',
   });
 
   const data = await parseJsonOrThrow(res, `Google Ads API (${url})`);

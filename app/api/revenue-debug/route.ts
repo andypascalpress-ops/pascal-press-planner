@@ -1,17 +1,26 @@
 /**
  * Debug endpoint to diagnose BigCommerce and Stripe revenue discrepancies.
- * Usage: GET /api/revenue-debug?month=2026-06
+ * Usage: GET /api/revenue-debug?month=2026-07
+ *
+ * Stripe section compares:
+ *  - Australia/Sydney month bounds (matches dashboard after fix)
+ *  - UTC month bounds (old Finance tab behaviour)
+ *  - Fixed +10 / +11 offsets
+ *  - Gross (amount) vs Net (amount − refunds)
+ * For both ETZ (STRIPE_SECRET_KEY) and HSC (STRIPE_HSC_SECRET_KEY).
  */
 import { NextRequest, NextResponse } from 'next/server';
 
 const STORE_HASH    = process.env.BIGCOMMERCE_STORE_HASH    ?? '';
 const ACCESS_TOKEN  = process.env.BIGCOMMERCE_ACCESS_TOKEN  ?? '';
 const STRIPE_KEY    = process.env.STRIPE_SECRET_KEY         ?? '';
+const STRIPE_HSC    = process.env.STRIPE_HSC_SECRET_KEY     ?? '';
 const BC_BASE       = `https://api.bigcommerce.com/stores/${STORE_HASH}/v2`;
 const STRIPE_BASE   = 'https://api.stripe.com/v1';
+const ACCOUNT_TZ    = 'Australia/Sydney';
 
 function bcHeaders()     { return { 'X-Auth-Token': ACCESS_TOKEN, 'Content-Type': 'application/json', Accept: 'application/json' }; }
-function stripeHeaders() { return { Authorization: `Bearer ${STRIPE_KEY}` }; }
+function stripeHeaders(key: string) { return { Authorization: `Bearer ${key}` }; }
 
 function monthRange(month: string) {
   const [year, mon] = month.split('-').map(Number);
@@ -19,6 +28,34 @@ function monthRange(month: string) {
   const start = `${year}-${String(mon).padStart(2,'0')}-01`;
   const end   = `${year}-${String(mon).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
   return { start, end };
+}
+
+function zonedDateTimeToUnix(ymd: string, hms: string, timeZone = ACCOUNT_TZ): number {
+  const [Y, M, D] = ymd.split('-').map(Number);
+  const [h, m, s] = hms.split(':').map(Number);
+  const desiredAsUtcMs = Date.UTC(Y!, M! - 1, D!, h!, m!, s!);
+  let utcMs = desiredAsUtcMs;
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hourCycle: 'h23',
+  });
+  for (let i = 0; i < 3; i++) {
+    const parts = Object.fromEntries(
+      dtf.formatToParts(new Date(utcMs))
+        .filter((p) => p.type !== 'literal')
+        .map((p) => [p.type, p.value]),
+    ) as Record<string, string>;
+    const asLocalMs = Date.UTC(
+      Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+      Number(parts.hour), Number(parts.minute), Number(parts.second),
+    );
+    const diff = desiredAsUtcMs - asLocalMs;
+    if (diff === 0) break;
+    utcMs += diff;
+  }
+  return Math.floor(utcMs / 1000);
 }
 
 // ─── BigCommerce ──────────────────────────────────────────────────────────────
@@ -61,48 +98,13 @@ async function debugBC(month: string) {
     const EXCLUDED = new Set(['Cancelled', 'Refunded', 'Incomplete']);
     const valid = orders.filter(o => !EXCLUDED.has(o.status));
 
-    // Referral source breakdown — shows what's actually in BC orders
-    const referralSources: Record<string, { count: number; revenue: number }> = {};
-    for (const o of valid) {
-      const ref = (o.referral_source ?? '').trim() || '(empty)';
-      // Bucket by domain for readability
-      let bucket = ref;
-      if (ref !== '(empty)') {
-        try { bucket = new URL(ref).hostname.replace(/^www\./, ''); } catch { bucket = ref.slice(0, 60); }
-      }
-      if (!referralSources[bucket]) referralSources[bucket] = { count: 0, revenue: 0 };
-      referralSources[bucket].count++;
-      referralSources[bucket].revenue += parseFloat(o.total_inc_tax || '0');
-    }
-    // Sort by count desc, show top 20
-    const referralBreakdown = Object.entries(referralSources)
-      .sort(([, a], [, b]) => b.count - a.count)
-      .slice(0, 20)
-      .map(([source, v]) => ({ source, count: v.count, revenue: v.revenue.toFixed(2) }));
-
-    // Google paid vs organic using same logic as bigcommerce-revenue.ts
-    const googlePaidOrders = valid.filter(o => (o.referral_source ?? '').toLowerCase().includes('googleadservices'));
-    const googleOrganicOrders = valid.filter(o => {
-      const ref = (o.referral_source ?? '').toLowerCase();
-      return ref.includes('google') && !ref.includes('googleadservices');
-    });
-
     allOrders.push({
       timezone: tz,
       totalOrders: orders.length,
       validOrders: valid.length,
-      revenue_incTax_allStatuses: orders.reduce((s, o) => s + parseFloat(o.total_inc_tax || '0'), 0).toFixed(2),
-      revenue_incTax_valid:       valid.reduce((s, o)  => s + parseFloat(o.total_inc_tax || '0'), 0).toFixed(2),
-      revenue_exTax_valid:        valid.reduce((s, o)  => s + parseFloat(o.total_ex_tax  || '0'), 0).toFixed(2),
-      googlePaidOrders: googlePaidOrders.length,
-      googlePaidRevenue: googlePaidOrders.reduce((s, o) => s + parseFloat(o.total_inc_tax || '0'), 0).toFixed(2),
-      googleOrganicOrders: googleOrganicOrders.length,
-      googleOrganicRevenue: googleOrganicOrders.reduce((s, o) => s + parseFloat(o.total_inc_tax || '0'), 0).toFixed(2),
-      ordersWithEmptyReferral: valid.filter(o => !(o.referral_source ?? '').trim()).length,
-      referralBreakdown,
+      revenue_incTax_valid: valid.reduce((s, o)  => s + parseFloat(o.total_inc_tax || '0'), 0).toFixed(2),
+      revenue_exTax_valid:  valid.reduce((s, o)  => s + parseFloat(o.total_ex_tax  || '0'), 0).toFixed(2),
       byStatus,
-      firstOrder: orders[0]  ? { id: orders[0].id,  date: orders[0].date_created,  status: orders[0].status,  total_inc: orders[0].total_inc_tax, referral_source: orders[0].referral_source }  : null,
-      lastOrder:  orders[orders.length - 1] ? { id: orders[orders.length-1].id, date: orders[orders.length-1].date_created, status: orders[orders.length-1].status, total_inc: orders[orders.length-1].total_inc_tax, referral_source: orders[orders.length-1].referral_source } : null,
     });
   }
 
@@ -111,80 +113,170 @@ async function debugBC(month: string) {
 
 // ─── Stripe ───────────────────────────────────────────────────────────────────
 
-async function debugStripe(month: string) {
-  if (!STRIPE_KEY) return { error: 'STRIPE_SECRET_KEY not set' };
+async function sumCharges(secretKey: string, gte: number, lte: number) {
+  let grossCents = 0;
+  let netCents = 0;
+  let refundedCents = 0;
+  let totalOrders = 0;
+  let fullyRefunded = 0;
+  let partiallyRefunded = 0;
+  const byCurrency: Record<string, { gross: number; net: number }> = {};
+  let startingAfter: string | null = null;
+
+  while (true) {
+    const params = new URLSearchParams({
+      'created[gte]': String(gte),
+      'created[lte]': String(lte),
+      limit: '100',
+    });
+    if (startingAfter) params.set('starting_after', startingAfter);
+
+    const res = await fetch(`${STRIPE_BASE}/charges?${params}`, { headers: stripeHeaders(secretKey) });
+    if (!res.ok) {
+      const err = await res.text();
+      return { error: `Stripe ${res.status}: ${err.slice(0, 200)}` };
+    }
+
+    const data = await res.json();
+    for (const charge of data.data) {
+      if (!(charge.paid && charge.status === 'succeeded')) continue;
+      const amount = charge.amount ?? 0;
+      const refunded = charge.amount_refunded ?? 0;
+      const net = amount - refunded;
+      grossCents += amount;
+      netCents += net;
+      refundedCents += refunded;
+      totalOrders++;
+      if (refunded > 0 && net === 0) fullyRefunded++;
+      else if (refunded > 0) partiallyRefunded++;
+      const cur = charge.currency ?? 'unknown';
+      if (!byCurrency[cur]) byCurrency[cur] = { gross: 0, net: 0 };
+      byCurrency[cur].gross += amount;
+      byCurrency[cur].net += net;
+    }
+    if (!data.has_more || data.data.length === 0) break;
+    startingAfter = data.data[data.data.length - 1].id;
+  }
+
+  return {
+    totalOrders,
+    grossAUD: (grossCents / 100).toFixed(2),
+    netAUD: (netCents / 100).toFixed(2),
+    refundedAUD: (refundedCents / 100).toFixed(2),
+    fullyRefundedCharges: fullyRefunded,
+    partiallyRefundedCharges: partiallyRefunded,
+    byCurrency: Object.fromEntries(
+      Object.entries(byCurrency).map(([k, v]) => [k, {
+        gross: (v.gross / 100).toFixed(2),
+        net: (v.net / 100).toFixed(2),
+      }]),
+    ),
+  };
+}
+
+async function debugStripeAccount(label: string, secretKey: string, month: string) {
+  if (!secretKey) return { account: label, error: `${label} secret key not set` };
 
   const { start, end } = monthRange(month);
   const [year, mon] = month.split('-').map(Number);
+  const lastDay = new Date(year!, mon!, 0).getDate();
 
-  // Try 3 timezone offsets: AEST (-10h), AEDT (-11h), UTC (0h)
-  const offsets = [
-    { label: 'AEST UTC+10', offsetMs: 10 * 3600 * 1000 },
-    { label: 'AEDT UTC+11', offsetMs: 11 * 3600 * 1000 },
-    { label: 'UTC',          offsetMs: 0 },
+  const windows = [
+    {
+      label: 'Australia/Sydney (dashboard target)',
+      gte: zonedDateTimeToUnix(start, '00:00:00'),
+      lte: zonedDateTimeToUnix(end, '23:59:59'),
+    },
+    {
+      label: 'UTC calendar month (old Finance /api/revenue)',
+      gte: Math.floor(Date.UTC(year!, mon! - 1, 1) / 1000),
+      lte: Math.floor(Date.UTC(year!, mon!, 0, 23, 59, 59) / 1000),
+    },
+    {
+      label: 'Fixed UTC+10',
+      gte: Math.floor(new Date(`${start}T00:00:00+10:00`).getTime() / 1000),
+      lte: Math.floor(new Date(`${end}T23:59:59+10:00`).getTime() / 1000),
+    },
+    {
+      label: 'Fixed UTC+11',
+      gte: Math.floor(new Date(`${start}T00:00:00+11:00`).getTime() / 1000),
+      lte: Math.floor(new Date(`${end}T23:59:59+11:00`).getTime() / 1000),
+    },
   ];
 
+  // MTD through today Sydney
+  const todaySydney = new Intl.DateTimeFormat('en-CA', {
+    timeZone: ACCOUNT_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+  const mtdEnd = todaySydney.startsWith(month) ? todaySydney : end;
+
   const results = [];
-
-  for (const { label, offsetMs } of offsets) {
-    const gte = Math.floor((Date.UTC(year!, mon! - 1, 1)                    - offsetMs) / 1000);
-    const lte = Math.floor((Date.UTC(year!, mon!, 0, 23, 59, 59)            - offsetMs) / 1000);
-
-    let totalCents = 0;
-    let totalOrders = 0;
-    const byCurrency: Record<string, number> = {};
-    let startingAfter: string | null = null;
-
-    while (true) {
-      const params = new URLSearchParams({
-        'created[gte]': String(gte),
-        'created[lte]': String(lte),
-        limit: '100',
-      });
-      if (startingAfter) params.set('starting_after', startingAfter);
-
-      const res = await fetch(`${STRIPE_BASE}/charges?${params}`, { headers: stripeHeaders() });
-      if (!res.ok) break;
-
-      const data = await res.json();
-      for (const charge of data.data) {
-        if (charge.paid && charge.status === 'succeeded') {
-          const net = charge.amount - (charge.amount_refunded ?? 0);
-          totalCents += net;
-          totalOrders++;
-          byCurrency[charge.currency] = (byCurrency[charge.currency] ?? 0) + net;
-        }
-      }
-      if (!data.has_more || data.data.length === 0) break;
-      startingAfter = data.data[data.data.length - 1].id;
-    }
-
+  for (const w of windows) {
+    const sums = await sumCharges(secretKey, w.gte, w.lte);
     results.push({
-      timezone: label,
-      gteUnix: gte,
-      lteUnix: lte,
-      gteDate: new Date(gte * 1000).toISOString(),
-      lteDate: new Date(lte * 1000).toISOString(),
-      totalOrders,
-      totalAUD: (totalCents / 100).toFixed(2),
-      byCurrency: Object.fromEntries(
-        Object.entries(byCurrency).map(([k, v]) => [k, (v / 100).toFixed(2)])
-      ),
+      timezone: w.label,
+      gteUnix: w.gte,
+      lteUnix: w.lte,
+      gteDate: new Date(w.gte * 1000).toISOString(),
+      lteDate: new Date(w.lte * 1000).toISOString(),
+      ...sums,
     });
   }
 
-  return results;
+  // MTD Sydney window (matches Overview default)
+  const mtdGte = zonedDateTimeToUnix(`${month}-01`, '00:00:00');
+  const mtdLte = zonedDateTimeToUnix(mtdEnd, '23:59:59');
+  const mtdSums = await sumCharges(secretKey, mtdGte, mtdLte);
+  results.push({
+    timezone: `Australia/Sydney MTD (${month}-01 → ${mtdEnd})`,
+    gteUnix: mtdGte,
+    lteUnix: mtdLte,
+    gteDate: new Date(mtdGte * 1000).toISOString(),
+    lteDate: new Date(mtdLte * 1000).toISOString(),
+    ...mtdSums,
+  });
+
+  return {
+    account: label,
+    month,
+    daysInMonth: lastDay,
+    notes: [
+      'Dashboard uses net = amount − amount_refunded on charges created in the window.',
+      'Stripe Dashboard "Gross volume" ≈ grossAUD; net may still differ if Stripe reports refunds by refund date.',
+      'Fees are never deducted here — compare to Gross/Net volume, not "net after fees".',
+    ],
+    windows: results,
+  };
 }
 
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
-  const month = req.nextUrl.searchParams.get('month') ?? '2026-06';
+  const month = req.nextUrl.searchParams.get('month')
+    ?? new Intl.DateTimeFormat('en-CA', {
+      timeZone: ACCOUNT_TZ, year: 'numeric', month: '2-digit',
+    }).format(new Date()).slice(0, 7);
 
-  const [bcData, stripeData] = await Promise.all([
+  const [bcData, etz, hsc] = await Promise.all([
     debugBC(month),
-    debugStripe(month),
+    debugStripeAccount('ETZ', STRIPE_KEY, month),
+    debugStripeAccount('HSC', STRIPE_HSC, month),
   ]);
 
-  return NextResponse.json({ month, bigcommerce: bcData, stripe: stripeData }, { status: 200 });
+  return NextResponse.json({
+    month,
+    explanation: {
+      overviewUses: 'dateRange with Australia/Sydney day bounds (MTD by default)',
+      financeUses: 'full calendar month via monthUnixRange (now Australia/Sydney; was UTC)',
+      commonStripeMismatch: [
+        'Timezone: UTC vs Sydney shifts ~$50–$100 near month edges',
+        'Gross vs net: Stripe Gross volume excludes refunds from the total differently',
+        'Refund timing: amount_refunded reduces the original charge period, not the refund date',
+        'Fees: Stripe "net" after fees is lower than charge net',
+        'HSC was missing from /api/revenue (Finance tab) — only on Overview',
+      ],
+    },
+    bigcommerce: bcData,
+    stripe: { etz, hsc },
+  }, { status: 200 });
 }

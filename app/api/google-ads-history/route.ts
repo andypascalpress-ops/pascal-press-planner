@@ -10,6 +10,8 @@
 import { NextResponse } from 'next/server';
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
 
+export const dynamic = 'force-dynamic';
+
 const ETZ_START_MONTH = '2026-07';
 
 const MONTH_TO_NUM: Record<string, string> = {

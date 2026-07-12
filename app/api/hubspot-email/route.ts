@@ -9,6 +9,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchEmailCampaigns }       from '@/lib/hubspot-email';
 
+export const dynamic = 'force-dynamic';
+
 // Edge Runtime: 25-second timeout instead of Hobby's 10-second limit,
 // giving HubSpot API calls enough headroom on a cold/uncached first request.
 export const runtime = 'edge';
