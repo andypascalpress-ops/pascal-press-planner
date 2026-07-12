@@ -23,6 +23,7 @@ interface OverviewData {
   pp:           BrandData;
   etz:          BrandData;
   hsc:          BrandData;
+  blake:        BrandData;
   combined: {
     spend:   number;
     revenue: number;
@@ -398,7 +399,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
     );
   }
 
-  const { month, daysInMonth, currentDay, pp, etz, hsc, combined, email, alerts, rangeLabel, isMonthly } = data;
+  const { month, daysInMonth, currentDay, pp, etz, hsc, blake, combined, email, alerts, rangeLabel, isMonthly } = data;
   const dayPct = currentDay / daysInMonth;
   const visibleAlerts = alerts.filter(a => !dismissed.has(a.id));
 
@@ -490,13 +491,13 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
           <KpiCard
             label="Total Revenue"
             value={AUD.format(combined.revenue)}
-            sub="PP + ETZ + HSC this month"
+            sub="PP + ETZ + HSC + Blake this month"
             valueClass="text-emerald-700"
           />
           <KpiCard
             label="Total Ad Spend"
             value={AUD.format(combined.spend)}
-            sub={`of ${AUD.format((pp.budget + etz.budget + hsc.budget))} budget`}
+            sub={`of ${AUD.format((pp.budget + etz.budget + hsc.budget + (blake?.budget ?? 0)))} budget`}
           />
           <KpiCard
             label="Combined ROAS"
@@ -517,6 +518,9 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
           <BrandCard name="Pascal Press"      data={pp}  dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
           <BrandCard name="Excel Test Zone"   data={etz} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
           <BrandCard name="Excel HSC Copilot" data={hsc} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
+          {blake && (
+            <BrandCard name="Blake Education" data={blake} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
+          )}
         </div>
 
         {/* ── Band 6 Tracker ── */}

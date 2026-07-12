@@ -7,7 +7,7 @@
  */
 import { NextResponse } from 'next/server';
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
-import { fetchPPRevenue } from '@/lib/bigcommerce-revenue';
+import { fetchPPRevenue, fetchBlakeRevenue } from '@/lib/bigcommerce-revenue';
 import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-revenue';
 import { fetchEmailCampaigns } from '@/lib/hubspot-email';
 import { MONTHLY_GOOGLE_BUDGETS } from '@/lib/constants';
@@ -112,7 +112,10 @@ export async function GET(request: Request) {
 
   const noAds = () => Promise.reject(new Error('Google Ads config missing'));
 
-  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, emailResult] =
+  // Blake: revenue only for now (no Google Ads account connected)
+  const blakeSpend = 0;
+
+  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult] =
     await Promise.allSettled([
       ppCfg
         ? fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' })
@@ -128,6 +131,7 @@ export async function GET(request: Request) {
       fetchPPRevenue(month, { start: startDate, end: endDate }),
       fetchETZStripeRevenue(month, { dateRange: { start: startDate, end: endDate } }),
       fetchHSCStripeRevenue(month, { dateRange: { start: startDate, end: endDate } }),
+      fetchBlakeRevenue(month, { start: startDate, end: endDate }),
       fetchEmailCampaigns(month, { dateRange: { start: startDate, end: endDate } }),
     ]);
 
@@ -138,24 +142,30 @@ export async function GET(request: Request) {
   const hscSpend = hscAdsResult.status === 'fulfilled'
     ? hscAdsResult.value.reduce((s, r) => s + r.actualSpend, 0) : 0;
 
-  const ppRev  = ppRevResult.status  === 'fulfilled' ? ppRevResult.value  : null;
-  const etzRev = etzRevResult.status === 'fulfilled' ? etzRevResult.value : null;
-  const hscRev = hscRevResult.status === 'fulfilled' ? hscRevResult.value : null;
-  const email  = emailResult.status  === 'fulfilled' ? emailResult.value  : null;
+  const ppRev    = ppRevResult.status    === 'fulfilled' ? ppRevResult.value    : null;
+  const etzRev   = etzRevResult.status   === 'fulfilled' ? etzRevResult.value   : null;
+  const hscRev   = hscRevResult.status   === 'fulfilled' ? hscRevResult.value   : null;
+  const blakeRev = blakeRevResult.status === 'fulfilled' ? blakeRevResult.value : null;
+  const email    = emailResult.status    === 'fulfilled' ? emailResult.value    : null;
 
-  const ppRevenue  = ppRev?.totalRevenue  ?? 0;
-  const etzRevenue = etzRev?.totalRevenue ?? 0;
-  const hscRevenue = hscRev?.totalRevenue ?? 0;
+  const ppRevenue    = ppRev?.totalRevenue    ?? 0;
+  const etzRevenue   = etzRev?.totalRevenue   ?? 0;
+  const hscRevenue   = hscRev?.totalRevenue   ?? 0;
+  const blakeRevenue = blakeRev?.totalRevenue ?? 0;
 
-  const ppBudget  = MONTHLY_GOOGLE_BUDGETS['Pascal Press']      ?? 0;
-  const etzBudget = MONTHLY_GOOGLE_BUDGETS['Excel Test Zone']   ?? 0;
-  const hscBudget = MONTHLY_GOOGLE_BUDGETS['Excel HSC Copilot'] ?? 0;
+  const ppBudget    = MONTHLY_GOOGLE_BUDGETS['Pascal Press']      ?? 0;
+  const etzBudget   = MONTHLY_GOOGLE_BUDGETS['Excel Test Zone']   ?? 0;
+  const hscBudget   = MONTHLY_GOOGLE_BUDGETS['Excel HSC Copilot'] ?? 0;
+  const blakeBudget = MONTHLY_GOOGLE_BUDGETS['Blake Education']   ?? 0;
 
-  const ppRoas  = ppSpend  > 0 ? Math.round((ppRevenue  / ppSpend)  * 10) / 10 : 0;
-  const etzRoas = etzSpend > 0 ? Math.round((etzRevenue / etzSpend) * 10) / 10 : 0;
-  const hscRoas = hscSpend > 0 ? Math.round((hscRevenue / hscSpend) * 10) / 10 : 0;
-  const combinedRoas = (ppSpend + etzSpend + hscSpend) > 0
-    ? Math.round(((ppRevenue + etzRevenue + hscRevenue) / (ppSpend + etzSpend + hscSpend)) * 10) / 10
+  const ppRoas    = ppSpend    > 0 ? Math.round((ppRevenue    / ppSpend)    * 10) / 10 : 0;
+  const etzRoas   = etzSpend   > 0 ? Math.round((etzRevenue   / etzSpend)   * 10) / 10 : 0;
+  const hscRoas   = hscSpend   > 0 ? Math.round((hscRevenue   / hscSpend)   * 10) / 10 : 0;
+  const blakeRoas = blakeSpend > 0 ? Math.round((blakeRevenue / blakeSpend) * 10) / 10 : 0;
+  const totalSpend   = ppSpend + etzSpend + hscSpend + blakeSpend;
+  const totalRevenue = ppRevenue + etzRevenue + hscRevenue + blakeRevenue;
+  const combinedRoas = totalSpend > 0
+    ? Math.round((totalRevenue / totalSpend) * 10) / 10
     : 0;
 
   // Fraction of month elapsed
@@ -236,6 +246,9 @@ export async function GET(request: Request) {
   if (ppAdsError)  console.error('[overview] PP Google Ads error:',  ppAdsError);
   if (etzAdsError) console.error('[overview] ETZ Google Ads error:', etzAdsError);
   if (hscAdsError) console.error('[overview] HSC Google Ads error:', hscAdsError);
+  if (blakeRevResult.status === 'rejected') {
+    console.error('[overview] Blake BigCommerce error:', String(blakeRevResult.reason));
+  }
 
   return NextResponse.json({
     month,
@@ -273,9 +286,19 @@ export async function GET(request: Request) {
       adsConnected: hscAdsResult.status === 'fulfilled',
       adsError:     hscAdsError,
     },
+    blake: {
+      spend:        Math.round(blakeSpend * 100) / 100,
+      budget:       blakeBudget,
+      revenue:      Math.round(blakeRevenue * 100) / 100,
+      roas:         blakeRoas,
+      orders:       blakeRev?.totalOrders ?? 0,
+      revConnected: blakeRev?.connected   ?? false,
+      adsConnected: false,
+      adsError:     null,
+    },
     combined: {
-      spend:   Math.round((ppSpend   + etzSpend   + hscSpend)   * 100) / 100,
-      revenue: Math.round((ppRevenue + etzRevenue + hscRevenue) * 100) / 100,
+      spend:   Math.round(totalSpend   * 100) / 100,
+      revenue: Math.round(totalRevenue * 100) / 100,
       roas:    combinedRoas,
     },
     email: email ? {
