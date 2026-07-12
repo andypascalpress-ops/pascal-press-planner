@@ -106,10 +106,12 @@ async function findBand6Products(): Promise<BCCatalogProduct[]> {
   return products;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   if (!STORE_HASH || !ACCESS_TOKEN) {
     return NextResponse.json({ connected: false, error: 'BigCommerce not configured' });
   }
+
+  const debug = new URL(request.url).searchParams.get('debug') === '1';
 
   try {
     // ── 1. Discover products via catalog search (best-effort; used for display + ID match)
@@ -118,7 +120,13 @@ export async function GET() {
     const productIds = new Set(products.map(p => p.id));
 
     // ── 2. Fetch all orders from July 2026 → today ───────────────────────────
-    const today = new Date().toISOString().split('T')[0]!;
+    // Use Australia/Sydney "today" so the window matches AU storefront days
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Australia/Sydney',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
     const orders = await fetchAllOrderPages({
       min_date_created: `${START_DATE}T00:00:00+10:00`,
       max_date_created: `${today}T23:59:59+10:00`,
@@ -129,6 +137,18 @@ export async function GET() {
     let totalRevenue = 0;
     let totalOrders  = 0;
     let totalUnits   = 0;
+    const breakdown: Array<{
+      orderId: number;
+      status: string;
+      date: string;
+      productId: number;
+      name: string;
+      quantity: number;
+      unitPriceIncTax: number;
+      lineTotalIncTax: number;
+      totalFieldIncTax: number | null;
+      match: 'product_id' | 'name';
+    }> = [];
 
     const BATCH = 10;
     for (let i = 0; i < validOrders.length; i += BATCH) {
@@ -136,32 +156,63 @@ export async function GET() {
       const results = await Promise.allSettled(
         batch.map(order =>
           fetch(`${BC_BASE}/orders/${order.id}/products?limit=250`, { headers: bcHeaders() })
-            .then(r => r.ok ? (r.json() as Promise<BCOrderProduct[]>) : Promise.resolve([] as BCOrderProduct[]))
-            .catch(() => [] as BCOrderProduct[]),
+            .then(r => r.ok ? (r.json() as Promise<any[]>) : Promise.resolve([] as any[]))
+            .catch(() => [] as any[]),
         ),
       );
 
       for (let j = 0; j < batch.length; j++) {
+        const order = batch[j]!;
         const result = results[j];
         if (result?.status !== 'fulfilled') continue;
-        const lineItems: BCOrderProduct[] = Array.isArray(result.value) ? result.value : [];
-        // Match by catalog product_id (if search found them) OR by line-item name
-        const band6Items = lineItems.filter(li => {
-          if (productIds.size > 0 && productIds.has(li.product_id)) return true;
+        const lineItems: any[] = Array.isArray(result.value) ? result.value : [];
+
+        const matched: Array<{ li: any; match: 'product_id' | 'name' }> = [];
+        for (const li of lineItems) {
+          if (productIds.size > 0 && productIds.has(li.product_id)) {
+            matched.push({ li, match: 'product_id' });
+            continue;
+          }
           const n = (li.name ?? '').toLowerCase();
-          return (
+          if (
             n.includes('band 6') || n.includes('band6') ||
             n.includes('60 days') || n.includes('60days') || n.includes('60-days')
-          );
-        });
-        if (band6Items.length === 0) continue;
+          ) {
+            matched.push({ li, match: 'name' });
+          }
+        }
+        if (matched.length === 0) continue;
 
-        const orderRevenue = band6Items.reduce(
-          (s, li) => s + parseFloat(li.price_inc_tax || '0') * li.quantity, 0,
-        );
+        // Prefer BC line total_inc_tax when present (already qty × unit); else unit × qty
+        let orderRevenue = 0;
+        let orderUnits = 0;
+        for (const { li, match } of matched) {
+          const qty = Number(li.quantity) || 0;
+          const unit = parseFloat(li.price_inc_tax || '0') || 0;
+          const totalField = li.total_inc_tax != null ? parseFloat(li.total_inc_tax) : null;
+          const lineTotal = totalField != null && !Number.isNaN(totalField)
+            ? totalField
+            : unit * qty;
+          orderRevenue += lineTotal;
+          orderUnits += qty;
+          if (debug) {
+            breakdown.push({
+              orderId: order.id,
+              status: order.status,
+              date: order.date_created,
+              productId: li.product_id,
+              name: li.name,
+              quantity: qty,
+              unitPriceIncTax: unit,
+              lineTotalIncTax: Math.round(lineTotal * 100) / 100,
+              totalFieldIncTax: totalField,
+              match,
+            });
+          }
+        }
         totalRevenue += orderRevenue;
         totalOrders++;
-        totalUnits += band6Items.reduce((s, li) => s + li.quantity, 0);
+        totalUnits += orderUnits;
       }
     }
 
@@ -170,7 +221,7 @@ export async function GET() {
       Math.round((new Date(END_DATE).getTime() - Date.now()) / 86_400_000),
     );
 
-    return NextResponse.json({
+    const payload: Record<string, unknown> = {
       connected:    true,
       products:     products.map(p => ({ id: p.id, name: p.name, sku: p.sku })),
       revenue:      Math.round(totalRevenue * 100) / 100,
@@ -180,7 +231,32 @@ export async function GET() {
       startDate:    START_DATE,
       endDate:      END_DATE,
       daysRemaining,
-    });
+      method:       'line_items total_inc_tax (fallback price_inc_tax × qty), GST-inclusive',
+      orderWindow:  { min: `${START_DATE}T00:00:00+10:00`, max: `${today}T23:59:59+10:00` },
+      validOrderCount: validOrders.length,
+      catalogMatchCount: products.length,
+    };
+    if (debug) {
+      const byProduct: Record<string, { name: string; units: number; revenue: number; orders: number }> = {};
+      for (const row of breakdown) {
+        const key = String(row.productId);
+        if (!byProduct[key]) byProduct[key] = { name: row.name, units: 0, revenue: 0, orders: 0 };
+        byProduct[key]!.units += row.quantity;
+        byProduct[key]!.revenue += row.lineTotalIncTax;
+      }
+      // unique orders per product
+      for (const key of Object.keys(byProduct)) {
+        byProduct[key]!.orders = new Set(
+          breakdown.filter(r => String(r.productId) === key).map(r => r.orderId),
+        ).size;
+        byProduct[key]!.revenue = Math.round(byProduct[key]!.revenue * 100) / 100;
+      }
+      payload.breakdown = breakdown;
+      payload.byProduct = byProduct;
+      payload.excludedStatuses = [...EXCLUDED_STATUSES];
+    }
+
+    return NextResponse.json(payload);
 
   } catch (e) {
     return NextResponse.json({
