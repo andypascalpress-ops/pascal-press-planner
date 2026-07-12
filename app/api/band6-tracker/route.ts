@@ -137,6 +137,14 @@ export async function GET(request: Request) {
     let totalRevenue = 0;
     let totalOrders  = 0;
     let totalUnits   = 0;
+    // productId → aggregate stats for the UI breakdown
+    const byProductMap = new Map<number, {
+      productId: number;
+      name: string;
+      units: number;
+      revenue: number;
+      orderIds: Set<number>;
+    }>();
     const breakdown: Array<{
       orderId: number;
       status: string;
@@ -195,12 +203,29 @@ export async function GET(request: Request) {
             : unit * qty;
           orderRevenue += lineTotal;
           orderUnits += qty;
+
+          const pid = Number(li.product_id) || 0;
+          const existing = byProductMap.get(pid);
+          if (existing) {
+            existing.units += qty;
+            existing.revenue += lineTotal;
+            existing.orderIds.add(order.id);
+          } else {
+            byProductMap.set(pid, {
+              productId: pid,
+              name: String(li.name ?? 'Unknown'),
+              units: qty,
+              revenue: lineTotal,
+              orderIds: new Set([order.id]),
+            });
+          }
+
           if (debug) {
             breakdown.push({
               orderId: order.id,
               status: order.status,
               date: order.date_created,
-              productId: li.product_id,
+              productId: pid,
               name: li.name,
               quantity: qty,
               unitPriceIncTax: unit,
@@ -216,6 +241,22 @@ export async function GET(request: Request) {
       }
     }
 
+    const productBreakdown = [...byProductMap.values()]
+      .map(p => ({
+        productId: p.productId,
+        name: p.name,
+        // Short label: strip leading "Excel 60 Days to Band 6" noise for UI
+        shortName: p.name
+          .replace(/^Excel\s+/i, '')
+          .replace(/60\s*Days\s*to\s*Band\s*6\s*/i, '')
+          .replace(/\s{2,}/g, ' ')
+          .trim() || p.name,
+        units: p.units,
+        orders: p.orderIds.size,
+        revenue: Math.round(p.revenue * 100) / 100,
+      }))
+      .sort((a, b) => b.revenue - a.revenue);
+
     const daysRemaining = Math.max(
       0,
       Math.round((new Date(END_DATE).getTime() - Date.now()) / 86_400_000),
@@ -224,6 +265,7 @@ export async function GET(request: Request) {
     const payload: Record<string, unknown> = {
       connected:    true,
       products:     products.map(p => ({ id: p.id, name: p.name, sku: p.sku })),
+      productBreakdown,
       revenue:      Math.round(totalRevenue * 100) / 100,
       orders:       totalOrders,
       units:        totalUnits,
@@ -237,22 +279,7 @@ export async function GET(request: Request) {
       catalogMatchCount: products.length,
     };
     if (debug) {
-      const byProduct: Record<string, { name: string; units: number; revenue: number; orders: number }> = {};
-      for (const row of breakdown) {
-        const key = String(row.productId);
-        if (!byProduct[key]) byProduct[key] = { name: row.name, units: 0, revenue: 0, orders: 0 };
-        byProduct[key]!.units += row.quantity;
-        byProduct[key]!.revenue += row.lineTotalIncTax;
-      }
-      // unique orders per product
-      for (const key of Object.keys(byProduct)) {
-        byProduct[key]!.orders = new Set(
-          breakdown.filter(r => String(r.productId) === key).map(r => r.orderId),
-        ).size;
-        byProduct[key]!.revenue = Math.round(byProduct[key]!.revenue * 100) / 100;
-      }
       payload.breakdown = breakdown;
-      payload.byProduct = byProduct;
       payload.excludedStatuses = [...EXCLUDED_STATUSES];
     }
 

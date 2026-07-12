@@ -79,10 +79,19 @@ function monthLabel(ym: string): string {
 // ─── Band 6 Tracker types ────────────────────────────────────────────────────
 
 interface Band6Product { id: number; name: string; sku: string; }
+interface Band6ProductRow {
+  productId: number;
+  name: string;
+  shortName: string;
+  units: number;
+  orders: number;
+  revenue: number;
+}
 interface Band6Data {
   connected:    boolean;
   error?:       string;
   products:     Band6Product[];
+  productBreakdown?: Band6ProductRow[];
   revenue:      number;
   orders:       number;
   units:        number;
@@ -229,6 +238,8 @@ function Band6TrackerCard({ data }: { data: Band6Data }) {
   const dailyNeeded   = data.daysRemaining > 0 ? remaining / data.daysRemaining : null;
   const barColor      = pct >= 1 ? 'bg-emerald-500' : pct >= 0.7 ? 'bg-blue-500' : pct >= 0.4 ? 'bg-amber-500' : 'bg-orange-400';
   const needColor     = !dailyNeeded ? 'text-gray-400' : dailyNeeded < 300 ? 'text-emerald-600' : dailyNeeded < 700 ? 'text-amber-600' : 'text-red-600';
+  const rows          = data.productBreakdown ?? [];
+  const productCount  = rows.length > 0 ? rows.length : data.products.length;
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
@@ -238,7 +249,9 @@ function Band6TrackerCard({ data }: { data: Band6Data }) {
             <h3 className="text-sm font-semibold text-gray-800">60 Days to Band 6</h3>
             <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full font-medium">Series Tracker</span>
           </div>
-          <p className="text-xs text-gray-400 mt-0.5">{data.products.length} products · target by Nov 2026</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {productCount > 0 ? `${productCount} titles selling` : 'No sales yet'} · target by Nov 2026
+          </p>
         </div>
         <div className="text-right shrink-0">
           <p className="text-xl font-bold text-gray-900">{AUD.format(data.revenue)}</p>
@@ -275,22 +288,39 @@ function Band6TrackerCard({ data }: { data: Band6Data }) {
         </div>
       </div>
 
-      {/* Product list (collapsible) */}
-      {data.products.length > 0 && (
-        <details className="mt-3">
-          <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600 select-none">
-            {data.products.length} products tracked — click to expand
-          </summary>
-          <ul className="mt-2 space-y-0.5 pl-1">
-            {data.products.map(p => (
-              <li key={p.id} className="text-xs text-gray-600 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 flex-shrink-0" />
-                {p.name}
-                {p.sku && <span className="text-gray-400">({p.sku})</span>}
-              </li>
-            ))}
-          </ul>
-        </details>
+      {/* Product revenue breakdown */}
+      {rows.length > 0 && (
+        <div className="mt-4 border-t border-gray-100 pt-3">
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">By product</p>
+          <div className="space-y-2">
+            {rows.map((row) => {
+              const share = data.revenue > 0 ? row.revenue / data.revenue : 0;
+              return (
+                <div key={row.productId || row.name}>
+                  <div className="flex items-center justify-between gap-2 text-xs mb-0.5">
+                    <span className="text-gray-700 font-medium truncate" title={row.name}>
+                      {row.shortName || row.name}
+                    </span>
+                    <span className="text-gray-900 font-semibold tabular-nums shrink-0">
+                      {AUD.format(row.revenue)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-purple-400"
+                        style={{ width: `${Math.max(share * 100, share > 0 ? 2 : 0)}%` }}
+                      />
+                    </div>
+                    <span className="text-[11px] text-gray-400 tabular-nums shrink-0 w-16 text-right">
+                      {row.units}u · {row.orders}o
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );
