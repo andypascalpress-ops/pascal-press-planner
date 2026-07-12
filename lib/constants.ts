@@ -49,15 +49,15 @@ export type SpendBrand = typeof SPEND_BRANDS[number];
 export const ANNUAL_BUDGETS: Record<string, number> = {
   'Pascal Press':      103400,  // Online Adv $22k + Google $42k + Facebook $28k + Mktg/PR $3.6k + Promo-Prizes $3k + Brochures $4.8k
   'Excel Test Zone':    36000,  // Google $24k + Facebook $12k
-  'Excel HSC Copilot':  9600,   // Google $800/mo × 12
+  'Excel HSC Copilot':  21600,  // Google $1,800/mo × 12
 };
 
 // Fixed monthly Google Ads budgets (source of truth for budget calculations)
-// Updated July 2026: PP $8,300/mo, ETZ $3,700/mo, HSC $800/mo
+// Updated July 2026: PP $8,300/mo, ETZ $3,700/mo, HSC $1,800/mo
 export const MONTHLY_GOOGLE_BUDGETS: Record<string, number> = {
   'Pascal Press':      8300,
   'Excel Test Zone':   3700,
-  'Excel HSC Copilot':  800,
+  'Excel HSC Copilot':  1800,
 };
 
 export const SPEND_CHANNELS = [
