@@ -190,7 +190,10 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
   isMonthly: boolean;
   onNavigate: () => void;
 }) {
-  const tagColor = name === 'Pascal Press' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700';
+  const tagColor =
+    name === 'Pascal Press' ? 'bg-blue-100 text-blue-700'
+    : name === 'Blake Education' ? 'bg-violet-100 text-violet-700'
+    : 'bg-emerald-100 text-emerald-700';
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 flex flex-col gap-4">
       <div className="flex items-center justify-between">
@@ -200,8 +203,8 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
         </button>
       </div>
 
-      {/* Revenue + ROAS */}
-      <div className="grid grid-cols-2 gap-3">
+      {/* Revenue (+ ROAS only when Google Ads is connected) */}
+      <div className={`grid gap-3 ${data.adsConnected ? 'grid-cols-2' : 'grid-cols-1'}`}>
         <div>
           <p className="text-xs text-gray-500 mb-0.5">Revenue</p>
           <p className="text-lg font-bold text-gray-900">
@@ -209,25 +212,22 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
           </p>
           {data.orders > 0 && <p className="text-xs text-gray-400">{data.orders.toLocaleString()} orders</p>}
         </div>
-        <div>
-          <p className="text-xs text-gray-500 mb-0.5">Google Ads ROAS</p>
-          <p className={`text-lg font-bold ${roasColor(data.roas)}`}>
-            {data.adsConnected && data.roas > 0 ? `${data.roas}x` : <span className="text-gray-400 text-sm">—</span>}
-          </p>
-          {data.adsConnected && data.spend > 0 && (
-            <p className="text-xs text-gray-400">{AUD.format(data.spend)} spend</p>
-          )}
-        </div>
+        {data.adsConnected && (
+          <div>
+            <p className="text-xs text-gray-500 mb-0.5">Google Ads ROAS</p>
+            <p className={`text-lg font-bold ${roasColor(data.roas)}`}>
+              {data.roas > 0 ? `${data.roas}x` : <span className="text-gray-400 text-sm">—</span>}
+            </p>
+            {data.spend > 0 && (
+              <p className="text-xs text-gray-400">{AUD.format(data.spend)} spend</p>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Budget bar */}
-      {data.adsConnected ? (
+      {/* Budget bar only when ads are connected */}
+      {data.adsConnected && (
         <BudgetBar spend={data.spend} budget={data.budget} dayPct={dayPct} isMonthly={isMonthly} />
-      ) : (
-        <div className="text-xs text-gray-400 italic">
-          Google Ads not connected
-          {data.adsError && <p className="text-[10px] text-red-400 font-mono mt-0.5 break-all">{data.adsError}</p>}
-        </div>
       )}
     </div>
   );
@@ -497,7 +497,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
           <KpiCard
             label="Total Ad Spend"
             value={AUD.format(combined.spend)}
-            sub={`of ${AUD.format((pp.budget + etz.budget + hsc.budget + (blake?.budget ?? 0)))} budget`}
+            sub={`of ${AUD.format(pp.budget + etz.budget + hsc.budget + (blake?.adsConnected ? blake.budget : 0))} budget`}
           />
           <KpiCard
             label="Combined ROAS"
