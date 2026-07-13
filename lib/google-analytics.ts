@@ -814,24 +814,27 @@ async function fetchPPVisitsProxy(
 
   const debug = { sessions, totalUsers, engagedSessions, hostSessions, hostUsers, hostEngaged };
 
-  // Prefer metrics that land closest to BC Store Performance "visits"
-  // (BC filters bots / uses its own visit definition — usually lower than raw GA sessions).
-  if (hostEngaged > 0) {
-    return { visits: hostEngaged, metric: 'ga_host_engaged(pascalpress)', debug };
+  // Use storefront host sessions as the visits proxy.
+  // Note: BC control-panel "visits" are not in the public API and often differ from GA
+  // (bot filtering / visit definition). Engaged sessions lag badly on same-day ranges,
+  // so we prefer host sessions for a stable real-time denominator.
+  // Numerator is always live BigCommerce orders (matches BC order count closely).
+  if (hostSessions > 0) {
+    return { visits: hostSessions, metric: 'ga_host_sessions(pascalpress)', debug };
+  }
+  if (sessions > 0) {
+    return { visits: sessions, metric: 'ga_sessions', debug };
   }
   if (hostUsers > 0) {
     return { visits: hostUsers, metric: 'ga_host_users(pascalpress)', debug };
   }
-  if (engagedSessions > 0) {
-    return { visits: engagedSessions, metric: 'ga_engaged_sessions', debug };
-  }
-  if (hostSessions > 0) {
-    return { visits: hostSessions, metric: 'ga_host_sessions(pascalpress)', debug };
-  }
   if (totalUsers > 0) {
     return { visits: totalUsers, metric: 'ga_total_users', debug };
   }
-  return { visits: sessions, metric: 'ga_sessions', debug };
+  if (hostEngaged > 0) {
+    return { visits: hostEngaged, metric: 'ga_host_engaged(pascalpress)', debug };
+  }
+  return { visits: engagedSessions, metric: 'ga_engaged_sessions', debug };
 }
 
 function buildConversionReason(
