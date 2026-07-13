@@ -661,28 +661,6 @@ function conversionDateWindows(month: string): {
   return { curStart, curEnd, prevStart, prevEnd };
 }
 
-async function runReportOnProperty(
-  accessToken: string,
-  propertyBase: string,
-  body: object,
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-): Promise<any> {
-  const res = await fetch(`${propertyBase}:runReport`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-    cache: 'no-store',
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`GA4 conversion API error (${res.status}): ${err.slice(0, 400)}`);
-  }
-  return res.json();
-}
-
 async function fetchSessionsPurchases(
   accessToken: string,
   propertyBase: string,
