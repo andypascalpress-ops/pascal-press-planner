@@ -5,6 +5,15 @@ import { OverviewAlert } from '@/lib/types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+interface ConversionSnapshot {
+  rate:      number | null;
+  deltaPp:   number | null;
+  direction: 'up' | 'down' | 'flat' | null;
+  sessions:  number | null;
+  purchases: number | null;
+  reason:    string | null;
+}
+
 interface BrandData {
   spend:        number;
   budget:       number;
@@ -14,6 +23,7 @@ interface BrandData {
   revConnected: boolean;
   adsConnected: boolean;
   adsError?:    string | null;
+  conversion?:  ConversionSnapshot | null;
 }
 
 interface OverviewData {
@@ -224,6 +234,42 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
           </div>
         )}
       </div>
+
+      {/* Site conversion rate (GA4 sessions → purchases) */}
+      {data.conversion?.rate != null && (
+        <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2.5">
+          <div className="flex items-baseline justify-between gap-2">
+            <div>
+              <p className="text-xs text-indigo-600 font-medium mb-0.5">Site conversion</p>
+              <p className="text-lg font-bold text-indigo-900">
+                {data.conversion.rate.toFixed(2)}%
+              </p>
+            </div>
+            {data.conversion.deltaPp != null && data.conversion.direction && (
+              <span className={
+                'text-xs font-semibold px-2 py-0.5 rounded-full ' +
+                (data.conversion.direction === 'up'
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : data.conversion.direction === 'down'
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-gray-100 text-gray-600')
+              }>
+                {data.conversion.direction === 'up' ? '↑' : data.conversion.direction === 'down' ? '↓' : '→'}{' '}
+                {data.conversion.deltaPp > 0 ? '+' : ''}{data.conversion.deltaPp.toFixed(2)}pp
+              </span>
+            )}
+          </div>
+          {(data.conversion.sessions != null || data.conversion.purchases != null) && (
+            <p className="text-xs text-indigo-500/80 mt-1">
+              {(data.conversion.purchases ?? 0).toLocaleString()} purchases ·{' '}
+              {(data.conversion.sessions ?? 0).toLocaleString()} sessions
+            </p>
+          )}
+          {data.conversion.reason && (
+            <p className="text-xs text-indigo-800/80 mt-1.5 leading-snug">{data.conversion.reason}</p>
+          )}
+        </div>
+      )}
 
       {/* Budget bar only when ads are connected */}
       {data.adsConnected && (

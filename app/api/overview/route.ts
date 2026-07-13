@@ -10,6 +10,7 @@ import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
 import { fetchPPRevenue, fetchBlakeRevenue } from '@/lib/bigcommerce-revenue';
 import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-revenue';
 import { fetchEmailCampaigns } from '@/lib/hubspot-email';
+import { fetchPPWebsiteConversion, fetchETZWebsiteConversion } from '@/lib/google-analytics';
 import { MONTHLY_GOOGLE_BUDGETS } from '@/lib/constants';
 import { OverviewAlert } from '@/lib/types';
 
@@ -115,7 +116,7 @@ export async function GET(request: Request) {
   // Blake: revenue only for now (no Google Ads account connected)
   const blakeSpend = 0;
 
-  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult] =
+  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult, ppConvResult, etzConvResult] =
     await Promise.allSettled([
       ppCfg
         ? fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' })
@@ -133,6 +134,8 @@ export async function GET(request: Request) {
       fetchHSCStripeRevenue(month, { dateRange: { start: startDate, end: endDate } }),
       fetchBlakeRevenue(month, { start: startDate, end: endDate }),
       fetchEmailCampaigns(month, { dateRange: { start: startDate, end: endDate } }),
+      fetchPPWebsiteConversion(month),
+      fetchETZWebsiteConversion(month),
     ]);
 
   const ppSpend  = ppAdsResult.status  === 'fulfilled'
@@ -147,6 +150,8 @@ export async function GET(request: Request) {
   const hscRev   = hscRevResult.status   === 'fulfilled' ? hscRevResult.value   : null;
   const blakeRev = blakeRevResult.status === 'fulfilled' ? blakeRevResult.value : null;
   const email    = emailResult.status    === 'fulfilled' ? emailResult.value    : null;
+  const ppConv   = ppConvResult.status   === 'fulfilled' ? ppConvResult.value   : null;
+  const etzConv  = etzConvResult.status  === 'fulfilled' ? etzConvResult.value  : null;
 
   const ppRevenue    = ppRev?.totalRevenue    ?? 0;
   const etzRevenue   = etzRev?.totalRevenue   ?? 0;
@@ -231,6 +236,20 @@ export async function GET(request: Request) {
       message: `Excel Test Zone ROAS is ${etzRoas}x — below the 3x minimum threshold.` });
   }
 
+  // ── Website conversion alerts ───────────────────────────────────────────────
+  if (ppConv?.connected && ppConv.direction === 'down' && (ppConv.deltaPp ?? 0) <= -0.3) {
+    alerts.push({
+      id: 'pp-cr-down', severity: 'warning', brand: 'Pascal Press',
+      message: `Pascal Press site conversion is ${ppConv.current?.conversionRate.toFixed(2)}% (${ppConv.deltaPp}pp) — ${ppConv.reason ?? 'down vs same period last month'}.`,
+    });
+  }
+  if (etzConv?.connected && etzConv.direction === 'down' && (etzConv.deltaPp ?? 0) <= -0.3) {
+    alerts.push({
+      id: 'etz-cr-down', severity: 'warning', brand: 'Excel Test Zone',
+      message: `Excel Test Zone site conversion is ${etzConv.current?.conversionRate.toFixed(2)}% (${etzConv.deltaPp}pp) — ${etzConv.reason ?? 'down vs same period last month'}.`,
+    });
+  }
+
   // ── Email alerts ───────────────────────────────────────────────────────────
   if (email?.connected && email.totalSends > 0) {
     if (email.avgOpenRate < 0.15) {
@@ -265,6 +284,14 @@ export async function GET(request: Request) {
       revConnected: ppRev?.connected   ?? false,
       adsConnected: ppAdsResult.status === 'fulfilled',
       adsError:     ppAdsError,
+      conversion:   ppConv?.connected ? {
+        rate:      ppConv.current?.conversionRate ?? null,
+        deltaPp:   ppConv.deltaPp,
+        direction: ppConv.direction,
+        sessions:  ppConv.current?.sessions ?? null,
+        purchases: ppConv.current?.purchases ?? null,
+        reason:    ppConv.reason,
+      } : null,
     },
     etz: {
       spend:        Math.round(etzSpend * 100) / 100,
@@ -275,6 +302,14 @@ export async function GET(request: Request) {
       revConnected: etzRev?.connected   ?? false,
       adsConnected: etzAdsResult.status === 'fulfilled',
       adsError:     etzAdsError,
+      conversion:   etzConv?.connected ? {
+        rate:      etzConv.current?.conversionRate ?? null,
+        deltaPp:   etzConv.deltaPp,
+        direction: etzConv.direction,
+        sessions:  etzConv.current?.sessions ?? null,
+        purchases: etzConv.current?.purchases ?? null,
+        reason:    etzConv.reason,
+      } : null,
     },
     hsc: {
       spend:        Math.round(hscSpend * 100) / 100,
@@ -285,6 +320,7 @@ export async function GET(request: Request) {
       revConnected: hscRev?.connected   ?? false,
       adsConnected: hscAdsResult.status === 'fulfilled',
       adsError:     hscAdsError,
+      conversion:   null,
     },
     blake: {
       spend:        Math.round(blakeSpend * 100) / 100,
@@ -295,6 +331,7 @@ export async function GET(request: Request) {
       revConnected: blakeRev?.connected   ?? false,
       adsConnected: false,
       adsError:     null,
+      conversion:   null,
     },
     combined: {
       spend:   Math.round(totalSpend   * 100) / 100,

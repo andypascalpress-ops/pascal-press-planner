@@ -71,6 +71,34 @@ interface GA4HistoryItem {
   };
 }
 
+interface WebsiteConversionBrand {
+  connected: boolean;
+  source: 'ga4';
+  current: {
+    sessions: number;
+    purchases: number;
+    conversionRate: number;
+    startDate: string;
+    endDate: string;
+  } | null;
+  previous: {
+    sessions: number;
+    purchases: number;
+    conversionRate: number;
+    startDate: string;
+    endDate: string;
+  } | null;
+  deltaPp: number | null;
+  direction: 'up' | 'down' | 'flat' | null;
+  reason: string | null;
+}
+
+interface WebsiteConversionResponse {
+  month: string;
+  pp: WebsiteConversionBrand;
+  etz: WebsiteConversionBrand;
+}
+
 interface Props {
   records: SpendRecord[];
   syncing: boolean;
@@ -461,12 +489,15 @@ interface BrandPanelProps {
   /** Live Google Ads spend from API — overrides Monday.com actualSpend when present */
   liveGoogleAdsSpend?: number | null;
   liveGoogleAdsConnected?: boolean;
+  /** Site-wide conversion (GA4 sessions → purchases) */
+  websiteConversion?: WebsiteConversionBrand | null;
 }
 
 function BrandPanel({
   brand, label, color, accentBg, accentText,
   records, selectedMonth, revenue, revenueLabel, prevRevenue,
   liveGoogleAdsSpend, liveGoogleAdsConnected,
+  websiteConversion,
 }: BrandPanelProps) {
   const monthRecords = spendForBrandMonth(records, brand, selectedMonth);
   const annualBudget = (ANNUAL_BUDGETS as Record<string, number>)[brand] ?? 0;
@@ -715,6 +746,58 @@ function BrandPanel({
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Website conversion (site-wide, not Ads) ── */}
+        {websiteConversion?.connected && websiteConversion.current && (
+          <div className="px-4 pb-4">
+            <div className="rounded-xl border border-indigo-100 overflow-hidden">
+              <div className="bg-indigo-600 px-4 py-2.5 flex items-center justify-between">
+                <span className="text-white font-bold text-sm tracking-wide">Website Conversion</span>
+                <span className="text-indigo-100 text-xs font-medium">GA4 · site-wide</span>
+              </div>
+              <div className="bg-indigo-50 px-4 py-3 space-y-2">
+                <div className="flex items-baseline justify-between gap-3">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-bold text-indigo-900">
+                      {websiteConversion.current.conversionRate.toFixed(2)}%
+                    </span>
+                    {websiteConversion.deltaPp != null && websiteConversion.direction && (
+                      <span className={
+                        'text-xs font-semibold px-2 py-0.5 rounded-full ' +
+                        (websiteConversion.direction === 'up'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : websiteConversion.direction === 'down'
+                            ? 'bg-red-100 text-red-700'
+                            : 'bg-gray-100 text-gray-600')
+                      }>
+                        {websiteConversion.direction === 'up' ? '↑' : websiteConversion.direction === 'down' ? '↓' : '→'}{' '}
+                        {websiteConversion.deltaPp > 0 ? '+' : ''}
+                        {websiteConversion.deltaPp.toFixed(2)}pp
+                      </span>
+                    )}
+                  </div>
+                  {websiteConversion.previous && (
+                    <span className="text-xs text-indigo-500">
+                      prev {websiteConversion.previous.conversionRate.toFixed(2)}%
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-3 text-sm text-indigo-800">
+                  <span>{websiteConversion.current.purchases.toLocaleString()} purchases</span>
+                  <span>· {websiteConversion.current.sessions.toLocaleString()} sessions</span>
+                </div>
+                {websiteConversion.reason && (
+                  <div className="text-xs text-indigo-900/80 bg-white/70 rounded-lg px-3 py-2 leading-snug">
+                    {websiteConversion.reason}
+                  </div>
+                )}
+                <div className="text-xs text-indigo-400">
+                  vs same days last month · not Google Ads conversion rate
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1059,6 +1142,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [ga4History,       setGa4History      ] = useState<GA4HistoryItem[] | null>(null);
   const [campaigns,        setCampaigns       ] = useState<CampaignsResponse | null>(null);
   const [loadingCampaigns, setLoadingCampaigns] = useState(false);
+  const [siteConversion,   setSiteConversion  ] = useState<WebsiteConversionResponse | null>(null);
 
   // Persist month choice so remounts (tab switches) don't snap back to default
   useEffect(() => {
@@ -1077,6 +1161,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
     setGoogleAdsSpend(null);
     setGa4Revenue(null);
     setCampaigns(null);
+    setSiteConversion(null);
 
     fetch('/api/revenue?month=' + month, { signal })
       .then(r => r.json())
@@ -1115,6 +1200,14 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
         if (e?.name !== 'AbortError') setCampaigns(null);
       })
       .finally(() => { if (!signal.aborted) setLoadingCampaigns(false); });
+
+    fetch('/api/website-conversion?month=' + month, { signal })
+      .then(r => r.json())
+      .then((data: WebsiteConversionResponse) => {
+        if (data?.month && data.month !== month) return;
+        setSiteConversion(data);
+      })
+      .catch((e) => { if (e?.name !== 'AbortError') { /* ignore */ } });
 
     return () => ac.abort();
   }, [selectedMonth]);
@@ -1357,6 +1450,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             prevRevenue={ppPrev}
             liveGoogleAdsSpend={ppLiveSpend}
             liveGoogleAdsConnected={googleAdsSpend?.pp.connected}
+            websiteConversion={siteConversion?.pp ?? null}
           />
           <BrandPanel
             brand="Excel Test Zone"
@@ -1371,6 +1465,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             prevRevenue={null}
             liveGoogleAdsSpend={etzLiveSpend}
             liveGoogleAdsConnected={googleAdsSpend?.etz.connected}
+            websiteConversion={siteConversion?.etz ?? null}
           />
         </div>
 
