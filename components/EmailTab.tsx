@@ -69,37 +69,63 @@ function detectBrand(name: string, fromName: string): 'Pascal Press' | 'Excel Te
   if (n.includes('etz') || n.startsWith('excel') || f.includes('excel test') || f.includes('etz')) return 'Excel Test Zone';
   return 'Pascal Press';
 }
-function stripNumericPrefix(s: string): string { return s.replace(/^\d+[-_]/, ''); }
+function stripNumericPrefix(s: string): string {
+  // GA often prefixes HubSpot campaign IDs: "48087648-PP_5755_..."
+  return s.replace(/^\d{4,}[-_]/, '').replace(/^\d+[-_]/, '');
+}
+/** Extract codes like PP_5755 / ETZ_1234 for fuzzy matching across HubSpot vs GA names. */
+function extractCampaignCode(s: string): string | null {
+  const m = s.match(/\b((?:pp|etz|be)[_-]?\d{3,6})\b/i);
+  return m ? m[1]!.toLowerCase().replace('-', '_') : null;
+}
 function getPrevMonth(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
   const d = new Date(y, m - 2, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
+/** Sydney-safe month range — never request GA4 future dates. */
+function monthDateRange(ym: string): { start: string; end: string } {
+  const [y, m] = ym.split('-').map(Number);
+  const start = `${ym}-01`;
+  const lastDay = new Date(y, m, 0).getDate();
+  let end = `${ym}-${String(lastDay).padStart(2, '0')}`;
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Australia/Sydney',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  if (end > today) end = today;
+  if (start > today) return { start: today, end: today };
+  return { start, end };
+}
 function buildRevenueMap(byCampaign: CampaignRevenue[]): Map<string, CampaignRevenue> {
   const map = new Map<string, CampaignRevenue>();
   for (const c of byCampaign) {
-    map.set(normName(stripNumericPrefix(c.campaignName)), c);
+    const stripped = stripNumericPrefix(c.campaignName);
+    map.set(normName(stripped), c);
     map.set(normName(c.campaignName), c);
+    const code = extractCampaignCode(c.campaignName);
+    if (code) map.set(code, c);
   }
   return map;
 }
 function lookupRevenue(emailName: string, hsCampaignName: string, revenueMap: Map<string, CampaignRevenue>): CampaignRevenue | null {
-  if (hsCampaignName) {
-    const ckey = normName(stripNumericPrefix(hsCampaignName));
-    if (ckey.length > 3) {
-      if (revenueMap.has(ckey)) return revenueMap.get(ckey)!;
-      for (const [mk, val] of revenueMap) {
-        if (mk === ckey || mk.startsWith(ckey + '_') || ckey.startsWith(mk + '_')) return val;
-      }
+  const candidates = [hsCampaignName, emailName].filter(Boolean);
+  for (const raw of candidates) {
+    const code = extractCampaignCode(raw);
+    if (code && revenueMap.has(code)) return revenueMap.get(code)!;
+  }
+  for (const raw of candidates) {
+    const ckey = normName(stripNumericPrefix(raw));
+    if (ckey.length <= 3) continue;
+    if (revenueMap.has(ckey)) return revenueMap.get(ckey)!;
+    for (const [mk, val] of revenueMap) {
+      if (mk.length < 4) continue;
+      if (mk === ckey || mk.startsWith(ckey + '_') || ckey.startsWith(mk + '_')) return val;
+      // GA name often shorter than HubSpot "..._Launch" suffix
+      if (ckey.includes(mk) || mk.includes(ckey)) return val;
     }
-  }
-  const target = normName(emailName);
-  if (revenueMap.has(target)) return revenueMap.get(target)!;
-  for (const [key, val] of revenueMap) {
-    if (key.length > 5 && (target.startsWith(key + '_') || target === key)) return val;
-  }
-  for (const [key, val] of revenueMap) {
-    if (key.length > 8 && (key.includes(target) || target.includes(key))) return val;
   }
   return null;
 }
@@ -343,7 +369,7 @@ export default function EmailTab() {
   const [loading,       setLoading]       = useState(false);
   const [revLoading,    setRevLoading]    = useState(false);
   const [trendLoading,  setTrendLoading]  = useState(false);
-  const [sortKey,       setSortKey]       = useState<SortKey>('sentAt');
+  const [sortKey,       setSortKey]       = useState<SortKey>('revenue');
   const [sortDir,       setSortDir]       = useState<SortDir>('desc');
   const [brandFilter,   setBrandFilter]   = useState<'All' | 'Pascal Press' | 'Excel Test Zone' | 'Blake Education'>('All');
 
@@ -408,13 +434,13 @@ export default function EmailTab() {
 
     let start = '2022-01-01', end = 'today', prevStart = '', prevEnd = '';
     if (selectedMonth) {
-      const [y, m] = selectedMonth.split('-').map(Number);
-      start = `${selectedMonth}-01`;
-      end   = `${selectedMonth}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
+      const cur = monthDateRange(selectedMonth);
+      start = cur.start;
+      end = cur.end;
       const prev = getPrevMonth(selectedMonth);
-      const [py, pm] = prev.split('-').map(Number);
-      prevStart = `${prev}-01`;
-      prevEnd   = `${prev}-${String(new Date(py, pm, 0).getDate()).padStart(2, '0')}`;
+      const prevRange = monthDateRange(prev);
+      prevStart = prevRange.start;
+      prevEnd = prevRange.end;
     }
 
     const safeJson = async <T,>(r: Response): Promise<T> => {
@@ -804,6 +830,9 @@ export default function EmailTab() {
                             {group.emails.map(c => {
                               const oc = openColors(c.openRate), cc = clkColors(c.clickRate);
                               const ur = safeDiv(c.unsubscribes, c.sends);
+                              // Only show row-level revenue when this is the sole email in the GA group
+                              // (avoids double-counting the same campaign total on every child row).
+                              const rowRev = group.emails.length === 1 ? group.rev : null;
                               return (
                                 <tr key={c.id} className="hover:bg-gray-50 transition-colors border-t border-gray-50">
                                   <td className="pl-8 pr-5 py-2.5 max-w-xs">
@@ -816,7 +845,11 @@ export default function EmailTab() {
                                   <td className="px-4 py-2.5"><div className="flex items-center gap-2"><span className={`font-medium tabular-nums text-xs ${cc.text}`}>{pct(c.clickRate)}</span><div className="flex-1 min-w-[50px]"><RateBar value={c.clickRate * 10} color={cc.bar} /></div></div></td>
                                   <td className={`px-4 py-2.5 text-right font-medium text-xs tabular-nums ${c.opens > 0 ? ctorColor(c.clickToOpen) : 'text-gray-300'}`}>{c.opens > 0 ? pct(c.clickToOpen) : '—'}</td>
                                   <td className={`px-4 py-2.5 text-right font-medium text-xs tabular-nums ${c.sends > 0 ? unsubColor(ur) : 'text-gray-300'}`}>{c.sends > 0 ? pct(ur) : '—'}</td>
-                                  {gaConnected && <td />}
+                                  {gaConnected && (
+                                    <td className="px-4 py-2.5 text-right font-mono text-xs text-emerald-700">
+                                      {rowRev && rowRev.revenue > 0 ? fmtAUD(rowRev.revenue) : <span className="text-gray-300">—</span>}
+                                    </td>
+                                  )}
                                 </tr>
                               );
                             })}
@@ -828,6 +861,7 @@ export default function EmailTab() {
                         {visible.map(c => {
                           const oc = openColors(c.openRate), cc = clkColors(c.clickRate);
                           const ur = safeDiv(c.unsubscribes, c.sends);
+                          const rowRev = lookupRevenue(c.name, c.hsCampaignName, revenueMap);
                           return (
                             <tr key={c.id} className="hover:bg-gray-50 transition-colors border-t border-gray-50">
                               <td className="px-5 py-3 max-w-xs">
@@ -840,7 +874,11 @@ export default function EmailTab() {
                               <td className="px-4 py-3"><div className="flex items-center gap-2"><span className={`font-medium tabular-nums text-xs ${cc.text}`}>{pct(c.clickRate)}</span><div className="flex-1 min-w-[50px]"><RateBar value={c.clickRate * 10} color={cc.bar} /></div></div></td>
                               <td className={`px-4 py-3 text-right font-medium text-xs tabular-nums ${c.opens > 0 ? ctorColor(c.clickToOpen) : 'text-gray-300'}`}>{c.opens > 0 ? pct(c.clickToOpen) : '—'}</td>
                               <td className={`px-4 py-3 text-right font-medium text-xs tabular-nums ${c.sends > 0 ? unsubColor(ur) : 'text-gray-300'}`}>{c.sends > 0 ? pct(ur) : '—'}</td>
-                              {gaConnected && <td className="px-4 py-3 text-right text-gray-300 text-xs">&hellip;</td>}
+                              {gaConnected && (
+                                <td className="px-4 py-3 text-right font-mono text-sm text-emerald-700">
+                                  {rowRev && rowRev.revenue > 0 ? fmtAUD(rowRev.revenue) : <span className="text-gray-300">—</span>}
+                                </td>
+                              )}
                             </tr>
                           );
                         })}

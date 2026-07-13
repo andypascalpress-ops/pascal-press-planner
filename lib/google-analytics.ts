@@ -299,10 +299,77 @@ export async function fetchGA4RevenueHistory(
 // Email revenue (new) — per-campaign + channel total
 // ---------------------------------------------------------------------------
 
+/** Cap GA4 end date to Sydney "today" — future dates break currency conversion / reports. */
+function capGaEndDate(startDate: string, endDate: string): { startDate: string; endDate: string } {
+  if (endDate === 'today' || endDate === 'yesterday') {
+    return { startDate, endDate };
+  }
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Australia/Sydney',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  let end = endDate;
+  if (end > today) end = today;
+  // If range is entirely in the future, fall back to today only
+  if (startDate > today) {
+    return { startDate: today, endDate: today };
+  }
+  if (end < startDate) end = startDate;
+  return { startDate, endDate: end };
+}
+
+async function fetchEmailRevenueForProperty(
+  accessToken: string,
+  propertyBase: string,
+  startDate: string,
+  endDate: string,
+): Promise<{ byCampaign: CampaignRevenue[]; totalRevenue: number; totalTx: number }> {
+  const emailMediumFilter = {
+    filter: {
+      fieldName: 'sessionMedium',
+      stringFilter: { matchType: 'EXACT' as const, value: 'email', caseSensitive: false },
+    },
+  };
+
+  const [campaignData, totalData] = await Promise.all([
+    runReportOnProperty(accessToken, propertyBase, {
+      dateRanges: [{ startDate, endDate }],
+      dimensions: [{ name: 'sessionCampaignName' }],
+      metrics: [{ name: 'totalRevenue' }, { name: 'transactions' }],
+      dimensionFilter: emailMediumFilter,
+      orderBys: [{ metric: { metricName: 'totalRevenue' }, desc: true }],
+      limit: 500,
+    }),
+    runReportOnProperty(accessToken, propertyBase, {
+      dateRanges: [{ startDate, endDate }],
+      metrics: [{ name: 'totalRevenue' }, { name: 'transactions' }],
+      dimensionFilter: emailMediumFilter,
+      limit: 1,
+    }),
+  ]);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const byCampaign: CampaignRevenue[] = (campaignData.rows ?? []).map((row: any) => ({
+    campaignName: row.dimensionValues?.[0]?.value ?? '',
+    revenue: Math.round(parseFloat(row.metricValues?.[0]?.value ?? '0') * 100) / 100,
+    transactions: parseInt(row.metricValues?.[1]?.value ?? '0', 10),
+  })).filter((c: CampaignRevenue) => c.campaignName);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const totRow = totalData.rows?.[0] as any;
+  const totalRevenue = Math.round(parseFloat(totRow?.metricValues?.[0]?.value ?? '0') * 100) / 100;
+  const totalTx = parseInt(totRow?.metricValues?.[1]?.value ?? '0', 10);
+
+  return { byCampaign, totalRevenue, totalTx };
+}
+
 /**
- * Fetch email-attributed revenue from GA4.
- * Returns per-campaign breakdown (via sessionCampaignName + medium=email)
- * and the total email channel revenue.
+ * Fetch email-attributed revenue from GA4 (session medium = email).
+ * Merges Pascal Press + Excel Test Zone properties when both are connected.
+ * Caps endDate to Sydney today so current-month queries never use future dates
+ * (GA4 fails / returns connected:false on future end dates).
  */
 export async function fetchEmailRevenue(
   startDate = '2022-01-01',
@@ -314,48 +381,40 @@ export async function fetchEmailRevenue(
 
   try {
     const accessToken = await getAccessToken();
+    const range = capGaEndDate(startDate, endDate);
 
-    // Per-campaign breakdown
-    const campaignData = await runReport(accessToken, {
-      dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: 'sessionCampaignName' }],
-      metrics:    [{ name: 'totalRevenue' }, { name: 'transactions' }],
-      dimensionFilter: {
-        filter: {
-          fieldName:    'sessionMedium',
-          stringFilter: { matchType: 'EXACT', value: 'email' },
-        },
-      },
-      limit: 500,
-    });
+    const jobs: Promise<{ byCampaign: CampaignRevenue[]; totalRevenue: number; totalTx: number }>[] = [
+      fetchEmailRevenueForProperty(accessToken, GA4_BASE, range.startDate, range.endDate),
+    ];
+    if (isETZConnected()) {
+      jobs.push(
+        fetchEmailRevenueForProperty(accessToken, GA4_ETZ_BASE, range.startDate, range.endDate)
+          .catch(err => {
+            console.error('[google-analytics fetchEmailRevenue etz]', err);
+            return { byCampaign: [], totalRevenue: 0, totalTx: 0 };
+          }),
+      );
+    }
 
-    const byCampaign: CampaignRevenue[] = (campaignData.rows ?? []).map(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (row: any) => ({
-        campaignName: row.dimensionValues[0]?.value ?? '',
-        revenue:      parseFloat(row.metricValues[0]?.value ?? '0'),
-        transactions: parseInt(row.metricValues[1]?.value  ?? '0', 10),
-      }),
-    );
+    const parts = await Promise.all(jobs);
 
-    // Channel total
-    const totalData = await runReport(accessToken, {
-      dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: 'sessionMedium' }],
-      metrics:    [{ name: 'totalRevenue' }, { name: 'transactions' }],
-      dimensionFilter: {
-        filter: {
-          fieldName:    'sessionMedium',
-          stringFilter: { matchType: 'EXACT', value: 'email' },
-        },
-      },
-      limit: 1,
-    });
+    // Merge campaigns by name (sum revenue/tx if same name appears in both properties)
+    const map = new Map<string, CampaignRevenue>();
+    for (const part of parts) {
+      for (const c of part.byCampaign) {
+        const existing = map.get(c.campaignName);
+        if (existing) {
+          existing.revenue = Math.round((existing.revenue + c.revenue) * 100) / 100;
+          existing.transactions += c.transactions;
+        } else {
+          map.set(c.campaignName, { ...c });
+        }
+      }
+    }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const totRow       = totalData.rows?.[0] as any;
-    const totalRevenue = totRow ? parseFloat(totRow.metricValues[0]?.value ?? '0') : 0;
-    const totalTx      = totRow ? parseInt(totRow.metricValues[1]?.value   ?? '0', 10) : 0;
+    const byCampaign = [...map.values()].sort((a, b) => b.revenue - a.revenue);
+    const totalRevenue = Math.round(parts.reduce((s, p) => s + p.totalRevenue, 0) * 100) / 100;
+    const totalTx = parts.reduce((s, p) => s + p.totalTx, 0);
 
     return { byCampaign, totalRevenue, totalTx, connected: true };
   } catch (err) {
