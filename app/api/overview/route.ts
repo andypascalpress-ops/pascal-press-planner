@@ -293,6 +293,7 @@ export async function GET(request: Request) {
         sessions:  ppConv.current?.sessions ?? null,
         purchases: ppConv.current?.purchases ?? null,
         reason:    ppConv.reason,
+        source:    ppConv.source,
       } : null,
     },
     etz: {
@@ -311,6 +312,7 @@ export async function GET(request: Request) {
         sessions:  etzConv.current?.sessions ?? null,
         purchases: etzConv.current?.purchases ?? null,
         reason:    etzConv.reason,
+        source:    etzConv.source,
       } : null,
     },
     hsc: {

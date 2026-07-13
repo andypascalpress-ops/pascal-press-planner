@@ -12,6 +12,7 @@ interface ConversionSnapshot {
   sessions:  number | null;
   purchases: number | null;
   reason:    string | null;
+  source?:   'ga4' | 'bigcommerce_hybrid' | null;
 }
 
 interface BrandData {
@@ -235,12 +236,16 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
         )}
       </div>
 
-      {/* Site conversion rate (GA4 sessions → purchases) */}
+      {/* Site conversion — PP: BC orders/visits; ETZ: GA purchases/sessions */}
       {data.conversion?.rate != null && (
         <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2.5">
           <div className="flex items-baseline justify-between gap-2">
             <div>
-              <p className="text-xs text-indigo-600 font-medium mb-0.5">Site conversion · this range</p>
+              <p className="text-xs text-indigo-600 font-medium mb-0.5">
+                {data.conversion.source === 'bigcommerce_hybrid'
+                  ? 'Site conversion · BC-style'
+                  : 'Site conversion · this range'}
+              </p>
               <p className="text-lg font-bold text-indigo-900">
                 {data.conversion.rate.toFixed(2)}%
               </p>
@@ -261,8 +266,10 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
           </div>
           {(data.conversion.sessions != null || data.conversion.purchases != null) && (
             <p className="text-xs text-indigo-500/80 mt-1">
-              {(data.conversion.purchases ?? 0).toLocaleString()} purchases ·{' '}
-              {(data.conversion.sessions ?? 0).toLocaleString()} sessions
+              {(data.conversion.purchases ?? 0).toLocaleString()}{' '}
+              {data.conversion.source === 'bigcommerce_hybrid' ? 'orders' : 'purchases'} ·{' '}
+              {(data.conversion.sessions ?? 0).toLocaleString()}{' '}
+              {data.conversion.source === 'bigcommerce_hybrid' ? 'visits' : 'sessions'}
             </p>
           )}
           {data.conversion.reason && (

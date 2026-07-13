@@ -15,6 +15,7 @@
  */
 
 import crypto from 'crypto';
+import { fetchPPRevenue } from './bigcommerce-revenue';
 
 const GA4_PROPERTY_ID     = '354651290'; // Pascal Press (pascalpress.com.au)
 const GA4_BASE            = `https://analyticsdata.googleapis.com/v1beta/properties/${GA4_PROPERTY_ID}`;
@@ -589,21 +590,28 @@ export async function fetchPaidCampaignRevenue(
 }
 
 // ---------------------------------------------------------------------------
-// Website conversion rate (sessions → purchases) — site-wide, not Ads
+// Website conversion rate — site-wide, not Ads
+//   PP: BigCommerce orders ÷ GA storefront visits (closest BC-style proxy)
+//   ETZ: GA4 purchases ÷ sessions
 // ---------------------------------------------------------------------------
 
 export interface WebsiteConversionSlice {
+  /** Visits / sessions (denominator) */
   sessions: number;
+  /** Orders / purchases (numerator) */
   purchases: number;
   /** purchases / sessions * 100 */
   conversionRate: number;
   startDate: string;
   endDate: string;
+  /** How the denominator was chosen (PP hybrid only) */
+  visitsMetric?: string;
 }
 
 export interface WebsiteConversionData {
   connected: boolean;
-  source: 'ga4';
+  /** ga4 = pure GA; bigcommerce_hybrid = BC orders + GA visits proxy */
+  source: 'ga4' | 'bigcommerce_hybrid';
   current: WebsiteConversionSlice | null;
   /** Comparison window of equal length (prior period) */
   previous: WebsiteConversionSlice | null;
@@ -615,10 +623,10 @@ export interface WebsiteConversionData {
   reason: string | null;
 }
 
-function emptyConversion(): WebsiteConversionData {
+function emptyConversion(source: 'ga4' | 'bigcommerce_hybrid' = 'ga4'): WebsiteConversionData {
   return {
     connected: false,
-    source: 'ga4',
+    source,
     current: null,
     previous: null,
     deltaPp: null,
@@ -707,13 +715,34 @@ function conversionDateWindowsFromMonth(month: string): {
   return conversionCompareWindows(curStart, curEnd, 'alignMonth');
 }
 
+function rateFrom(orders: number, visits: number): number {
+  return visits > 0 ? Math.round((orders / visits) * 10000) / 100 : 0;
+}
+
+function makeSlice(
+  visits: number,
+  orders: number,
+  startDate: string,
+  endDate: string,
+  visitsMetric?: string,
+): WebsiteConversionSlice {
+  return {
+    sessions: visits,
+    purchases: orders,
+    conversionRate: rateFrom(orders, visits),
+    startDate,
+    endDate,
+    visitsMetric,
+  };
+}
+
+/** Pure GA: sessions + ecommercePurchases (ETZ path). */
 async function fetchSessionsPurchases(
   accessToken: string,
   propertyBase: string,
   startDate: string,
   endDate: string,
 ): Promise<WebsiteConversionSlice> {
-  // sessions + ecommercePurchases (falls back to transactions if purchases empty)
   const data = await runReportOnProperty(accessToken, propertyBase, {
     dateRanges: [{ startDate, endDate }],
     metrics: [
@@ -728,17 +757,76 @@ async function fetchSessionsPurchases(
   const purchasesRaw = parseFloat(row?.metricValues?.[1]?.value ?? '0');
   const transactions = parseFloat(row?.metricValues?.[2]?.value ?? '0');
   const purchases = Math.round(purchasesRaw > 0 ? purchasesRaw : transactions);
-  const conversionRate = sessions > 0
-    ? Math.round((purchases / sessions) * 10000) / 100 // 2 dp percent
-    : 0;
+  return makeSlice(sessions, purchases, startDate, endDate, 'ga_sessions');
+}
 
-  return { sessions, purchases, conversionRate, startDate, endDate };
+/**
+ * GA storefront traffic proxy for BigCommerce-style visits.
+ * Prefers host-filtered sessions on pascalpress.com.au (closest to BC storefront visits),
+ * then engagedSessions, then totalUsers, then raw sessions.
+ */
+async function fetchPPVisitsProxy(
+  accessToken: string,
+  startDate: string,
+  endDate: string,
+): Promise<{ visits: number; metric: string; debug: Record<string, number> }> {
+  const [all, host, engaged] = await Promise.all([
+    runReportOnProperty(accessToken, GA4_BASE, {
+      dateRanges: [{ startDate, endDate }],
+      metrics: [
+        { name: 'sessions' },
+        { name: 'totalUsers' },
+        { name: 'engagedSessions' },
+      ],
+    }),
+    runReportOnProperty(accessToken, GA4_BASE, {
+      dateRanges: [{ startDate, endDate }],
+      metrics: [{ name: 'sessions' }, { name: 'totalUsers' }],
+      dimensionFilter: {
+        filter: {
+          fieldName: 'hostName',
+          stringFilter: {
+            matchType: 'CONTAINS',
+            value: 'pascalpress',
+            caseSensitive: false,
+          },
+        },
+      },
+    }),
+    // engagedSessions already in `all` — kept for clarity if host fails
+    Promise.resolve(null),
+  ]);
+  void engaged;
+
+  const allRow = all.rows?.[0];
+  const hostRow = host.rows?.[0];
+  const sessions = Math.round(parseFloat(allRow?.metricValues?.[0]?.value ?? '0'));
+  const totalUsers = Math.round(parseFloat(allRow?.metricValues?.[1]?.value ?? '0'));
+  const engagedSessions = Math.round(parseFloat(allRow?.metricValues?.[2]?.value ?? '0'));
+  const hostSessions = Math.round(parseFloat(hostRow?.metricValues?.[0]?.value ?? '0'));
+  const hostUsers = Math.round(parseFloat(hostRow?.metricValues?.[1]?.value ?? '0'));
+
+  const debug = { sessions, totalUsers, engagedSessions, hostSessions, hostUsers };
+
+  // Prefer storefront host sessions — best match to BC "visits" scope
+  if (hostSessions > 0) {
+    return { visits: hostSessions, metric: 'ga_host_sessions(pascalpress)', debug };
+  }
+  // Engaged sessions exclude bounce-heavy noise; often closer to BC visit counts
+  if (engagedSessions > 0 && engagedSessions < sessions) {
+    return { visits: engagedSessions, metric: 'ga_engaged_sessions', debug };
+  }
+  if (totalUsers > 0 && totalUsers < sessions) {
+    return { visits: totalUsers, metric: 'ga_total_users', debug };
+  }
+  return { visits: sessions, metric: 'ga_sessions', debug };
 }
 
 function buildConversionReason(
   current: WebsiteConversionSlice,
   previous: WebsiteConversionSlice,
   deltaPp: number,
+  labels: { traffic: string; sales: string } = { traffic: 'sessions', sales: 'purchases' },
 ): { direction: 'up' | 'down' | 'flat'; reason: string } {
   const direction: 'up' | 'down' | 'flat' =
     Math.abs(deltaPp) < 0.05 ? 'flat' : deltaPp > 0 ? 'up' : 'down';
@@ -751,11 +839,13 @@ function buildConversionReason(
     : (current.purchases > 0 ? 100 : 0);
 
   const fmt = (n: number) => `${n >= 0 ? '+' : ''}${Math.round(n)}%`;
+  const t = labels.traffic;
+  const s = labels.sales;
 
   if (direction === 'flat') {
     return {
       direction,
-      reason: `Stable vs prior period (sessions ${fmt(sessPct)}, purchases ${fmt(purchPct)}).`,
+      reason: `Stable vs prior period (${t} ${fmt(sessPct)}, ${s} ${fmt(purchPct)}).`,
     };
   }
 
@@ -763,24 +853,24 @@ function buildConversionReason(
     if (sessPct > 10 && purchPct < sessPct - 5) {
       return {
         direction,
-        reason: `Traffic up ${fmt(sessPct)} but purchases only ${fmt(purchPct)} — more sessions not converting (traffic quality or checkout friction).`,
+        reason: `Traffic up ${fmt(sessPct)} but ${s} only ${fmt(purchPct)} — more visits not converting (traffic quality or checkout friction).`,
       };
     }
     if (purchPct < -10 && Math.abs(sessPct) < 10) {
       return {
         direction,
-        reason: `Purchases down ${fmt(purchPct)} on similar traffic (${fmt(sessPct)}) — likely offer, stock, or checkout issue.`,
+        reason: `${s[0]!.toUpperCase()}${s.slice(1)} down ${fmt(purchPct)} on similar traffic (${fmt(sessPct)}) — likely offer, stock, or checkout issue.`,
       };
     }
     if (sessPct < -10 && purchPct <= sessPct) {
       return {
         direction,
-        reason: `Both traffic (${fmt(sessPct)}) and purchases (${fmt(purchPct)}) fell — lower demand, not just conversion.`,
+        reason: `Both traffic (${fmt(sessPct)}) and ${s} (${fmt(purchPct)}) fell — lower demand, not just conversion.`,
       };
     }
     return {
       direction,
-      reason: `CR down ${Math.abs(deltaPp).toFixed(2)}pp — sessions ${fmt(sessPct)}, purchases ${fmt(purchPct)}.`,
+      reason: `CR down ${Math.abs(deltaPp).toFixed(2)}pp — ${t} ${fmt(sessPct)}, ${s} ${fmt(purchPct)}.`,
     };
   }
 
@@ -788,18 +878,18 @@ function buildConversionReason(
   if (purchPct > sessPct + 5) {
     return {
       direction,
-      reason: `Purchases growing faster (${fmt(purchPct)}) than sessions (${fmt(sessPct)}) — stronger conversion quality.`,
+      reason: `${s[0]!.toUpperCase()}${s.slice(1)} growing faster (${fmt(purchPct)}) than ${t} (${fmt(sessPct)}) — stronger conversion quality.`,
     };
   }
   if (sessPct < -5 && purchPct > sessPct) {
     return {
       direction,
-      reason: `Traffic down ${fmt(sessPct)} but purchases held better (${fmt(purchPct)}) — higher intent visitors.`,
+      reason: `Traffic down ${fmt(sessPct)} but ${s} held better (${fmt(purchPct)}) — higher intent visitors.`,
     };
   }
   return {
     direction,
-    reason: `CR up ${deltaPp.toFixed(2)}pp — sessions ${fmt(sessPct)}, purchases ${fmt(purchPct)}.`,
+    reason: `CR up ${deltaPp.toFixed(2)}pp — ${t} ${fmt(sessPct)}, ${s} ${fmt(purchPct)}.`,
   };
 }
 
@@ -812,7 +902,7 @@ async function fetchWebsiteConversionForProperty(
   endDate: string,
   compareMode: ConversionCompareMode = 'priorEqual',
 ): Promise<WebsiteConversionData> {
-  if (!connected) return emptyConversion();
+  if (!connected) return emptyConversion('ga4');
 
   try {
     const accessToken = await getAccessToken();
@@ -841,12 +931,94 @@ async function fetchWebsiteConversionForProperty(
     };
   } catch (err) {
     console.error('[google-analytics fetchWebsiteConversion]', err);
-    return emptyConversion();
+    return emptyConversion('ga4');
   }
 }
 
 /**
- * Pascal Press storefront conversion (GA4 property 354651290).
+ * Pascal Press — BigCommerce-style conversion:
+ *   orders from BigCommerce API ÷ storefront visits (GA host-filtered sessions).
+ * BC control panel visits are not exposed via public API; host-filtered GA is the closest proxy.
+ */
+async function fetchPPHybridConversion(
+  startDate: string,
+  endDate: string,
+  compareMode: ConversionCompareMode,
+): Promise<WebsiteConversionData> {
+  const bcConnected = !!(process.env.BIGCOMMERCE_STORE_HASH && process.env.BIGCOMMERCE_ACCESS_TOKEN);
+  const gaConnected = isConnected();
+  if (!bcConnected && !gaConnected) return emptyConversion('bigcommerce_hybrid');
+
+  try {
+    const { curStart, curEnd, prevStart, prevEnd } = conversionCompareWindows(
+      startDate, endDate, compareMode,
+    );
+    const curMonth = curStart.slice(0, 7);
+    const prevMonth = prevStart.slice(0, 7);
+
+    const accessToken = gaConnected ? await getAccessToken() : null;
+
+    const [bcCur, bcPrev, visitsCur, visitsPrev] = await Promise.all([
+      fetchPPRevenue(curMonth, { start: curStart, end: curEnd }),
+      fetchPPRevenue(prevMonth, { start: prevStart, end: prevEnd }),
+      accessToken
+        ? fetchPPVisitsProxy(accessToken, curStart, curEnd)
+        : Promise.resolve({ visits: 0, metric: 'none', debug: {} as Record<string, number> }),
+      accessToken
+        ? fetchPPVisitsProxy(accessToken, prevStart, prevEnd)
+        : Promise.resolve({ visits: 0, metric: 'none', debug: {} as Record<string, number> }),
+    ]);
+
+    if (!bcCur.connected && visitsCur.visits === 0) {
+      return emptyConversion('bigcommerce_hybrid');
+    }
+
+    const current = makeSlice(
+      visitsCur.visits,
+      bcCur.totalOrders,
+      curStart,
+      curEnd,
+      visitsCur.metric,
+    );
+    const previous = makeSlice(
+      visitsPrev.visits,
+      bcPrev.totalOrders,
+      prevStart,
+      prevEnd,
+      visitsPrev.metric,
+    );
+
+    const deltaPp = Math.round((current.conversionRate - previous.conversionRate) * 100) / 100;
+    const { direction, reason } = buildConversionReason(
+      current,
+      previous,
+      deltaPp,
+      { traffic: 'visits', sales: 'orders' },
+    );
+
+    // Attach debug on reason only in logs
+    console.log('[pp hybrid conversion]', {
+      current: { ...current, debug: visitsCur.debug },
+      previous: { ...previous, debug: visitsPrev.debug },
+    });
+
+    return {
+      connected: true,
+      source: 'bigcommerce_hybrid',
+      current,
+      previous,
+      deltaPp,
+      direction,
+      reason,
+    };
+  } catch (err) {
+    console.error('[google-analytics fetchPPHybridConversion]', err);
+    return emptyConversion('bigcommerce_hybrid');
+  }
+}
+
+/**
+ * Pascal Press storefront conversion (BC-style hybrid).
  * Pass startDate/endDate for a range, or month (YYYY-MM) for Finance/MTD-style windows.
  */
 export async function fetchPPWebsiteConversion(
@@ -855,17 +1027,13 @@ export async function fetchPPWebsiteConversion(
   compareMode?: ConversionCompareMode,
 ): Promise<WebsiteConversionData> {
   if (endDate) {
-    return fetchWebsiteConversionForProperty(
-      GA4_BASE, isConnected(), startOrMonth, endDate, compareMode ?? 'priorEqual',
-    );
+    return fetchPPHybridConversion(startOrMonth, endDate, compareMode ?? 'priorEqual');
   }
   const w = conversionDateWindowsFromMonth(startOrMonth);
-  return fetchWebsiteConversionForProperty(
-    GA4_BASE, isConnected(), w.curStart, w.curEnd, compareMode ?? 'alignMonth',
-  );
+  return fetchPPHybridConversion(w.curStart, w.curEnd, compareMode ?? 'alignMonth');
 }
 
-/** Excel Test Zone storefront conversion (ETZ GA4 property). */
+/** Excel Test Zone storefront conversion (pure GA4). */
 export async function fetchETZWebsiteConversion(
   startOrMonth: string,
   endDate?: string,
