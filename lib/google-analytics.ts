@@ -190,13 +190,30 @@ export interface CampaignRevenue {
   campaignName: string;
   revenue:      number;
   transactions: number;
+  /** Which GA4 property this row came from */
+  brand?: 'pp' | 'etz';
 }
 
-export interface EmailRevenueData {
+export interface EmailRevenueBrandSlice {
   byCampaign:   CampaignRevenue[];
   totalRevenue: number;
   totalTx:      number;
+}
+
+export interface EmailRevenueData {
+  /** Merged PP + ETZ campaigns (for matching). Prefer byBrand for totals. */
+  byCampaign:   CampaignRevenue[];
+  /** Combined total across properties — only use when brand filter is All */
+  totalRevenue: number;
+  totalTx:      number;
   connected:    boolean;
+  /** Per-property slices so PP numbers match the Pascal Press GA property exactly */
+  byBrand?: {
+    pp:  EmailRevenueBrandSlice;
+    etz: EmailRevenueBrandSlice;
+  };
+  /** Effective date range after Sydney today cap */
+  range?: { startDate: string; endDate: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -365,61 +382,76 @@ async function fetchEmailRevenueForProperty(
   return { byCampaign, totalRevenue, totalTx };
 }
 
+function emptyBrandSlice(): EmailRevenueBrandSlice {
+  return { byCampaign: [], totalRevenue: 0, totalTx: 0 };
+}
+
 /**
  * Fetch email-attributed revenue from GA4 (session medium = email).
- * Merges Pascal Press + Excel Test Zone properties when both are connected.
- * Caps endDate to Sydney today so current-month queries never use future dates
- * (GA4 fails / returns connected:false on future end dates).
+ * Returns separate PP and ETZ slices so totals match each GA property
+ * (e.g. Pascal Press Traffic acquisition email filter ≈ byBrand.pp).
+ * Caps endDate to Sydney today — future end dates break GA4.
  */
 export async function fetchEmailRevenue(
   startDate = '2022-01-01',
   endDate   = 'today',
 ): Promise<EmailRevenueData> {
   if (!isConnected()) {
-    return { byCampaign: [], totalRevenue: 0, totalTx: 0, connected: false };
+    return {
+      byCampaign: [], totalRevenue: 0, totalTx: 0, connected: false,
+      byBrand: { pp: emptyBrandSlice(), etz: emptyBrandSlice() },
+    };
   }
 
   try {
     const accessToken = await getAccessToken();
     const range = capGaEndDate(startDate, endDate);
 
-    const jobs: Promise<{ byCampaign: CampaignRevenue[]; totalRevenue: number; totalTx: number }>[] = [
+    const [ppRaw, etzRaw] = await Promise.all([
       fetchEmailRevenueForProperty(accessToken, GA4_BASE, range.startDate, range.endDate),
-    ];
-    if (isETZConnected()) {
-      jobs.push(
-        fetchEmailRevenueForProperty(accessToken, GA4_ETZ_BASE, range.startDate, range.endDate)
-          .catch(err => {
-            console.error('[google-analytics fetchEmailRevenue etz]', err);
-            return { byCampaign: [], totalRevenue: 0, totalTx: 0 };
-          }),
-      );
-    }
+      isETZConnected()
+        ? fetchEmailRevenueForProperty(accessToken, GA4_ETZ_BASE, range.startDate, range.endDate)
+            .catch(err => {
+              console.error('[google-analytics fetchEmailRevenue etz]', err);
+              return emptyBrandSlice();
+            })
+        : Promise.resolve(emptyBrandSlice()),
+    ]);
 
-    const parts = await Promise.all(jobs);
+    const pp: EmailRevenueBrandSlice = {
+      byCampaign: ppRaw.byCampaign
+        .map(c => ({ ...c, brand: 'pp' as const }))
+        .sort((a, b) => b.revenue - a.revenue),
+      totalRevenue: ppRaw.totalRevenue,
+      totalTx: ppRaw.totalTx,
+    };
+    const etz: EmailRevenueBrandSlice = {
+      byCampaign: etzRaw.byCampaign
+        .map(c => ({ ...c, brand: 'etz' as const }))
+        .sort((a, b) => b.revenue - a.revenue),
+      totalRevenue: etzRaw.totalRevenue,
+      totalTx: etzRaw.totalTx,
+    };
 
-    // Merge campaigns by name (sum revenue/tx if same name appears in both properties)
-    const map = new Map<string, CampaignRevenue>();
-    for (const part of parts) {
-      for (const c of part.byCampaign) {
-        const existing = map.get(c.campaignName);
-        if (existing) {
-          existing.revenue = Math.round((existing.revenue + c.revenue) * 100) / 100;
-          existing.transactions += c.transactions;
-        } else {
-          map.set(c.campaignName, { ...c });
-        }
-      }
-    }
+    // Flat list for matching — keep brand tags, do NOT sum same campaign names across brands
+    const byCampaign = [...pp.byCampaign, ...etz.byCampaign].sort((a, b) => b.revenue - a.revenue);
+    const totalRevenue = Math.round((pp.totalRevenue + etz.totalRevenue) * 100) / 100;
+    const totalTx = pp.totalTx + etz.totalTx;
 
-    const byCampaign = [...map.values()].sort((a, b) => b.revenue - a.revenue);
-    const totalRevenue = Math.round(parts.reduce((s, p) => s + p.totalRevenue, 0) * 100) / 100;
-    const totalTx = parts.reduce((s, p) => s + p.totalTx, 0);
-
-    return { byCampaign, totalRevenue, totalTx, connected: true };
+    return {
+      byCampaign,
+      totalRevenue,
+      totalTx,
+      connected: true,
+      byBrand: { pp, etz },
+      range,
+    };
   } catch (err) {
     console.error('[google-analytics fetchEmailRevenue]', err);
-    return { byCampaign: [], totalRevenue: 0, totalTx: 0, connected: false };
+    return {
+      byCampaign: [], totalRevenue: 0, totalTx: 0, connected: false,
+      byBrand: { pp: emptyBrandSlice(), etz: emptyBrandSlice() },
+    };
   }
 }
 

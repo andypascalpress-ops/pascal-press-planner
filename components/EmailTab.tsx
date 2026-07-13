@@ -26,8 +26,16 @@ interface EmailData {
   totalSends: number; totalOpens: number; totalClicks: number;
   avgOpenRate: number; avgClickRate: number;
 }
-interface CampaignRevenue { campaignName: string; revenue: number; transactions: number; }
-interface RevenueData { byCampaign: CampaignRevenue[]; totalRevenue: number; totalTx: number; connected: boolean; }
+interface CampaignRevenue { campaignName: string; revenue: number; transactions: number; brand?: 'pp' | 'etz'; }
+interface RevenueBrandSlice { byCampaign: CampaignRevenue[]; totalRevenue: number; totalTx: number; }
+interface RevenueData {
+  byCampaign: CampaignRevenue[];
+  totalRevenue: number;
+  totalTx: number;
+  connected: boolean;
+  byBrand?: { pp: RevenueBrandSlice; etz: RevenueBrandSlice };
+  range?: { startDate: string; endDate: string };
+}
 interface CampaignGroup { key: string; label: string; rev: CampaignRevenue | null; emails: EmailCampaign[]; }
 interface TrendPoint {
   month: string; avgOpenRate: number; avgClickRate: number;
@@ -500,7 +508,26 @@ export default function EmailTab() {
   const campaigns      = brandFilter === 'All'
     ? allCampaigns
     : allCampaigns.filter(c => detectBrand(c.name, c.fromName) === brandFilter);
-  const revenueMap     = buildRevenueMap(revenueData?.byCampaign ?? []);
+
+  // Use the correct GA property slice so PP totals match the Pascal Press GA report
+  // (session medium = email). Do NOT blend ETZ into PP.
+  const activeRevSlice: RevenueBrandSlice | null = (() => {
+    if (!revenueData?.connected) return null;
+    if (brandFilter === 'Pascal Press' && revenueData.byBrand?.pp) return revenueData.byBrand.pp;
+    if (brandFilter === 'Excel Test Zone' && revenueData.byBrand?.etz) return revenueData.byBrand.etz;
+    if (brandFilter === 'Blake Education') {
+      // Blake has no GA email property wired yet
+      return { byCampaign: [], totalRevenue: 0, totalTx: 0 };
+    }
+    // All: combined PP + ETZ channel totals
+    return {
+      byCampaign: revenueData.byCampaign ?? [],
+      totalRevenue: revenueData.totalRevenue ?? 0,
+      totalTx: revenueData.totalTx ?? 0,
+    };
+  })();
+
+  const revenueMap     = buildRevenueMap(activeRevSlice?.byCampaign ?? []);
   const gaConnected    = revenueData?.connected ?? false;
 
   const totalSends     = campaigns.reduce((s, c) => s + c.sends, 0);
@@ -514,49 +541,35 @@ export default function EmailTab() {
   const avgClickRate   = safeDiv(totalClicks, totalDelivered);
   const avgCtor        = safeDiv(totalClicks, totalOpens);
 
-  // Derive brand-accurate revenue by matching filtered email campaigns to GA4 data.
-  // This avoids relying on GA4 campaign name prefixes (which aren't consistent).
-  const matchedRevByBrand = (() => {
-    if (brandFilter === 'All') {
-      return { revenue: revenueData?.totalRevenue ?? 0, tx: revenueData?.totalTx ?? 0, keys: new Set<string>() };
-    }
-    const seen = new Set<string>();
-    let revenue = 0, tx = 0;
-    for (const c of campaigns) {
-      const match = lookupRevenue(c.name, c.hsCampaignName, revenueMap);
-      if (match && !seen.has(match.campaignName)) {
-        seen.add(match.campaignName);
-        revenue += match.revenue;
-        tx += match.transactions;
-      }
-    }
-    return { revenue, tx, keys: seen };
-  })();
+  // Channel total from the active GA property (matches Traffic acquisition email filter).
+  // Matched keys used for green dots in the GA panel.
+  const matchedKeys = new Set<string>();
+  for (const c of campaigns) {
+    const match = lookupRevenue(c.name, c.hsCampaignName, revenueMap);
+    if (match) matchedKeys.add(match.campaignName);
+  }
 
-  const totalRevenue = matchedRevByBrand.revenue;
-  const totalRevTx   = matchedRevByBrand.tx;
+  const totalRevenue = activeRevSlice?.totalRevenue ?? 0;
+  const totalRevTx   = activeRevSlice?.totalTx ?? 0;
   const revPerSend   = safeDiv(totalRevenue, totalSends);
 
-  // GA4 panel list — filtered to matched brand campaigns (or all if no filter)
-  const filteredRevCampaigns = brandFilter === 'All'
-    ? (revenueData?.byCampaign ?? [])
-    : (revenueData?.byCampaign ?? []).filter(c => matchedRevByBrand.keys.has(c.campaignName));
+  // GA4 panel list — full channel breakdown for the active brand property
+  const filteredRevCampaigns = activeRevSlice?.byCampaign ?? [];
 
-  // Previous month revenue — same matching approach
-  const prevRevMap = buildRevenueMap(prevRevData?.byCampaign ?? []);
-  const prevCampaignsFiltered = brandFilter === 'All'
-    ? (prevData?.campaigns ?? [])
-    : (prevData?.campaigns ?? []).filter(c => detectBrand(c.name, c.fromName) === brandFilter);
-  const prevRevenue = (() => {
-    if (brandFilter === 'All') return prevRevData?.totalRevenue ?? 0;
-    const seen = new Set<string>();
-    let rev = 0;
-    for (const c of prevCampaignsFiltered) {
-      const match = lookupRevenue(c.name, c.hsCampaignName, prevRevMap);
-      if (match && !seen.has(match.campaignName)) { seen.add(match.campaignName); rev += match.revenue; }
-    }
-    return rev;
+  // Previous month revenue — same brand-scoped slice
+  const prevActiveSlice: RevenueBrandSlice | null = (() => {
+    if (!prevRevData?.connected) return null;
+    if (brandFilter === 'Pascal Press' && prevRevData.byBrand?.pp) return prevRevData.byBrand.pp;
+    if (brandFilter === 'Excel Test Zone' && prevRevData.byBrand?.etz) return prevRevData.byBrand.etz;
+    if (brandFilter === 'Blake Education') return { byCampaign: [], totalRevenue: 0, totalTx: 0 };
+    return {
+      byCampaign: prevRevData.byCampaign ?? [],
+      totalRevenue: prevRevData.totalRevenue ?? 0,
+      totalTx: prevRevData.totalTx ?? 0,
+    };
   })();
+  const prevRevMap = buildRevenueMap(prevActiveSlice?.byCampaign ?? []);
+  const prevRevenue = prevActiveSlice?.totalRevenue ?? 0;
 
   const prevSends      = prevData?.totalSends ?? 0;
   const prevDelivered  = (prevData?.campaigns ?? []).reduce((s, c) => s + c.delivered, 0);
@@ -730,9 +743,11 @@ export default function EmailTab() {
             <StatCard label="Unsubscribe Rate" value={pct(unsubRate)} sub={`${fmt(totalUnsubs)} unsubscribes`}
               delta={hasMoM ? <MomDelta curr={unsubRate} prev={prevUnsubRate} invert /> : undefined}
               warn={unsubRate > 0.005} />
-            <StatCard label="Revenue (GA4)"
+            <StatCard label="Revenue (GA4 email)"
               value={revLoading ? '…' : gaConnected ? fmtAUD(totalRevenue) : '—'}
-              sub={revLoading ? 'loading…' : gaConnected ? `${fmt(totalRevTx)} transactions` : 'GA4 not connected'}
+              sub={revLoading ? 'loading…' : gaConnected
+                ? `${fmt(totalRevTx)} tx · ${brandFilter === 'All' ? 'PP+ETZ' : brandFilter === 'Pascal Press' ? 'PP property' : brandFilter === 'Excel Test Zone' ? 'ETZ property' : 'n/a'} · medium=email`
+                : 'GA4 not connected'}
               delta={hasMoM && gaConnected ? <MomDelta curr={totalRevenue} prev={prevRevenue} /> : undefined} />
             <StatCard label="Revenue per Send"
               value={revLoading ? '…' : gaConnected && revPerSend > 0 ? `$${revPerSend.toFixed(3)}` : '—'}
@@ -741,11 +756,14 @@ export default function EmailTab() {
           </div>
 
           {/* ── GA4 panel ── */}
-          {gaConnected && !revLoading && (revenueData?.byCampaign ?? []).length > 0 && (
+          {gaConnected && !revLoading && filteredRevCampaigns.length > 0 && (
             <div className="bg-white border border-gray-200 rounded-xl mb-5 overflow-hidden">
               <button className="w-full flex items-center justify-between px-5 py-3 text-left" onClick={() => setShowGa4Panel(v => !v)}>
-                <span className="text-sm font-medium text-gray-700">GA4 Session Campaigns &mdash; {monthLabel(selectedMonth)}</span>
-                <span className="text-xs text-gray-400">{(revenueData?.byCampaign ?? []).length} campaigns &middot; {showGa4Panel ? 'hide ↑' : 'show ↓'}</span>
+                <span className="text-sm font-medium text-gray-700">
+                  GA4 email campaigns &mdash; {monthLabel(selectedMonth)}
+                  {revenueData?.range ? ` · ${revenueData.range.startDate} → ${revenueData.range.endDate}` : ''}
+                </span>
+                <span className="text-xs text-gray-400">{filteredRevCampaigns.length} campaigns · {fmtAUD(totalRevenue)} · {showGa4Panel ? 'hide ↑' : 'show ↓'}</span>
               </button>
               {showGa4Panel && (
                 <div className="border-t border-gray-100 divide-y divide-gray-50">
