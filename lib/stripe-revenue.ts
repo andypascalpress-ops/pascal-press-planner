@@ -109,20 +109,48 @@ function customerIdOf(customer: StripeCharge['customer']): string | null {
   return customer.id ?? null;
 }
 
-/** Returns true if the customer had any succeeded charge created before `beforeUnix`. */
-async function hasPriorCharge(customerId: string, beforeUnix: number, secretKey: string): Promise<boolean> {
+/**
+ * True if the customer had a real prior purchase before `beforeUnix`.
+ * Ignores $0 / sub-$1 auths and fully-refunded-only noise so classification
+ * matches Stripe Dashboard "new customers" (first real payment in period).
+ */
+async function hasPriorPaidCharge(
+  customerId: string,
+  beforeUnix: number,
+  secretKey: string,
+): Promise<boolean> {
+  // Pull a small page — newest prior charges first — and require net > $1
   const params = new URLSearchParams({
     customer: customerId,
     'created[lt]': String(beforeUnix),
-    limit: '1',
+    limit: '20',
   });
   const res = await fetch(`${STRIPE_BASE}/charges?${params}`, {
     headers: stripeHeaders(secretKey),
     cache: 'no-store',
   });
   if (!res.ok) return false;
-  const data: StripeList<{ paid: boolean; status: string }> = await res.json();
-  return data.data.some(c => c.paid && c.status === 'succeeded');
+  const data: StripeList<{ paid: boolean; status: string; amount: number; amount_refunded: number }> =
+    await res.json();
+  return data.data.some((c) => {
+    if (!c.paid || c.status !== 'succeeded') return false;
+    const net = (c.amount ?? 0) - (c.amount_refunded ?? 0);
+    return net > 100; // > $1.00 AUD
+  });
+}
+
+/** Fetch customer.created (unix seconds). Returns null on failure. */
+async function fetchCustomerCreated(
+  customerId: string,
+  secretKey: string,
+): Promise<number | null> {
+  const res = await fetch(`${STRIPE_BASE}/customers/${customerId}`, {
+    headers: stripeHeaders(secretKey),
+    cache: 'no-store',
+  });
+  if (!res.ok) return null;
+  const data = await res.json() as { created?: number };
+  return typeof data.created === 'number' ? data.created : null;
 }
 
 async function fetchStripeRevenueWithKey(
@@ -188,31 +216,39 @@ async function fetchStripeRevenueWithKey(
       startingAfter = data.data[data.data.length - 1]!.id;
     }
 
-    // Classify customers who spent > $1 net this period
+    // Classify customers who spent > $1 net this period (exclude abandoned $0 customer objects)
     const qualifying = [...customerNet.entries()].filter(([, net]) => net > 100);
 
     let newCustomers       = 0;
     let returningCustomers = 0;
 
     if (accurate && qualifying.length > 0) {
-      // Batch prior-charge checks (cap concurrency via simple chunks)
+      // Stripe Dashboard "New customers" ≈ first real payment in the period.
+      // Also treat customer.created inside the period as new (matches Customers view).
       const ids = qualifying.map(([id]) => id);
-      const chunkSize = 10;
-      const results: boolean[] = [];
+      const chunkSize = 8;
       for (let i = 0; i < ids.length; i += chunkSize) {
         const chunk = ids.slice(i, i + chunkSize);
         const chunkResults = await Promise.all(
-          chunk.map((id) => hasPriorCharge(id, gte, secretKey)),
+          chunk.map(async (id) => {
+            const [created, hasPrior] = await Promise.all([
+              fetchCustomerCreated(id, secretKey),
+              hasPriorPaidCharge(id, gte, secretKey),
+            ]);
+            // Created during this window → new, even if edge-case prior noise exists
+            if (created != null && created >= gte && created <= lte) {
+              return 'new' as const;
+            }
+            return hasPrior ? 'returning' as const : 'new' as const;
+          }),
         );
-        results.push(...chunkResults);
-      }
-      for (const hasPrior of results) {
-        if (hasPrior) returningCustomers++;
-        else newCustomers++;
+        for (const kind of chunkResults) {
+          if (kind === 'returning') returningCustomers++;
+          else newCustomers++;
+        }
       }
     } else {
-      // History charts: skip extra API calls; report all qualifying as returning=0/new=count
-      // (customer split is not shown on Finance history)
+      // History charts: skip extra API calls; customer split not shown there
       newCustomers = qualifying.length;
       returningCustomers = 0;
     }
