@@ -326,7 +326,12 @@ function TrendChart({ data, selectedMonth }: { data: TrendPoint[]; selectedMonth
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function EmailTab() {
-  const [selectedMonth, setSelectedMonth] = useState<string>('');
+  // Default to current calendar month so we never kick off the heavy "all time"
+  // HubSpot pull first (that slow response used to overwrite a later month selection).
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const opts = buildMonthOptions();
+    return opts[0] ?? '';
+  });
   const [showAll,       setShowAll]       = useState(false);
   const [showGa4Panel,  setShowGa4Panel]  = useState(false);
   const [showTrend,     setShowTrend]     = useState(false);
@@ -344,17 +349,63 @@ export default function EmailTab() {
 
   const monthOptions = buildMonthOptions();
 
-  // Current month HubSpot
+  // Current month HubSpot — abort in-flight requests so a slower "all time" / prior
+  // month response cannot wipe a newer selection a few seconds later.
   useEffect(() => {
-    setLoading(true); setData(null);
+    const ctrl = new AbortController();
+    let cancelled = false;
+    setLoading(true);
+
     const url = selectedMonth ? `/api/hubspot-email?month=${selectedMonth}` : '/api/hubspot-email';
-    fetch(url).then(r => r.json()).then((d: EmailData) => setData(d)).catch(() => setData(null)).finally(() => setLoading(false));
+    fetch(url, { signal: ctrl.signal })
+      .then(async r => {
+        if (!r.ok) throw new Error(`HubSpot email HTTP ${r.status}`);
+        return r.json() as Promise<EmailData>;
+      })
+      .then(d => {
+        if (cancelled) return;
+        // Guard against malformed / error payloads blanking the tab
+        if (!d || typeof d !== 'object') {
+          setData(null);
+          return;
+        }
+        setData({
+          month: d.month ?? (selectedMonth || null),
+          campaigns: Array.isArray(d.campaigns) ? d.campaigns : [],
+          connected: !!d.connected,
+          totalSends: d.totalSends ?? 0,
+          totalOpens: d.totalOpens ?? 0,
+          totalClicks: d.totalClicks ?? 0,
+          avgOpenRate: d.avgOpenRate ?? 0,
+          avgClickRate: d.avgClickRate ?? 0,
+        });
+      })
+      .catch(err => {
+        if (cancelled || (err as Error)?.name === 'AbortError') return;
+        console.error('[EmailTab hubspot]', err);
+        // Keep last good data if we already have it for this month — only clear when empty
+        setData(prev => prev);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      ctrl.abort();
+    };
   }, [selectedMonth]);
 
   // GA4 revenue + previous month data (parallel)
   useEffect(() => {
     const ctrl = new AbortController();
-    setRevenueData(null); setPrevData(null); setPrevRevData(null); setRevLoading(true);
+    let cancelled = false;
+    setRevLoading(true);
+    // Clear secondary data only after abort is set up — never let stale responses re-apply
+    setRevenueData(null);
+    setPrevData(null);
+    setPrevRevData(null);
+
     let start = '2022-01-01', end = 'today', prevStart = '', prevEnd = '';
     if (selectedMonth) {
       const [y, m] = selectedMonth.split('-').map(Number);
@@ -365,21 +416,46 @@ export default function EmailTab() {
       prevStart = `${prev}-01`;
       prevEnd   = `${prev}-${String(new Date(py, pm, 0).getDate()).padStart(2, '0')}`;
     }
+
+    const safeJson = async <T,>(r: Response): Promise<T> => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<T>;
+    };
+
     const jobs: Promise<void>[] = [
       fetch(`/api/ga-email-revenue?start=${start}&end=${end}`, { signal: ctrl.signal })
-        .then(r => r.json()).then((d: RevenueData) => setRevenueData(d))
-        .catch(err => { if ((err as Error).name !== 'AbortError') setRevenueData(null); }),
+        .then(r => safeJson<RevenueData>(r))
+        .then(d => { if (!cancelled) setRevenueData(d); })
+        .catch(err => {
+          if (cancelled || (err as Error)?.name === 'AbortError') return;
+          setRevenueData(null);
+        }),
     ];
     if (selectedMonth && prevStart) {
       jobs.push(
         fetch(`/api/hubspot-email?month=${getPrevMonth(selectedMonth)}`, { signal: ctrl.signal })
-          .then(r => r.json()).then((d: EmailData) => setPrevData(d)).catch(() => setPrevData(null)),
+          .then(r => safeJson<EmailData>(r))
+          .then(d => { if (!cancelled) setPrevData(d); })
+          .catch(err => {
+            if (cancelled || (err as Error)?.name === 'AbortError') return;
+            setPrevData(null);
+          }),
         fetch(`/api/ga-email-revenue?start=${prevStart}&end=${prevEnd}`, { signal: ctrl.signal })
-          .then(r => r.json()).then((d: RevenueData) => setPrevRevData(d)).catch(() => setPrevRevData(null)),
+          .then(r => safeJson<RevenueData>(r))
+          .then(d => { if (!cancelled) setPrevRevData(d); })
+          .catch(err => {
+            if (cancelled || (err as Error)?.name === 'AbortError') return;
+            setPrevRevData(null);
+          }),
       );
     }
-    Promise.all(jobs).finally(() => setRevLoading(false));
-    return () => ctrl.abort();
+    Promise.all(jobs).finally(() => {
+      if (!cancelled) setRevLoading(false);
+    });
+    return () => {
+      cancelled = true;
+      ctrl.abort();
+    };
   }, [selectedMonth]);
 
   // Trend data — lazy: only fetch when user opens the trend panel
@@ -546,9 +622,22 @@ export default function EmailTab() {
         </div>
       )}
 
-      {loading && <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading campaigns&hellip;</div>}
+      {/* Failed / empty load — previously rendered pure white blank */}
+      {!loading && !data && (
+        <div className="bg-white border border-gray-200 rounded-xl p-8 text-center mb-6">
+          <div className="text-gray-700 font-medium mb-1">Could not load email data</div>
+          <div className="text-sm text-gray-500">Try selecting the month again, or refresh the page.</div>
+        </div>
+      )}
 
-      {!loading && data?.connected && (
+      {loading && !data && (
+        <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading campaigns&hellip;</div>
+      )}
+      {loading && data && (
+        <div className="text-xs text-gray-400 mb-3">Refreshing campaigns&hellip;</div>
+      )}
+
+      {data?.connected && (
         <>
           {/* ── 12-Month Trend Chart ── */}
           {showTrend && (

@@ -246,12 +246,16 @@ export async function fetchEmailCampaigns(
       after = page.next;
     } while (after && allRows.length < 2000);
 
-    // Step 2: sort (all rows are already filtered to the target month above)
+    // Step 2: sort newest-first (publishDate may be ISO string OR Unix ms number)
     const filtered = allRows;
-
-    filtered.sort((a, b) =>
-      (b.publishDate ?? '').localeCompare(a.publishDate ?? ''),
-    );
+    const pubTs = (v: string | number | undefined | null): number => {
+      if (v == null) return 0;
+      if (typeof v === 'number') return v;
+      if (/^\d{10,}$/.test(v)) return parseInt(v, 10);
+      const t = new Date(v).getTime();
+      return isNaN(t) ? 0 : t;
+    };
+    filtered.sort((a, b) => pubTs(b.publishDate) - pubTs(a.publishDate));
 
     // Step 3: fetch stats — cap at 100 rows to stay within Edge Runtime timeout
     const forStats = filtered.slice(0, 100);
