@@ -605,7 +605,7 @@ export interface WebsiteConversionData {
   connected: boolean;
   source: 'ga4';
   current: WebsiteConversionSlice | null;
-  /** Same day-range in previous month (fair MTD comparison) */
+  /** Comparison window of equal length (prior period) */
   previous: WebsiteConversionSlice | null;
   /** Absolute pp change: current.rate - previous.rate */
   deltaPp: number | null;
@@ -636,8 +636,61 @@ function sydneyTodayYmd(): string {
   }).format(new Date());
 }
 
-/** Month window capped to today; previous = same calendar days last month. */
-function conversionDateWindows(month: string): {
+/** Parse YYYY-MM-DD as UTC midnight (date-only math). */
+function ymdToUtc(ymd: string): Date {
+  const [y, m, d] = ymd.split('-').map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d!));
+}
+
+function utcToYmd(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function addDaysYmd(ymd: string, days: number): string {
+  const d = ymdToUtc(ymd);
+  d.setUTCDate(d.getUTCDate() + days);
+  return utcToYmd(d);
+}
+
+function daysInclusive(startDate: string, endDate: string): number {
+  const a = ymdToUtc(startDate).getTime();
+  const b = ymdToUtc(endDate).getTime();
+  return Math.max(1, Math.round((b - a) / 86_400_000) + 1);
+}
+
+/**
+ * Prior comparison window for a selected range.
+ * - Default: equal-length period immediately before (Today→Yesterday, Last 7→prev 7).
+ * - alignMonth: same calendar days in previous month (MTD / full month / Finance).
+ */
+export function conversionCompareWindows(
+  startDate: string,
+  endDate: string,
+  mode: 'priorEqual' | 'alignMonth' = 'priorEqual',
+): { curStart: string; curEnd: string; prevStart: string; prevEnd: string } {
+  if (mode === 'alignMonth') {
+    const [year, mon] = startDate.slice(0, 7).split('-').map(Number);
+    const endDay = parseInt(endDate.slice(8, 10), 10);
+    const prevY = mon === 1 ? year! - 1 : year!;
+    const prevM = mon === 1 ? 12 : mon! - 1;
+    const prevLast = new Date(Date.UTC(prevY, prevM, 0)).getUTCDate();
+    const prevEndDay = Math.min(endDay, prevLast);
+    return {
+      curStart: startDate,
+      curEnd: endDate,
+      prevStart: `${prevY}-${String(prevM).padStart(2, '0')}-01`,
+      prevEnd: `${prevY}-${String(prevM).padStart(2, '0')}-${String(prevEndDay).padStart(2, '0')}`,
+    };
+  }
+
+  const n = daysInclusive(startDate, endDate);
+  const prevEnd = addDaysYmd(startDate, -1);
+  const prevStart = addDaysYmd(prevEnd, -(n - 1));
+  return { curStart: startDate, curEnd: endDate, prevStart, prevEnd };
+}
+
+/** Month window capped to today (Sydney); previous = same calendar days last month. */
+function conversionDateWindowsFromMonth(month: string): {
   curStart: string; curEnd: string;
   prevStart: string; prevEnd: string;
 } {
@@ -651,14 +704,7 @@ function conversionDateWindows(month: string): {
   const endDay = isCurrentMonth ? Math.min(lastDay, todayDay) : lastDay;
   const curEnd = `${year}-${String(mon).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
 
-  const prevY = mon === 1 ? year! - 1 : year!;
-  const prevM = mon === 1 ? 12 : mon! - 1;
-  const prevLast = new Date(Date.UTC(prevY, prevM, 0)).getUTCDate();
-  const prevEndDay = Math.min(endDay, prevLast);
-  const prevStart = `${prevY}-${String(prevM).padStart(2, '0')}-01`;
-  const prevEnd = `${prevY}-${String(prevM).padStart(2, '0')}-${String(prevEndDay).padStart(2, '0')}`;
-
-  return { curStart, curEnd, prevStart, prevEnd };
+  return conversionCompareWindows(curStart, curEnd, 'alignMonth');
 }
 
 async function fetchSessionsPurchases(
@@ -709,7 +755,7 @@ function buildConversionReason(
   if (direction === 'flat') {
     return {
       direction,
-      reason: `Stable vs same period last month (sessions ${fmt(sessPct)}, purchases ${fmt(purchPct)}).`,
+      reason: `Stable vs prior period (sessions ${fmt(sessPct)}, purchases ${fmt(purchPct)}).`,
     };
   }
 
@@ -757,16 +803,24 @@ function buildConversionReason(
   };
 }
 
+export type ConversionCompareMode = 'priorEqual' | 'alignMonth';
+
 async function fetchWebsiteConversionForProperty(
   propertyBase: string,
-  month: string,
   connected: boolean,
+  startDate: string,
+  endDate: string,
+  compareMode: ConversionCompareMode = 'priorEqual',
 ): Promise<WebsiteConversionData> {
   if (!connected) return emptyConversion();
 
   try {
     const accessToken = await getAccessToken();
-    const { curStart, curEnd, prevStart, prevEnd } = conversionDateWindows(month);
+    const { curStart, curEnd, prevStart, prevEnd } = conversionCompareWindows(
+      startDate,
+      endDate,
+      compareMode,
+    );
 
     const [current, previous] = await Promise.all([
       fetchSessionsPurchases(accessToken, propertyBase, curStart, curEnd),
@@ -791,14 +845,41 @@ async function fetchWebsiteConversionForProperty(
   }
 }
 
-/** Pascal Press storefront conversion (GA4 property 354651290). */
-export async function fetchPPWebsiteConversion(month: string): Promise<WebsiteConversionData> {
-  return fetchWebsiteConversionForProperty(GA4_BASE, month, isConnected());
+/**
+ * Pascal Press storefront conversion (GA4 property 354651290).
+ * Pass startDate/endDate for a range, or month (YYYY-MM) for Finance/MTD-style windows.
+ */
+export async function fetchPPWebsiteConversion(
+  startOrMonth: string,
+  endDate?: string,
+  compareMode?: ConversionCompareMode,
+): Promise<WebsiteConversionData> {
+  if (endDate) {
+    return fetchWebsiteConversionForProperty(
+      GA4_BASE, isConnected(), startOrMonth, endDate, compareMode ?? 'priorEqual',
+    );
+  }
+  const w = conversionDateWindowsFromMonth(startOrMonth);
+  return fetchWebsiteConversionForProperty(
+    GA4_BASE, isConnected(), w.curStart, w.curEnd, compareMode ?? 'alignMonth',
+  );
 }
 
 /** Excel Test Zone storefront conversion (ETZ GA4 property). */
-export async function fetchETZWebsiteConversion(month: string): Promise<WebsiteConversionData> {
-  return fetchWebsiteConversionForProperty(GA4_ETZ_BASE, month, isETZConnected());
+export async function fetchETZWebsiteConversion(
+  startOrMonth: string,
+  endDate?: string,
+  compareMode?: ConversionCompareMode,
+): Promise<WebsiteConversionData> {
+  if (endDate) {
+    return fetchWebsiteConversionForProperty(
+      GA4_ETZ_BASE, isETZConnected(), startOrMonth, endDate, compareMode ?? 'priorEqual',
+    );
+  }
+  const w = conversionDateWindowsFromMonth(startOrMonth);
+  return fetchWebsiteConversionForProperty(
+    GA4_ETZ_BASE, isETZConnected(), w.curStart, w.curEnd, compareMode ?? 'alignMonth',
+  );
 }
 
 // ---------------------------------------------------------------------------

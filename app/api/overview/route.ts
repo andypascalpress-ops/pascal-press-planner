@@ -134,8 +134,10 @@ export async function GET(request: Request) {
       fetchHSCStripeRevenue(month, { dateRange: { start: startDate, end: endDate } }),
       fetchBlakeRevenue(month, { start: startDate, end: endDate }),
       fetchEmailCampaigns(month, { dateRange: { start: startDate, end: endDate } }),
-      fetchPPWebsiteConversion(month),
-      fetchETZWebsiteConversion(month),
+      // Conversion follows the selected Overview range (Today / Last 7 / MTD / …).
+      // Monthly ranges compare same calendar days last month; short ranges use equal prior days.
+      fetchPPWebsiteConversion(startDate, endDate, isMonthly ? 'alignMonth' : 'priorEqual'),
+      fetchETZWebsiteConversion(startDate, endDate, isMonthly ? 'alignMonth' : 'priorEqual'),
     ]);
 
   const ppSpend  = ppAdsResult.status  === 'fulfilled'
@@ -240,13 +242,13 @@ export async function GET(request: Request) {
   if (ppConv?.connected && ppConv.direction === 'down' && (ppConv.deltaPp ?? 0) <= -0.3) {
     alerts.push({
       id: 'pp-cr-down', severity: 'warning', brand: 'Pascal Press',
-      message: `Pascal Press site conversion is ${ppConv.current?.conversionRate.toFixed(2)}% (${ppConv.deltaPp}pp) — ${ppConv.reason ?? 'down vs same period last month'}.`,
+      message: `Pascal Press site conversion is ${ppConv.current?.conversionRate.toFixed(2)}% (${ppConv.deltaPp}pp) — ${ppConv.reason ?? 'down vs prior period'}.`,
     });
   }
   if (etzConv?.connected && etzConv.direction === 'down' && (etzConv.deltaPp ?? 0) <= -0.3) {
     alerts.push({
       id: 'etz-cr-down', severity: 'warning', brand: 'Excel Test Zone',
-      message: `Excel Test Zone site conversion is ${etzConv.current?.conversionRate.toFixed(2)}% (${etzConv.deltaPp}pp) — ${etzConv.reason ?? 'down vs same period last month'}.`,
+      message: `Excel Test Zone site conversion is ${etzConv.current?.conversionRate.toFixed(2)}% (${etzConv.deltaPp}pp) — ${etzConv.reason ?? 'down vs prior period'}.`,
     });
   }
 

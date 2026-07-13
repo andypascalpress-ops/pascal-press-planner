@@ -240,7 +240,7 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
         <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2.5">
           <div className="flex items-baseline justify-between gap-2">
             <div>
-              <p className="text-xs text-indigo-600 font-medium mb-0.5">Site conversion</p>
+              <p className="text-xs text-indigo-600 font-medium mb-0.5">Site conversion · this range</p>
               <p className="text-lg font-bold text-indigo-900">
                 {data.conversion.rate.toFixed(2)}%
               </p>
