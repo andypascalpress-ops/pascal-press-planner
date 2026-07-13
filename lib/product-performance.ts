@@ -178,13 +178,21 @@ function buildRows(
 }
 
 function sliceFromRows(brand: ProductBrand, source: BrandProductSlice['source'], connected: boolean, rows: ProductRow[]): BrandProductSlice {
-  const sold = rows.filter(r => r.current.revenue > 0 || r.current.units > 0);
+  const isNoise = (name: string) =>
+    /^free\s*gift/i.test(name) || /voucher/i.test(name) || name.toLowerCase() === 'unknown';
+
+  // Paid product sales only for ranking (exclude free gifts / $0 lines)
+  const sold = rows.filter(r => r.current.revenue > 0 && !isNoise(r.name));
   const revenue = sold.reduce((s, r) => s + r.current.revenue, 0);
   const units = sold.reduce((s, r) => s + r.current.units, 0);
   const orders = sold.reduce((s, r) => s + r.current.orders, 0);
   const lyRevenue = sold.reduce((s, r) => s + r.lastYear.revenue, 0);
   const top = sold.slice(0, 15);
-  const bottom = [...sold].sort((a, b) => a.current.revenue - b.current.revenue).slice(0, 15);
+  // Soft sellers: lowest paid revenue, still actually sold (>$0)
+  const bottom = [...sold]
+    .filter(r => r.current.revenue > 0)
+    .sort((a, b) => a.current.revenue - b.current.revenue)
+    .slice(0, 15);
   const declining = sold
     .filter(r => r.lastYear.revenue > 0 && (r.yoyRevenuePct ?? 0) < 0)
     .sort((a, b) => (a.yoyRevenuePct ?? 0) - (b.yoyRevenuePct ?? 0))
@@ -487,7 +495,9 @@ export async function fetchProductPerformance(range: RangeKey = '30d'): Promise<
   const allProducts = [...pp.products, ...blake.products, ...etz.products, ...hsc.products]
     .sort((a, b) => b.current.revenue - a.current.revenue);
 
-  const sold = allProducts.filter(r => r.current.revenue > 0 || r.current.units > 0);
+  const isNoise = (name: string) =>
+    /^free\s*gift/i.test(name) || /voucher/i.test(name) || name.toLowerCase() === 'unknown';
+  const sold = allProducts.filter(r => r.current.revenue > 0 && !isNoise(r.name));
   const revenue = sold.reduce((s, r) => s + r.current.revenue, 0);
   const units = sold.reduce((s, r) => s + r.current.units, 0);
   const orders = sold.reduce((s, r) => s + r.current.orders, 0);
