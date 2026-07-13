@@ -299,7 +299,7 @@ export default function Home() {
   const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
   const FMT = new Intl.NumberFormat('en-AU');
 
-  const isCampaignView = view !== 'finance' && view !== 'email' && view !== 'overview' && view !== 'action';
+  const isCampaignView = view !== 'finance' && view !== 'email' && view !== 'overview' && view !== 'action' && view !== 'products';
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
