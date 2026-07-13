@@ -278,15 +278,16 @@ export async function fetchCampaignPerformance(
   const rows = await gaqlSearch(cfg, accessToken, query);
   return rows.map(r => {
     const cost = Number(r.metrics?.costMicros ?? 0) / 1_000_000;
-    const conv = r.metrics?.conversionsValue ?? 0;
+    const conv = Number(r.metrics?.conversionsValue ?? 0);
     return {
       name:        r.campaign?.name        ?? '',
       status:      r.campaign?.status      ?? '',
-      clicks:      r.metrics?.clicks       ?? 0,
-      impressions: r.metrics?.impressions  ?? 0,
-      ctr:         r.metrics?.ctr          ?? 0,
+      // Google Ads may return metric scalars as strings — always coerce to number
+      clicks:      Number(r.metrics?.clicks ?? 0),
+      impressions: Number(r.metrics?.impressions ?? 0),
+      ctr:         Number(r.metrics?.ctr ?? 0),
       avgCpc:      Number(r.metrics?.averageCpc ?? 0) / 1_000_000,
-      conversions: r.metrics?.conversions  ?? 0,
+      conversions: Number(r.metrics?.conversions ?? 0),
       convValue:   Math.round(conv * 100) / 100,
       cost:        Math.round(cost * 100) / 100,
       roas:        cost > 0 ? Math.round((conv / cost) * 100) / 100 : 0,
@@ -335,11 +336,11 @@ export async function fetchAdGroupPerformance(
   return rows.map(r => ({
     campaign:    r.campaign?.name   ?? '',
     adGroup:     r.adGroup?.name    ?? '',
-    clicks:      r.metrics?.clicks  ?? 0,
-    impressions: r.metrics?.impressions ?? 0,
-    ctr:         r.metrics?.ctr ?? 0,
-    conversions: r.metrics?.conversions ?? 0,
-    convValue:   Math.round((r.metrics?.conversionsValue ?? 0) * 100) / 100,
+    clicks:      Number(r.metrics?.clicks ?? 0),
+    impressions: Number(r.metrics?.impressions ?? 0),
+    ctr:         Number(r.metrics?.ctr ?? 0),
+    conversions: Number(r.metrics?.conversions ?? 0),
+    convValue:   Math.round(Number(r.metrics?.conversionsValue ?? 0) * 100) / 100,
     cost:        Math.round((Number(r.metrics?.costMicros ?? 0) / 1_000_000) * 100) / 100,
   }));
 }

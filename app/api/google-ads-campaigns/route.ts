@@ -109,10 +109,10 @@ function joinCampaigns(
 
 
 function summarise(campaigns: JoinedCampaign[], adsConnected: boolean, gaConnected: boolean, error: string | null = null) {
-  const spend = campaigns.reduce((s, c) => s + c.spend, 0);
-  const gaRevenue = campaigns.reduce((s, c) => s + c.gaRevenue, 0);
-  const gaTransactions = campaigns.reduce((s, c) => s + c.gaTransactions, 0);
-  const clicks = campaigns.reduce((s, c) => s + c.clicks, 0);
+  const spend = campaigns.reduce((s, c) => s + Number(c.spend || 0), 0);
+  const gaRevenue = campaigns.reduce((s, c) => s + Number(c.gaRevenue || 0), 0);
+  const gaTransactions = campaigns.reduce((s, c) => s + Number(c.gaTransactions || 0), 0);
+  const clicks = campaigns.reduce((s, c) => s + Number(c.clicks || 0), 0);
   return {
     campaigns,
     totals: {
