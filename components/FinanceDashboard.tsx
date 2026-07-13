@@ -73,7 +73,7 @@ interface GA4HistoryItem {
 
 interface WebsiteConversionBrand {
   connected: boolean;
-  source: 'ga4' | 'bigcommerce_hybrid';
+  source: 'ga4';
   current: {
     sessions: number;
     purchases: number;
@@ -756,9 +756,7 @@ function BrandPanel({
             <div className="rounded-xl border border-indigo-100 overflow-hidden">
               <div className="bg-indigo-600 px-4 py-2.5 flex items-center justify-between">
                 <span className="text-white font-bold text-sm tracking-wide">Website Conversion</span>
-                <span className="text-indigo-100 text-xs font-medium">
-                  {websiteConversion.source === 'bigcommerce_hybrid' ? 'BC orders · GA visits' : 'GA4 · site-wide'}
-                </span>
+                <span className="text-indigo-100 text-xs font-medium">GA4 · site-wide</span>
               </div>
               <div className="bg-indigo-50 px-4 py-3 space-y-2">
                 <div className="flex items-baseline justify-between gap-3">
@@ -788,14 +786,8 @@ function BrandPanel({
                   )}
                 </div>
                 <div className="flex flex-wrap gap-3 text-sm text-indigo-800">
-                  <span>
-                    {websiteConversion.current.purchases.toLocaleString()}{' '}
-                    {websiteConversion.source === 'bigcommerce_hybrid' ? 'orders' : 'purchases'}
-                  </span>
-                  <span>
-                    · {websiteConversion.current.sessions.toLocaleString()}{' '}
-                    {websiteConversion.source === 'bigcommerce_hybrid' ? 'visits' : 'sessions'}
-                  </span>
+                  <span>{websiteConversion.current.purchases.toLocaleString()} purchases</span>
+                  <span>· {websiteConversion.current.sessions.toLocaleString()} sessions</span>
                 </div>
                 {websiteConversion.reason && (
                   <div className="text-xs text-indigo-900/80 bg-white/70 rounded-lg px-3 py-2 leading-snug">
@@ -803,9 +795,7 @@ function BrandPanel({
                   </div>
                 )}
                 <div className="text-xs text-indigo-400">
-                  {websiteConversion.source === 'bigcommerce_hybrid'
-                    ? 'BC-style: orders ÷ storefront visits · vs prior period'
-                    : 'vs prior period · not Google Ads conversion rate'}
+                  vs prior period · not Google Ads conversion rate
                 </div>
               </div>
             </div>
