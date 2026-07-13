@@ -313,3 +313,180 @@ export async function fetchEmailCampaigns(
     };
   }
 }
+
+// ─── Trend (single-pass, brand-sliced) ───────────────────────────────────────
+
+export function detectEmailBrand(name: string, fromName: string): EmailBrand {
+  const n = (name ?? '').toLowerCase();
+  const f = (fromName ?? '').toLowerCase();
+  if (n.startsWith('be_') || n.includes('blake') || f.includes('blake')) return 'Blake Education';
+  if (n.includes('etz') || n.startsWith('excel') || f.includes('excel test') || f.includes('etz')) {
+    return 'Excel Test Zone';
+  }
+  return 'Pascal Press';
+}
+
+/** Last N calendar months ending at current Sydney month, oldest → newest. */
+export function listRecentMonthsSydney(count = 12): string[] {
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Australia/Sydney',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date()); // YYYY-MM-DD
+  const [y, m] = today.split('-').map(Number);
+  const months: string[] = [];
+  let yy = y;
+  let mm = m;
+  for (let i = 0; i < count; i++) {
+    months.push(`${yy}-${String(mm).padStart(2, '0')}`);
+    mm -= 1;
+    if (mm < 1) { mm = 12; yy -= 1; }
+  }
+  return months.reverse();
+}
+
+function emptyTrendPoint(month: string): TrendMonthPoint {
+  return {
+    month,
+    avgOpenRate: 0,
+    avgClickRate: 0,
+    avgCtor: 0,
+    unsubRate: 0,
+    totalSends: 0,
+    totalOpens: 0,
+    totalClicks: 0,
+    campaigns: 0,
+  };
+}
+
+function finalizeBuckets(
+  months: string[],
+  buckets: Map<string, { sends: number; opens: number; clicks: number; unsubs: number; n: number }>,
+): TrendMonthPoint[] {
+  return months.map(month => {
+    const b = buckets.get(month);
+    if (!b || b.sends <= 0) return emptyTrendPoint(month);
+    return {
+      month,
+      avgOpenRate:  safeDiv(b.opens, b.sends),
+      avgClickRate: safeDiv(b.clicks, b.sends),
+      avgCtor:      safeDiv(b.clicks, b.opens),
+      unsubRate:    safeDiv(b.unsubs, b.sends),
+      totalSends:   b.sends,
+      totalOpens:   b.opens,
+      totalClicks:  b.clicks,
+      campaigns:    b.n,
+    };
+  });
+}
+
+/**
+ * One-pass 12-month trend: list HubSpot emails once, load stats once,
+ * bucket by month × brand. Avoids 12 separate month fetches (which rate-limit
+ * and left Dec 2025–Jul 2026 empty).
+ */
+export async function fetchEmailTrend(monthCount = 12): Promise<EmailTrendResponse> {
+  const months = listRecentMonthsSydney(monthCount);
+  const startMonth = months[0]!;
+  const endMonth = months[months.length - 1]!;
+  const emptyBrands = (): Record<TrendBrandKey, TrendMonthPoint[]> => ({
+    All: months.map(emptyTrendPoint),
+    'Pascal Press': months.map(emptyTrendPoint),
+    'Excel Test Zone': months.map(emptyTrendPoint),
+    'Blake Education': months.map(emptyTrendPoint),
+  });
+
+  if (!process.env.HUBSPOT_API_KEY) {
+    return {
+      months,
+      byBrand: emptyBrands(),
+      range: { startMonth, endMonth },
+      connected: false,
+      emailsScanned: 0,
+      statsLoaded: 0,
+    };
+  }
+
+  try {
+    // Step 1: paginate newest-first until we pass the oldest month in the window
+    let after: string | undefined;
+    const inWindow: HsEmailRow[] = [];
+    do {
+      const page = await fetchEmailPage(after);
+      const rows = page.results;
+      for (const r of rows) {
+        const ym = toAESTYearMonth(r.publishDate);
+        if (!ym) continue;
+        if (ym >= startMonth && ym <= endMonth) inWindow.push(r);
+      }
+      const lastYM = toAESTYearMonth(rows[rows.length - 1]?.publishDate);
+      if (lastYM && lastYM < startMonth) break;
+      after = page.next;
+    } while (after && inWindow.length < 2500);
+
+    // Newest-first list: keep the most recent emails so Jul 2026 is always covered.
+    // 800 covers a full year of sends for PP+ETZ+Blake without timing out on Edge.
+    const MAX_STATS = 800;
+    const forStats = inWindow.slice(0, MAX_STATS);
+    const statsMap = await fetchStatsForRows(forStats);
+
+    type Acc = { sends: number; opens: number; clicks: number; unsubs: number; n: number };
+    const mk = () => new Map<string, Acc>();
+    const allB = mk();
+    const ppB = mk();
+    const etzB = mk();
+    const beB = mk();
+
+    const add = (map: Map<string, Acc>, month: string, sends: number, opens: number, clicks: number, unsubs: number) => {
+      const cur = map.get(month) ?? { sends: 0, opens: 0, clicks: 0, unsubs: 0, n: 0 };
+      cur.sends += sends;
+      cur.opens += opens;
+      cur.clicks += clicks;
+      cur.unsubs += unsubs;
+      cur.n += 1;
+      map.set(month, cur);
+    };
+
+    for (const r of forStats) {
+      const month = toAESTYearMonth(r.publishDate);
+      if (!month || month < startMonth || month > endMonth) continue;
+      const d = statsMap.get(r.id) ?? {};
+      const c = d.counters ?? {};
+      const sends  = c.sent ?? 0;
+      const opens  = c.open ?? 0;
+      const clicks = c.click ?? 0;
+      const unsubs = c.unsubscribed ?? 0;
+      // Still count the email even if counters missing (campaigns n)
+      const brand = detectEmailBrand(r.name ?? '', r.fromName ?? '');
+      add(allB, month, sends, opens, clicks, unsubs);
+      if (brand === 'Pascal Press') add(ppB, month, sends, opens, clicks, unsubs);
+      else if (brand === 'Excel Test Zone') add(etzB, month, sends, opens, clicks, unsubs);
+      else add(beB, month, sends, opens, clicks, unsubs);
+    }
+
+    return {
+      months,
+      byBrand: {
+        All: finalizeBuckets(months, allB),
+        'Pascal Press': finalizeBuckets(months, ppB),
+        'Excel Test Zone': finalizeBuckets(months, etzB),
+        'Blake Education': finalizeBuckets(months, beB),
+      },
+      range: { startMonth, endMonth },
+      connected: true,
+      emailsScanned: inWindow.length,
+      statsLoaded: statsMap.size,
+    };
+  } catch (err) {
+    console.error('[hubspot-email-trend]', err);
+    return {
+      months,
+      byBrand: emptyBrands(),
+      range: { startMonth, endMonth },
+      connected: false,
+      emailsScanned: 0,
+      statsLoaded: 0,
+    };
+  }
+}

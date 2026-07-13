@@ -37,11 +37,6 @@ interface RevenueData {
   range?: { startDate: string; endDate: string };
 }
 interface CampaignGroup { key: string; label: string; rev: CampaignRevenue | null; emails: EmailCampaign[]; }
-interface TrendPoint {
-  month: string; avgOpenRate: number; avgClickRate: number;
-  avgCtor: number; unsubRate: number; totalSends: number; campaigns: number;
-}
-
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 function pct(n: number): string { return (n * 100).toFixed(1) + '%'; }
@@ -195,148 +190,378 @@ function unsubColor(r: number): string { return r <= 0.002 ? 'text-green-600' : 
 
 // ── Trend Chart ───────────────────────────────────────────────────────────────
 
-function TrendChart({ data, selectedMonth }: { data: TrendPoint[]; selectedMonth: string }) {
-  const [hovered, setHovered] = useState<number | null>(null);
+interface TrendMonthPoint {
+  month: string;
+  avgOpenRate: number;
+  avgClickRate: number;
+  avgCtor: number;
+  unsubRate: number;
+  totalSends: number;
+  totalOpens?: number;
+  totalClicks?: number;
+  campaigns: number;
+}
+type TrendBrandKey = 'All' | 'Pascal Press' | 'Excel Test Zone' | 'Blake Education';
+interface TrendData {
+  months: string[];
+  byBrand: Record<TrendBrandKey, TrendMonthPoint[]>;
+  range?: { startMonth: string; endMonth: string };
+  connected?: boolean;
+  emailsScanned?: number;
+  statsLoaded?: number;
+}
 
-  // Filter to months with sends
-  const pts = data.filter(d => d.totalSends > 0);
-  if (pts.length < 2) {
-    return <div className="text-sm text-gray-400 text-center py-8">Not enough data yet — needs at least 2 months with sends.</div>;
+type TrendMetric = 'open' | 'click' | 'sends' | 'unsub';
+
+const BRAND_COLORS: Record<Exclude<TrendBrandKey, 'All'>, string> = {
+  'Pascal Press': '#2563eb',
+  'Excel Test Zone': '#059669',
+  'Blake Education': '#7c3aed',
+};
+
+// ── Trend Chart ───────────────────────────────────────────────────────────────
+
+function TrendChart({
+  data,
+  selectedMonth,
+  brandFilter,
+}: {
+  data: TrendData;
+  selectedMonth: string;
+  brandFilter: TrendBrandKey;
+}) {
+  const [hovered, setHovered] = useState<number | null>(null);
+  const [metric, setMetric] = useState<TrendMetric>('open');
+
+  const months = data.months?.length
+    ? data.months
+    : (data.byBrand?.All ?? []).map(p => p.month);
+
+  if (!months.length) {
+    return <div className="text-sm text-gray-400 text-center py-8">No trend months returned.</div>;
   }
 
-  const W = 760, H = 210;
-  const PAD = { top: 20, right: 54, bottom: 36, left: 46 };
+  const seriesKeys: Exclude<TrendBrandKey, 'All'>[] =
+    brandFilter === 'All'
+      ? ['Pascal Press', 'Excel Test Zone', 'Blake Education']
+      : brandFilter === 'Pascal Press'
+        ? ['Pascal Press']
+        : brandFilter === 'Excel Test Zone'
+          ? ['Excel Test Zone']
+          : ['Blake Education'];
+
+  const series = seriesKeys.map(key => ({
+    key,
+    color: BRAND_COLORS[key],
+    points: data.byBrand?.[key] ?? months.map(m => ({
+      month: m, avgOpenRate: 0, avgClickRate: 0, avgCtor: 0, unsubRate: 0, totalSends: 0, campaigns: 0,
+    })),
+  }));
+
+  // Always plot full window (incl. zeros) so axis reaches current month
+  const n = months.length;
+  const allSends = months.map((_, i) =>
+    series.reduce((s, ser) => s + (ser.points[i]?.totalSends ?? 0), 0),
+  );
+  const maxSends = Math.max(...allSends, 1);
+
+  const metricValue = (p: TrendMonthPoint | undefined): number => {
+    if (!p) return 0;
+    if (metric === 'open') return p.avgOpenRate;
+    if (metric === 'click') return p.avgClickRate;
+    if (metric === 'unsub') return p.unsubRate;
+    return p.totalSends;
+  };
+
+  const isRate = metric !== 'sends';
+  const maxRate = Math.max(
+    0.05,
+    ...series.flatMap(ser => ser.points.map(p => metricValue(p))),
+  );
+  const rateCeil = metric === 'unsub'
+    ? Math.ceil(maxRate * 1000) / 1000 || 0.005
+    : Math.ceil(maxRate * 10) / 10 || 0.3;
+
+  const W = 800, H = 260;
+  const PAD = { top: 18, right: 16, bottom: 40, left: 48 };
   const chartW = W - PAD.left - PAD.right;
   const chartH = H - PAD.top - PAD.bottom;
 
-  // Left axis scale: open rate + click rate
-  const maxLeft = Math.max(...pts.map(d => d.avgOpenRate), 0.30);
-  const leftCeil  = Math.ceil(maxLeft / 0.1) * 0.1; // round up to nearest 10%
-
-  // Right axis scale: unsubscribe rate
-  const maxRight = Math.max(...pts.map(d => d.unsubRate), 0.005);
-  const rightCeil = Math.ceil(maxRight / 0.001) * 0.001; // round up to nearest 0.1%
-
-  const xOf   = (i: number) => PAD.left + (i / (pts.length - 1)) * chartW;
-  const yL    = (v: number) => PAD.top + chartH * (1 - v / leftCeil);
-  const yR    = (v: number) => PAD.top + chartH * (1 - v / rightCeil);
-
-  const openPts  = pts.map((d, i) => `${xOf(i).toFixed(1)},${yL(d.avgOpenRate).toFixed(1)}`).join(' ');
-  const clickPts = pts.map((d, i) => `${xOf(i).toFixed(1)},${yL(d.avgClickRate).toFixed(1)}`).join(' ');
-  const unsubPts = pts.map((d, i) => `${xOf(i).toFixed(1)},${yR(d.unsubRate).toFixed(1)}`).join(' ');
-
-  const leftGrids: number[] = [];
-  for (let v = 0; v <= leftCeil + 0.001; v += 0.1) leftGrids.push(Math.round(v * 100) / 100);
-
-  const rightGridVals = [0, rightCeil / 2, rightCeil];
+  const xOf = (i: number) => PAD.left + (n <= 1 ? chartW / 2 : (i / (n - 1)) * chartW);
+  const yRate = (v: number) => PAD.top + chartH * (1 - (rateCeil > 0 ? v / rateCeil : 0));
+  const ySends = (v: number) => PAD.top + chartH * (1 - v / maxSends);
+  const barW = Math.max(8, Math.min(28, chartW / n * 0.55));
 
   const monthAbbr = (ym: string) => {
     const [yr, mo] = ym.split('-');
-    const abbr = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(mo) - 1] ?? '';
-    return parseInt(mo) === 1 ? `${abbr} '${yr.slice(2)}` : abbr;
+    const abbr = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(mo ?? '1') - 1] ?? '';
+    // Always show year on Jan + last month so 2025→2026 is obvious
+    if (parseInt(mo ?? '1') === 1 || ym === months[months.length - 1]) return `${abbr} '${(yr ?? '').slice(2)}`;
+    return abbr;
   };
 
-  const hlIdx = pts.findIndex(d => d.month === selectedMonth);
+  const formatMetric = (v: number) => {
+    if (metric === 'sends') return fmt(Math.round(v));
+    return pct(v);
+  };
+
+  const metricLabel =
+    metric === 'open' ? 'Open rate'
+    : metric === 'click' ? 'Click rate'
+    : metric === 'unsub' ? 'Unsub rate'
+    : 'Sends';
+
+  const hlIdx = months.findIndex(m => m === selectedMonth);
+  const hasAnySends = allSends.some(s => s > 0);
+
+  if (!hasAnySends) {
+    return <div className="text-sm text-gray-400 text-center py-8">No sends in this 12-month window yet.</div>;
+  }
+
+  // Build line paths (skip zero-rate months as gaps only for rates with 0 sends)
+  const linePath = (points: TrendMonthPoint[]) => {
+    const parts: string[] = [];
+    let started = false;
+    points.forEach((p, i) => {
+      const v = metricValue(p);
+      const y = isRate ? yRate(v) : ySends(v);
+      const x = xOf(i);
+      // For rates, still plot zeros so line continues through quiet months
+      if (!started) { parts.push(`M ${x.toFixed(1)} ${y.toFixed(1)}`); started = true; }
+      else parts.push(`L ${x.toFixed(1)} ${y.toFixed(1)}`);
+    });
+    return parts.join(' ');
+  };
+
+  const gridVals: number[] = [];
+  if (isRate) {
+    const steps = 4;
+    for (let i = 0; i <= steps; i++) gridVals.push((rateCeil * i) / steps);
+  } else {
+    for (let i = 0; i <= 4; i++) gridVals.push((maxSends * i) / 4);
+  }
+
+  // Latest non-empty month snapshot for brand cards
+  let latestIdx = n - 1;
+  for (let i = n - 1; i >= 0; i--) {
+    if (allSends[i]! > 0) { latestIdx = i; break; }
+  }
 
   return (
     <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 230 }}>
-        {/* Left grid lines */}
-        {leftGrids.map(v => (
-          <g key={v}>
-            <line x1={PAD.left} y1={yL(v)} x2={W - PAD.right} y2={yL(v)} stroke="#f3f4f6" strokeWidth={1} />
-            <text x={PAD.left - 6} y={yL(v) + 4} textAnchor="end" fontSize={10} fill="#9ca3af">{(v * 100).toFixed(0)}%</text>
+      {/* Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs">
+          {([
+            ['open', 'Open rate'],
+            ['click', 'Click rate'],
+            ['sends', 'Sends'],
+            ['unsub', 'Unsub'],
+          ] as const).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setMetric(id)}
+              className={`px-3 py-1.5 font-medium transition-colors ${
+                metric === id ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="text-xs text-gray-500">
+          {data.range ? `${data.range.startMonth} → ${data.range.endMonth}` : `${months[0]} → ${months[n - 1]}`}
+          {brandFilter !== 'All' ? ` · ${brandFilter}` : ' · all brands'}
+        </div>
+      </div>
+
+      {/* Brand snapshot cards */}
+      <div className={`grid gap-2 mb-4 ${series.length === 1 ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-3'}`}>
+        {series.map(ser => {
+          const p = ser.points[latestIdx];
+          const v = metricValue(p);
+          return (
+            <div key={ser.key} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className="w-2 h-2 rounded-full" style={{ background: ser.color }} />
+                <span className="text-[11px] font-medium text-gray-600 truncate">{ser.key}</span>
+              </div>
+              <div className="text-lg font-bold text-gray-900 tabular-nums">{formatMetric(v)}</div>
+              <div className="text-[11px] text-gray-400">
+                {monthAbbr(months[latestIdx]!)} · {fmt(p?.totalSends ?? 0)} sends · {p?.campaigns ?? 0} emails
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 280 }}>
+        {/* Grid */}
+        {gridVals.map((v, i) => (
+          <g key={i}>
+            <line x1={PAD.left} y1={isRate ? yRate(v) : ySends(v)} x2={W - PAD.right} y2={isRate ? yRate(v) : ySends(v)} stroke="#f3f4f6" strokeWidth={1} />
+            <text x={PAD.left - 6} y={(isRate ? yRate(v) : ySends(v)) + 3} textAnchor="end" fontSize={10} fill="#9ca3af">
+              {isRate ? `${(v * 100).toFixed(metric === 'unsub' ? 2 : 0)}%` : fmt(Math.round(v))}
+            </text>
           </g>
         ))}
 
-        {/* Right axis labels (unsub) */}
-        {rightGridVals.map((v, i) => (
-          <text key={i} x={W - PAD.right + 6} y={yR(v) + 4} textAnchor="start" fontSize={9} fill="#ef4444" opacity={0.65}>
-            {(v * 100).toFixed(2)}%
-          </text>
-        ))}
-
-        {/* Axis border lines */}
         <line x1={PAD.left} y1={PAD.top} x2={PAD.left} y2={H - PAD.bottom} stroke="#e5e7eb" strokeWidth={1} />
-        <line x1={W - PAD.right} y1={PAD.top} x2={W - PAD.right} y2={H - PAD.bottom} stroke="#fca5a5" strokeWidth={1} opacity={0.5} />
+        <line x1={PAD.left} y1={H - PAD.bottom} x2={W - PAD.right} y2={H - PAD.bottom} stroke="#e5e7eb" strokeWidth={1} />
 
-        {/* Selected month highlight */}
+        {/* Selected month band */}
         {hlIdx >= 0 && (
-          <line x1={xOf(hlIdx)} y1={PAD.top} x2={xOf(hlIdx)} y2={H - PAD.bottom} stroke="#6366f1" strokeWidth={1.5} strokeDasharray="4,3" opacity={0.5} />
+          <rect
+            x={xOf(hlIdx) - barW * 0.7}
+            y={PAD.top}
+            width={barW * 1.4}
+            height={chartH}
+            fill="#6366f1"
+            opacity={0.06}
+          />
         )}
 
-        {/* Unsubscribe rate (dashed red, right axis) */}
-        <polyline points={unsubPts} fill="none" stroke="#ef4444" strokeWidth={1.5} strokeDasharray="5,3" strokeLinecap="round" strokeLinejoin="round" />
-
-        {/* Open rate */}
-        <polyline points={openPts} fill="none" stroke="#3b82f6" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
-
-        {/* Click rate */}
-        <polyline points={clickPts} fill="none" stroke="#10b981" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-
-        {/* Data points + hover areas */}
-        {pts.map((d, i) => (
-          <g key={i}>
-            <circle cx={xOf(i)} cy={yL(d.avgOpenRate)} r={hovered === i ? 5 : 3.5} fill="#3b82f6" />
-            <circle cx={xOf(i)} cy={yL(d.avgClickRate)} r={hovered === i ? 4 : 2.5} fill="#10b981" />
-            <circle cx={xOf(i)} cy={yR(d.unsubRate)} r={hovered === i ? 4 : 2.5} fill="#ef4444" />
+        {/* Soft send-volume bars (context) when viewing a rate */}
+        {isRate && months.map((_, i) => {
+          const h = chartH * (allSends[i]! / maxSends);
+          return (
             <rect
-              x={i === 0 ? xOf(i) : (xOf(i) + xOf(i - 1)) / 2}
-              y={PAD.top}
-              width={pts.length === 1 ? chartW : i === 0 || i === pts.length - 1 ? chartW / (pts.length - 1) / 2 : (xOf(i + 1 < pts.length ? i + 1 : i) - xOf(i - 1)) / 2}
-              height={chartH}
-              fill="transparent"
-              style={{ cursor: 'crosshair' }}
-              onMouseEnter={() => setHovered(i)}
-              onMouseLeave={() => setHovered(null)}
+              key={`bar-${i}`}
+              x={xOf(i) - barW / 2}
+              y={PAD.top + chartH - h}
+              width={barW}
+              height={Math.max(h, 0)}
+              fill="#e2e8f0"
+              rx={3}
             />
-          </g>
+          );
+        })}
+
+        {/* Sends as brand-stacked-ish bars when metric=sends */}
+        {metric === 'sends' && months.map((_, i) => {
+          let yBase = PAD.top + chartH;
+          return series.map(ser => {
+            const val = ser.points[i]?.totalSends ?? 0;
+            const h = chartH * (val / maxSends);
+            yBase -= h;
+            return (
+              <rect
+                key={`sbar-${ser.key}-${i}`}
+                x={xOf(i) - barW / 2}
+                y={yBase}
+                width={barW}
+                height={Math.max(h, 0)}
+                fill={ser.color}
+                opacity={0.85}
+                rx={ser === series[series.length - 1] ? 3 : 0}
+              />
+            );
+          });
+        })}
+
+        {/* Rate / sends lines */}
+        {isRate && series.map(ser => (
+          <path key={`line-${ser.key}`} d={linePath(ser.points)} fill="none" stroke={ser.color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
         ))}
 
-        {/* X axis labels */}
-        {pts.map((d, i) => (
-          <text key={i} x={xOf(i)} y={H - 6} textAnchor="middle" fontSize={10} fill={d.month === selectedMonth ? '#6366f1' : '#9ca3af'} fontWeight={d.month === selectedMonth ? 600 : 400}>
-            {monthAbbr(d.month)}
+        {/* Points */}
+        {isRate && series.map(ser =>
+          ser.points.map((p, i) => (
+            <circle
+              key={`pt-${ser.key}-${i}`}
+              cx={xOf(i)}
+              cy={yRate(metricValue(p))}
+              r={hovered === i ? 5 : 3}
+              fill={ser.color}
+              stroke="white"
+              strokeWidth={1.5}
+            />
+          )),
+        )}
+
+        {/* Hover zones */}
+        {months.map((_, i) => (
+          <rect
+            key={`hz-${i}`}
+            x={i === 0 ? PAD.left : (xOf(i) + xOf(i - 1)) / 2}
+            y={PAD.top}
+            width={
+              n === 1 ? chartW
+              : i === 0 || i === n - 1 ? chartW / (n - 1) / 2
+              : (xOf(i + 1) - xOf(i - 1)) / 2
+            }
+            height={chartH}
+            fill="transparent"
+            style={{ cursor: 'crosshair' }}
+            onMouseEnter={() => setHovered(i)}
+            onMouseLeave={() => setHovered(null)}
+          />
+        ))}
+
+        {/* X labels */}
+        {months.map((m, i) => (
+          <text
+            key={`xl-${i}`}
+            x={xOf(i)}
+            y={H - 12}
+            textAnchor="middle"
+            fontSize={10}
+            fill={m === selectedMonth ? '#6366f1' : '#9ca3af'}
+            fontWeight={m === selectedMonth ? 600 : 400}
+          >
+            {monthAbbr(m)}
           </text>
         ))}
 
-        {/* Hover tooltip */}
+        {/* Tooltip */}
         {hovered !== null && (() => {
-          const d = pts[hovered];
+          const m = months[hovered]!;
+          const rows = series.map(ser => ({
+            key: ser.key,
+            color: ser.color,
+            v: metricValue(ser.points[hovered]),
+            sends: ser.points[hovered]?.totalSends ?? 0,
+            emails: ser.points[hovered]?.campaigns ?? 0,
+          }));
+          const tw = 200;
+          const th = 28 + rows.length * 16 + 18;
           const x = xOf(hovered);
-          const tw = 158, th = 84;
           const tx = x + tw + 14 > W - PAD.right ? x - tw - 10 : x + 10;
-          const ty = Math.max(PAD.top, Math.min(PAD.top + chartH - th, yL(d.avgOpenRate) - th / 2));
+          const ty = PAD.top + 8;
           return (
             <g pointerEvents="none">
-              <rect x={tx} y={ty} width={tw} height={th} rx={6} fill="white" stroke="#e5e7eb" strokeWidth={1} />
-              <text x={tx + tw / 2} y={ty + 15} textAnchor="middle" fontSize={11} fontWeight={600} fill="#374151">{monthLabel(d.month)}</text>
-              <text x={tx + tw / 2} y={ty + 27} textAnchor="middle" fontSize={9} fill="#9ca3af">{fmt(d.totalSends)} sends &middot; {d.campaigns} emails</text>
-              <circle cx={tx + 13} cy={ty + 42} r={4} fill="#3b82f6" />
-              <text x={tx + 22} y={ty + 46} fontSize={10} fill="#374151">Open rate: {pct(d.avgOpenRate)}</text>
-              <circle cx={tx + 13} cy={ty + 57} r={3.5} fill="#10b981" />
-              <text x={tx + 22} y={ty + 61} fontSize={10} fill="#374151">Click rate: {pct(d.avgClickRate)}</text>
-              <circle cx={tx + 13} cy={ty + 71} r={3} fill="#ef4444" />
-              <text x={tx + 22} y={ty + 75} fontSize={10} fill="#374151">Unsub rate: {pct(d.unsubRate)}</text>
+              <line x1={x} y1={PAD.top} x2={x} y2={H - PAD.bottom} stroke="#6366f1" strokeWidth={1} strokeDasharray="3,3" opacity={0.5} />
+              <rect x={tx} y={ty} width={tw} height={th} rx={8} fill="white" stroke="#e5e7eb" strokeWidth={1} />
+              <text x={tx + 12} y={ty + 18} fontSize={11} fontWeight={600} fill="#374151">{monthLabel(m)}</text>
+              <text x={tx + 12} y={ty + 32} fontSize={9} fill="#9ca3af">{metricLabel}</text>
+              {rows.map((r, ri) => (
+                <g key={r.key}>
+                  <circle cx={tx + 16} cy={ty + 48 + ri * 16} r={3.5} fill={r.color} />
+                  <text x={tx + 26} y={ty + 51 + ri * 16} fontSize={10} fill="#374151">
+                    {r.key === 'Pascal Press' ? 'PP' : r.key === 'Excel Test Zone' ? 'ETZ' : 'Blake'}: {formatMetric(r.v)}
+                    {metric !== 'sends' ? ` · ${fmt(r.sends)} sends` : ` · ${r.emails} emails`}
+                  </text>
+                </g>
+              ))}
             </g>
           );
         })()}
       </svg>
 
       {/* Legend */}
-      <div className="flex items-center justify-center gap-6 text-xs text-gray-500 -mt-1">
-        <span className="flex items-center gap-1.5">
-          <svg width="18" height="6"><line x1="0" y1="3" x2="18" y2="3" stroke="#3b82f6" strokeWidth="2.5" /></svg>
-          Open Rate (left axis)
-        </span>
-        <span className="flex items-center gap-1.5">
-          <svg width="18" height="6"><line x1="0" y1="3" x2="18" y2="3" stroke="#10b981" strokeWidth="2" /></svg>
-          Click Rate (left axis)
-        </span>
-        <span className="flex items-center gap-1.5">
-          <svg width="18" height="6"><line x1="0" y1="3" x2="18" y2="3" stroke="#ef4444" strokeWidth="1.5" strokeDasharray="5,3" /></svg>
-          Unsub Rate (right axis)
-        </span>
+      <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-gray-500 mt-1">
+        {series.map(ser => (
+          <span key={ser.key} className="flex items-center gap-1.5">
+            <span className="w-3 h-0.5 rounded" style={{ background: ser.color, height: 3, width: 14 }} />
+            {ser.key === 'Pascal Press' ? 'PP' : ser.key === 'Excel Test Zone' ? 'ETZ' : 'Blake'}
+          </span>
+        ))}
+        {isRate && (
+          <span className="flex items-center gap-1.5 text-gray-400">
+            <span className="inline-block w-3 h-2 rounded-sm bg-slate-200" />
+            Send volume
+          </span>
+        )}
       </div>
     </div>
   );
@@ -358,7 +583,7 @@ export default function EmailTab() {
   const [prevData,      setPrevData]      = useState<EmailData | null>(null);
   const [revenueData,   setRevenueData]   = useState<RevenueData | null>(null);
   const [prevRevData,   setPrevRevData]   = useState<RevenueData | null>(null);
-  const [trendData,     setTrendData]     = useState<TrendPoint[] | null>(null);
+  const [trendData,     setTrendData]     = useState<TrendData | null>(null);
   const [loading,       setLoading]       = useState(false);
   const [revLoading,    setRevLoading]    = useState(false);
   const [trendLoading,  setTrendLoading]  = useState(false);
@@ -482,7 +707,17 @@ export default function EmailTab() {
     if (!showTrend || trendData) return;
     setTrendLoading(true);
     fetch('/api/hubspot-email-trend')
-      .then(r => r.json()).then((d: TrendPoint[]) => setTrendData(Array.isArray(d) ? d : null))
+      .then(async r => {
+        if (!r.ok) throw new Error(`trend HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((d: TrendData) => {
+        if (!d || !d.byBrand || !Array.isArray(d.months)) {
+          setTrendData(null);
+          return;
+        }
+        setTrendData(d);
+      })
       .catch(() => setTrendData(null))
       .finally(() => setTrendLoading(false));
   }, [showTrend, trendData]);
@@ -748,12 +983,25 @@ export default function EmailTab() {
         <>
           {showTrend && (
             <div className="bg-white border border-gray-200 rounded-xl p-5 mb-5">
-              <div className="mb-4">
-                <span className="text-sm font-medium text-gray-700">12-month open / click / unsub trend</span>
-                {selectedMonth && <span className="ml-2 text-xs text-indigo-500">· {monthLabel(selectedMonth)} highlighted</span>}
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-sm font-semibold text-gray-800">12-month brand trend</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    Full window through current month · grey bars = send volume · lines = selected metric by brand
+                  </div>
+                </div>
+                {selectedMonth && (
+                  <span className="text-xs text-indigo-600 font-medium">{monthLabel(selectedMonth)} highlighted</span>
+                )}
               </div>
-              {trendLoading && <div className="flex items-center justify-center h-40 text-gray-400 text-sm">Loading trend…</div>}
-              {!trendLoading && trendData && <TrendChart data={trendData} selectedMonth={selectedMonth} />}
+              {trendLoading && <div className="flex items-center justify-center h-40 text-gray-400 text-sm">Loading 12 months (one pass)…</div>}
+              {!trendLoading && trendData && (
+                <TrendChart
+                  data={trendData}
+                  selectedMonth={selectedMonth}
+                  brandFilter={brandFilter === 'All' || brandFilter === 'Pascal Press' || brandFilter === 'Excel Test Zone' || brandFilter === 'Blake Education' ? brandFilter : 'All'}
+                />
+              )}
               {!trendLoading && !trendData && <div className="text-sm text-red-500 text-center py-8">Could not load trend data.</div>}
             </div>
           )}
