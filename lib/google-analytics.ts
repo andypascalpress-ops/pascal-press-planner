@@ -621,6 +621,8 @@ export interface WebsiteConversionData {
   direction: 'up' | 'down' | 'flat' | null;
   /** Short plain-English driver for the change */
   reason: string | null;
+  /** Optional traffic metric candidates (PP hybrid, for calibration) */
+  visitsDebug?: Record<string, number>;
 }
 
 function emptyConversion(source: 'ga4' | 'bigcommerce_hybrid' = 'ga4'): WebsiteConversionData {
@@ -770,7 +772,18 @@ async function fetchPPVisitsProxy(
   startDate: string,
   endDate: string,
 ): Promise<{ visits: number; metric: string; debug: Record<string, number> }> {
-  const [all, host, engaged] = await Promise.all([
+  const hostFilter = {
+    filter: {
+      fieldName: 'hostName',
+      stringFilter: {
+        matchType: 'CONTAINS' as const,
+        value: 'pascalpress',
+        caseSensitive: false,
+      },
+    },
+  };
+
+  const [all, host] = await Promise.all([
     runReportOnProperty(accessToken, GA4_BASE, {
       dateRanges: [{ startDate, endDate }],
       metrics: [
@@ -781,22 +794,14 @@ async function fetchPPVisitsProxy(
     }),
     runReportOnProperty(accessToken, GA4_BASE, {
       dateRanges: [{ startDate, endDate }],
-      metrics: [{ name: 'sessions' }, { name: 'totalUsers' }],
-      dimensionFilter: {
-        filter: {
-          fieldName: 'hostName',
-          stringFilter: {
-            matchType: 'CONTAINS',
-            value: 'pascalpress',
-            caseSensitive: false,
-          },
-        },
-      },
+      metrics: [
+        { name: 'sessions' },
+        { name: 'totalUsers' },
+        { name: 'engagedSessions' },
+      ],
+      dimensionFilter: hostFilter,
     }),
-    // engagedSessions already in `all` — kept for clarity if host fails
-    Promise.resolve(null),
   ]);
-  void engaged;
 
   const allRow = all.rows?.[0];
   const hostRow = host.rows?.[0];
@@ -805,18 +810,25 @@ async function fetchPPVisitsProxy(
   const engagedSessions = Math.round(parseFloat(allRow?.metricValues?.[2]?.value ?? '0'));
   const hostSessions = Math.round(parseFloat(hostRow?.metricValues?.[0]?.value ?? '0'));
   const hostUsers = Math.round(parseFloat(hostRow?.metricValues?.[1]?.value ?? '0'));
+  const hostEngaged = Math.round(parseFloat(hostRow?.metricValues?.[2]?.value ?? '0'));
 
-  const debug = { sessions, totalUsers, engagedSessions, hostSessions, hostUsers };
+  const debug = { sessions, totalUsers, engagedSessions, hostSessions, hostUsers, hostEngaged };
 
-  // Prefer storefront host sessions — best match to BC "visits" scope
+  // Prefer metrics that land closest to BC Store Performance "visits"
+  // (BC filters bots / uses its own visit definition — usually lower than raw GA sessions).
+  if (hostEngaged > 0) {
+    return { visits: hostEngaged, metric: 'ga_host_engaged(pascalpress)', debug };
+  }
+  if (hostUsers > 0) {
+    return { visits: hostUsers, metric: 'ga_host_users(pascalpress)', debug };
+  }
+  if (engagedSessions > 0) {
+    return { visits: engagedSessions, metric: 'ga_engaged_sessions', debug };
+  }
   if (hostSessions > 0) {
     return { visits: hostSessions, metric: 'ga_host_sessions(pascalpress)', debug };
   }
-  // Engaged sessions exclude bounce-heavy noise; often closer to BC visit counts
-  if (engagedSessions > 0 && engagedSessions < sessions) {
-    return { visits: engagedSessions, metric: 'ga_engaged_sessions', debug };
-  }
-  if (totalUsers > 0 && totalUsers < sessions) {
+  if (totalUsers > 0) {
     return { visits: totalUsers, metric: 'ga_total_users', debug };
   }
   return { visits: sessions, metric: 'ga_sessions', debug };
@@ -1010,6 +1022,7 @@ async function fetchPPHybridConversion(
       deltaPp,
       direction,
       reason,
+      visitsDebug: visitsCur.debug,
     };
   } catch (err) {
     console.error('[google-analytics fetchPPHybridConversion]', err);
