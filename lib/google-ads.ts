@@ -212,24 +212,49 @@ export interface AdGroupPerf {
   cost:        number;
 }
 
+export interface CampaignPerfOptions {
+  /** Filter campaign names containing or excluding a string */
+  campaignNameFilter?: { contains: string } | { excludes: string };
+  /** Inclusive date range YYYY-MM-DD. Defaults to THIS_MONTH when omitted. */
+  dateRange?: { start: string; end: string };
+  /** Max campaigns to return (default 50) */
+  limit?: number;
+}
+
 /**
- * Fetch campaign-level performance for THIS_MONTH.
- * Optionally filter by campaign name (contains/excludes).
+ * Fetch campaign-level performance (spend, clicks, impressions).
+ * Conversion value is still Google Ads-reported — prefer GA4 for revenue in the UI.
  */
 export async function fetchCampaignPerformance(
   cfg: GoogleAdsConfig,
-  campaignNameFilter?: { contains: string } | { excludes: string },
+  campaignNameFilterOrOpts?: { contains: string } | { excludes: string } | CampaignPerfOptions,
 ): Promise<CampaignPerf[]> {
   const accessToken = await getAccessToken(cfg);
 
-  let nameClause = '';
-  if (campaignNameFilter) {
-    if ('contains' in campaignNameFilter) {
-      nameClause = `AND campaign.name LIKE '%${campaignNameFilter.contains}%'`;
+  // Back-compat: second arg may be a name filter or full options object
+  let opts: CampaignPerfOptions = {};
+  if (campaignNameFilterOrOpts) {
+    if ('contains' in campaignNameFilterOrOpts || 'excludes' in campaignNameFilterOrOpts) {
+      opts = { campaignNameFilter: campaignNameFilterOrOpts as { contains: string } | { excludes: string } };
     } else {
-      nameClause = `AND campaign.name NOT LIKE '%${campaignNameFilter.excludes}%'`;
+      opts = campaignNameFilterOrOpts as CampaignPerfOptions;
     }
   }
+
+  let nameClause = '';
+  if (opts.campaignNameFilter) {
+    if ('contains' in opts.campaignNameFilter) {
+      nameClause = `AND campaign.name LIKE '%${opts.campaignNameFilter.contains}%'`;
+    } else {
+      nameClause = `AND campaign.name NOT LIKE '%${opts.campaignNameFilter.excludes}%'`;
+    }
+  }
+
+  const dateClause = opts.dateRange
+    ? `segments.date BETWEEN '${opts.dateRange.start}' AND '${opts.dateRange.end}'`
+    : `segments.date DURING THIS_MONTH`;
+
+  const limit = opts.limit ?? 50;
 
   const query = `
     SELECT
@@ -243,11 +268,11 @@ export async function fetchCampaignPerformance(
       metrics.conversions_value,
       metrics.cost_micros
     FROM campaign
-    WHERE segments.date DURING THIS_MONTH
+    WHERE ${dateClause}
     AND campaign.status != 'REMOVED'
     ${nameClause}
     ORDER BY metrics.cost_micros DESC
-    LIMIT 25
+    LIMIT ${limit}
   `;
 
   const rows = await gaqlSearch(cfg, accessToken, query);

@@ -491,6 +491,104 @@ export async function fetchETZGA4RevenueHistory(
 }
 
 // ---------------------------------------------------------------------------
+// Paid Google Ads campaign revenue (sessionMedium = cpc)
+// ---------------------------------------------------------------------------
+
+export interface PaidCampaignRevenueData {
+  byCampaign: CampaignRevenue[];
+  totalRevenue: number;
+  totalTx: number;
+  connected: boolean;
+  property: 'pp' | 'etz';
+}
+
+async function runReportOnProperty(
+  accessToken: string,
+  propertyBase: string,
+  body: object,
+): Promise<any> {
+  const res = await fetch(`${propertyBase}:runReport`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`GA4 API error (${res.status}): ${err.slice(0, 500)}`);
+  }
+  return res.json();
+}
+
+/**
+ * GA4 revenue attributed to paid Google Ads sessions, broken down by
+ * sessionCampaignName (auto-tagged campaign names from Google Ads).
+ *
+ * Revenue is purchase revenue (totalRevenue), NOT Google Ads conversion value.
+ */
+export async function fetchPaidCampaignRevenue(
+  startDate: string,
+  endDate: string,
+  property: 'pp' | 'etz' = 'pp',
+): Promise<PaidCampaignRevenueData> {
+  const empty: PaidCampaignRevenueData = {
+    byCampaign: [],
+    totalRevenue: 0,
+    totalTx: 0,
+    connected: false,
+    property,
+  };
+
+  if (property === 'pp' && !isConnected()) return empty;
+  if (property === 'etz' && !isETZConnected()) return empty;
+
+  try {
+    const accessToken = await getAccessToken();
+    const base = property === 'etz' ? GA4_ETZ_BASE : GA4_BASE;
+
+    const campaignData = await runReportOnProperty(accessToken, base, {
+      dateRanges: [{ startDate, endDate }],
+      dimensions: [{ name: 'sessionCampaignName' }],
+      metrics: [{ name: 'totalRevenue' }, { name: 'transactions' }],
+      dimensionFilter: {
+        filter: {
+          fieldName: 'sessionMedium',
+          stringFilter: { matchType: 'EXACT', value: 'cpc' },
+        },
+      },
+      orderBys: [{ metric: { metricName: 'totalRevenue' }, desc: true }],
+      limit: 200,
+    });
+
+    const byCampaign: CampaignRevenue[] = (campaignData.rows ?? []).map((row: any) => ({
+      campaignName: row.dimensionValues?.[0]?.value ?? '',
+      revenue: parseFloat(row.metricValues?.[0]?.value ?? '0'),
+      transactions: parseInt(row.metricValues?.[1]?.value ?? '0', 10),
+    })).filter((c: CampaignRevenue) => c.campaignName && c.campaignName !== '(not set)' && c.campaignName !== '(direct)');
+
+    const totalRevenue = byCampaign.reduce((s, c) => s + c.revenue, 0);
+    const totalTx = byCampaign.reduce((s, c) => s + c.transactions, 0);
+
+    return {
+      byCampaign: byCampaign.map(c => ({
+        ...c,
+        revenue: Math.round(c.revenue * 100) / 100,
+      })),
+      totalRevenue: Math.round(totalRevenue * 100) / 100,
+      totalTx,
+      connected: true,
+      property,
+    };
+  } catch (err) {
+    console.error(`[google-analytics fetchPaidCampaignRevenue ${property}]`, err);
+    return empty;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Match helper (used client-side in EmailTab)
 // ---------------------------------------------------------------------------
 
@@ -513,4 +611,3 @@ export function matchRevenue(
   });
   return partial ?? null;
 }
-      

@@ -843,6 +843,199 @@ function BudgetBreakdownTable({ brand, records, accentBg, accentText }: {
   );
 }
 
+// ─── Campaign breakdown (Ads spend + GA4 revenue) ─────────────────────────────
+
+interface JoinedCampaign {
+  name: string;
+  status: string;
+  spend: number;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  avgCpc: number;
+  gaRevenue: number;
+  gaTransactions: number;
+  gaRoas: number;
+  gaMatched: boolean;
+  adsConvValue: number;
+}
+
+interface CampaignBrandBlock {
+  campaigns: JoinedCampaign[];
+  totals: { spend: number; gaRevenue: number; gaTransactions: number; gaRoas: number; clicks: number };
+  adsConnected: boolean;
+  gaConnected: boolean;
+  error: string | null;
+}
+
+interface CampaignsResponse {
+  month: string;
+  dateRange: { start: string; end: string };
+  note?: string;
+  pp: CampaignBrandBlock;
+  etz: CampaignBrandBlock;
+  hsc: CampaignBrandBlock;
+}
+
+function CampaignBreakdownTable({ data, loading }: { data: CampaignsResponse | null; loading: boolean }) {
+  const [tab, setTab] = useState<'pp' | 'etz' | 'hsc'>('pp');
+  const brand = data?.[tab];
+  const tabs: { key: 'pp' | 'etz' | 'hsc'; label: string }[] = [
+    { key: 'pp',  label: 'Pascal Press' },
+    { key: 'etz', label: 'Excel Test Zone' },
+    { key: 'hsc', label: 'Excel HSC Copilot' },
+  ];
+
+  return (
+    <div className="px-4 md:px-6 pb-4">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-4 md:px-5 py-3 border-b border-gray-200 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-bold text-gray-900">Google Ads Campaigns</h3>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Spend from Google Ads · Revenue from Google Analytics (paid sessions)
+            </p>
+          </div>
+          <div className="flex rounded-lg border border-gray-300 overflow-hidden">
+            {tabs.map(t => (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                  tab === t.key ? 'bg-gray-800 text-white' : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {loading && (
+          <div className="px-5 py-8 text-center text-sm text-gray-400">Loading campaigns…</div>
+        )}
+
+        {!loading && brand && (
+          <>
+            {/* Totals strip */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-4 md:px-5 py-3 bg-gray-50 border-b border-gray-100">
+              <div>
+                <div className="text-xs text-gray-500">Total spend</div>
+                <div className="text-base font-bold text-gray-900">
+                  {brand.totals.spend > 0 ? AUD.format(brand.totals.spend) : '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">GA revenue (paid)</div>
+                <div className="text-base font-bold text-blue-700">
+                  {brand.gaConnected
+                    ? (brand.totals.gaRevenue > 0 ? AUD.format(brand.totals.gaRevenue) : '$0')
+                    : '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">GA ROAS</div>
+                <div className={`text-base font-bold ${
+                  brand.totals.gaRoas >= 4 ? 'text-green-700'
+                  : brand.totals.gaRoas >= 2 ? 'text-yellow-600'
+                  : brand.totals.gaRoas > 0 ? 'text-red-600' : 'text-gray-400'
+                }`}>
+                  {brand.totals.gaRoas > 0 ? `${brand.totals.gaRoas.toFixed(1)}x` : '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Clicks</div>
+                <div className="text-base font-bold text-gray-900">
+                  {brand.totals.clicks > 0 ? brand.totals.clicks.toLocaleString() : '—'}
+                </div>
+              </div>
+            </div>
+
+            {!brand.adsConnected && brand.campaigns.length === 0 && (
+              <div className="px-5 py-6 text-sm text-gray-400 italic">
+                {brand.error ? `Could not load Google Ads: ${brand.error}` : 'No Google Ads data for this brand/month'}
+              </div>
+            )}
+
+            {brand.campaigns.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-gray-500 border-b border-gray-100">
+                      <th className="text-left font-medium px-4 py-2.5">Campaign</th>
+                      <th className="text-right font-medium px-3 py-2.5">Spend</th>
+                      <th className="text-right font-medium px-3 py-2.5">Clicks</th>
+                      <th className="text-right font-medium px-3 py-2.5">Impr.</th>
+                      <th className="text-right font-medium px-3 py-2.5">GA Revenue</th>
+                      <th className="text-right font-medium px-3 py-2.5">Tx</th>
+                      <th className="text-right font-medium px-4 py-2.5">GA ROAS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {brand.campaigns.map((c) => (
+                      <tr key={c.name} className="border-b border-gray-50 hover:bg-gray-50/80">
+                        <td className="px-4 py-2.5">
+                          <div className="font-medium text-gray-900 max-w-[280px] truncate" title={c.name}>
+                            {c.name}
+                          </div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            {c.status === 'ENABLED' && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 font-medium">Active</span>
+                            )}
+                            {c.status === 'PAUSED' && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-medium">Paused</span>
+                            )}
+                            {c.status === 'GA_ONLY' && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-medium">GA only</span>
+                            )}
+                            {!c.gaMatched && c.spend > 0 && brand.gaConnected && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 font-medium">No GA match</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="text-right px-3 py-2.5 tabular-nums text-gray-900 font-medium">
+                          {c.spend > 0 ? AUD.format(c.spend) : '—'}
+                        </td>
+                        <td className="text-right px-3 py-2.5 tabular-nums text-gray-600">
+                          {c.clicks > 0 ? c.clicks.toLocaleString() : '—'}
+                        </td>
+                        <td className="text-right px-3 py-2.5 tabular-nums text-gray-600">
+                          {c.impressions > 0 ? c.impressions.toLocaleString() : '—'}
+                        </td>
+                        <td className="text-right px-3 py-2.5 tabular-nums font-medium text-blue-700">
+                          {brand.gaConnected
+                            ? (c.gaRevenue > 0 ? AUD.format(c.gaRevenue) : '$0')
+                            : '—'}
+                        </td>
+                        <td className="text-right px-3 py-2.5 tabular-nums text-gray-600">
+                          {c.gaTransactions > 0 ? c.gaTransactions : '—'}
+                        </td>
+                        <td className={`text-right px-4 py-2.5 tabular-nums font-semibold ${
+                          c.gaRoas >= 4 ? 'text-green-700'
+                          : c.gaRoas >= 2 ? 'text-yellow-600'
+                          : c.gaRoas > 0 ? 'text-red-600' : 'text-gray-400'
+                        }`}>
+                          {c.gaRoas > 0 ? `${c.gaRoas.toFixed(1)}x` : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {tab === 'hsc' && !brand.gaConnected && brand.campaigns.length > 0 && (
+              <div className="px-4 py-2 text-xs text-gray-400 border-t border-gray-100">
+                HSC has no GA4 property connected yet — showing Google Ads spend only.
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main dashboard ───────────────────────────────────────────────────────────
 
 export default function FinanceDashboard({ records, syncing, lastSynced, onSyncGoogleAds }: Props) {
@@ -855,6 +1048,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [googleAdsHistory, setGoogleAdsHistory] = useState<GoogleAdsHistoryItem[] | null>(null);
   const [ga4Revenue,       setGa4Revenue      ] = useState<GA4RevenueResponse | null>(null);
   const [ga4History,       setGa4History      ] = useState<GA4HistoryItem[] | null>(null);
+  const [campaigns,        setCampaigns       ] = useState<CampaignsResponse | null>(null);
+  const [loadingCampaigns, setLoadingCampaigns] = useState(false);
 
   useEffect(() => {
     setLoadingRevenue(true);
@@ -875,6 +1070,14 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
       .then(r => r.json())
       .then((data: GA4RevenueResponse) => { setGa4Revenue(data); })
       .catch(() => { /* ignore */ });
+
+    // Campaign-level Ads spend + GA4 revenue
+    setLoadingCampaigns(true);
+    fetch('/api/google-ads-campaigns?month=' + selectedMonth)
+      .then(r => r.json())
+      .then((data: CampaignsResponse) => { setCampaigns(data); })
+      .catch(() => { setCampaigns(null); })
+      .finally(() => { setLoadingCampaigns(false); });
   }, [selectedMonth]);
 
   useEffect(() => {
@@ -1131,6 +1334,9 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             liveGoogleAdsConnected={googleAdsSpend?.etz.connected}
           />
         </div>
+
+        {/* Campaign-level Ads spend + GA4 revenue */}
+        <CampaignBreakdownTable data={campaigns} loading={loadingCampaigns} />
 
         {/* Line charts — FY26 Jan–Jun */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-4 md:px-6 pb-6">
