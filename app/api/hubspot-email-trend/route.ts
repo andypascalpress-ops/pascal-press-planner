@@ -7,7 +7,9 @@ import { NextResponse } from 'next/server';
 import { fetchEmailTrend } from '@/lib/hubspot-email';
 
 export const dynamic = 'force-dynamic';
-export const runtime = 'edge';
+// Node runtime: needs >25s to load a year of campaign stats without dropping months.
+export const runtime = 'nodejs';
+export const maxDuration = 60;
 
 export async function GET() {
   try {

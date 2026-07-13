@@ -148,13 +148,18 @@ async function fetchEmailPage(
  * Uses GET /email/public/v1/campaigns/{primaryEmailCampaignId}
  * Returns counters or null on failure.
  */
-async function fetchCampaignStats(campaignId: string): Promise<V1CampaignData | null> {
+async function fetchCampaignStats(
+  campaignId: string,
+  opts?: { fresh?: boolean },
+): Promise<V1CampaignData | null> {
   try {
     const res = await fetch(
       `${HS_BASE}/email/public/v1/campaigns/${campaignId}`,
       {
         headers: { Authorization: `Bearer ${getApiKey()}` },
-        next: { revalidate: 300 },
+        ...(opts?.fresh
+          ? { cache: 'no-store' as RequestCache }
+          : { next: { revalidate: 300 } }),
       },
     );
     if (!res.ok) return null;
@@ -169,27 +174,38 @@ async function fetchCampaignStats(campaignId: string): Promise<V1CampaignData | 
 }
 
 /**
- * Batch-fetch stats for a set of email rows, 10 at a time in parallel.
- * Returns a Map keyed by v3 email ID.
+ * Batch-fetch stats for email rows.
+ * Smaller batches + retry so trend months after Nov are not wiped by rate limits.
  */
 async function fetchStatsForRows(
   rows: HsEmailRow[],
+  options?: { batchSize?: number; pauseMs?: number; fresh?: boolean },
 ): Promise<Map<string, V1CampaignData>> {
   const map = new Map<string, V1CampaignData>();
-  const BATCH = 10;
+  const BATCH = options?.batchSize ?? 6;
+  const pauseMs = options?.pauseMs ?? 40;
+  const fresh = options?.fresh ?? false;
+
+  const loadOne = async (r: HsEmailRow): Promise<V1CampaignData | null> => {
+    if (!r.primaryEmailCampaignId) return null;
+    let data = await fetchCampaignStats(r.primaryEmailCampaignId, { fresh });
+    if (!data) {
+      await new Promise(res => setTimeout(res, 150));
+      data = await fetchCampaignStats(r.primaryEmailCampaignId, { fresh: true });
+    }
+    return data;
+  };
 
   for (let i = 0; i < rows.length; i += BATCH) {
     const batch = rows.slice(i, i + BATCH);
     const results = await Promise.all(
-      batch.map(async r => ({
-        id:   r.id,
-        data: r.primaryEmailCampaignId
-          ? await fetchCampaignStats(r.primaryEmailCampaignId)
-          : null,
-      })),
+      batch.map(async r => ({ id: r.id, data: await loadOne(r) })),
     );
     for (const { id, data } of results) {
       if (data) map.set(id, data);
+    }
+    if (pauseMs > 0 && i + BATCH < rows.length) {
+      await new Promise(res => setTimeout(res, pauseMs));
     }
   }
 
@@ -259,7 +275,7 @@ export async function fetchEmailCampaigns(
 
     // Step 3: fetch stats — cap at 100 rows to stay within Edge Runtime timeout
     const forStats = filtered.slice(0, 100);
-    const statsMap = await fetchStatsForRows(forStats);
+    const statsMap = await fetchStatsForRows(forStats, { batchSize: 8, pauseMs: 25, fresh: true });
     const statsLoaded = statsMap.size > 0;
 
     // Step 4: build campaign objects
@@ -451,13 +467,14 @@ export async function fetchEmailTrend(monthCount = 12): Promise<EmailTrendRespon
     for (const r of forStats) {
       const month = toAESTYearMonth(r.publishDate);
       if (!month || month < startMonth || month > endMonth) continue;
-      const d = statsMap.get(r.id) ?? {};
-      const c = d.counters ?? {};
+      const d = statsMap.get(r.id);
+      if (!d?.counters) continue; // skip rate-limited / missing stats — do not zero-fill the month
+      const c = d.counters;
       const sends  = c.sent ?? 0;
       const opens  = c.open ?? 0;
       const clicks = c.click ?? 0;
       const unsubs = c.unsubscribed ?? 0;
-      // Still count the email even if counters missing (campaigns n)
+      if (sends <= 0) continue;
       const brand = detectEmailBrand(r.name ?? '', r.fromName ?? '');
       add(allB, month, sends, opens, clicks, unsubs);
       if (brand === 'Pascal Press') add(ppB, month, sends, opens, clicks, unsubs);
