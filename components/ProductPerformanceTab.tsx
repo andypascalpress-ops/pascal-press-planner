@@ -7,17 +7,41 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 type ProductBrand = 'Pascal Press' | 'Blake Education' | 'Excel Test Zone' | 'Excel HSC Copilot';
 type RangeKey = '30d' | '60d' | '90d' | 'mtd' | 'lastmonth';
 type BrandFilter = 'All' | ProductBrand;
+type ProductBucket = 'hot' | 'breakout' | 'steady' | 'low_volume' | 'declining' | 'dead' | 'cold';
 
 interface ProductMetrics { revenue: number; orders: number; units: number; aov: number; }
 interface ProductRow {
   name: string;
+  rawName?: string;
   brand: ProductBrand;
+  category: string;
   current: ProductMetrics;
   lastYear: ProductMetrics;
   yoyRevenuePct: number | null;
   yoyOrdersPct: number | null;
   yoyUnitsPct: number | null;
   status: 'hot' | 'steady' | 'soft' | 'cold' | 'new' | 'dead';
+  bucket: ProductBucket;
+  action: string;
+  attentionScore: number;
+  abandonedCarts?: number;
+  abandonedValue?: number;
+  abandonedUnits?: number;
+}
+interface Pareto {
+  top10Revenue: number;
+  top10SharePct: number;
+  top20SharePct: number;
+  productsFor80Pct: number;
+}
+interface ProductBuckets {
+  winners: ProductRow[];
+  breakouts: ProductRow[];
+  declining: ProductRow[];
+  cold: ProductRow[];
+  lowVolume: ProductRow[];
+  dead: ProductRow[];
+  needsAttention: ProductRow[];
 }
 interface BrandSlice {
   brand: ProductBrand;
@@ -32,6 +56,9 @@ interface BrandSlice {
   top: ProductRow[];
   bottom: ProductRow[];
   declining: ProductRow[];
+  buckets: ProductBuckets;
+  pareto: Pareto;
+  categories: string[];
 }
 interface ProductPerfData {
   connected: boolean;
@@ -46,6 +73,14 @@ interface ProductPerfData {
     bottom: ProductRow[];
     declining: ProductRow[];
     products: ProductRow[];
+    buckets: ProductBuckets;
+    pareto: Pareto;
+    categories: string[];
+  };
+  meta: {
+    notes: string[];
+    sources: { brand: ProductBrand; source: string; connected: boolean }[];
+    sampledOrdersNote?: string;
   };
 }
 
@@ -93,6 +128,19 @@ const STATUS_STYLE: Record<ProductRow['status'], string> = {
   dead: 'bg-gray-100 text-gray-500',
 };
 
+const STATUS_OPTIONS: ProductRow['status'][] = ['hot', 'steady', 'soft', 'cold', 'new', 'dead'];
+
+type PanelKey = 'needsAttention' | 'winners' | 'breakouts' | 'declining' | 'dead' | 'lowVolume';
+
+const PANELS: { key: PanelKey; label: string; hint: string; activeCls: string }[] = [
+  { key: 'needsAttention', label: 'Needs attention', hint: 'Ranked by urgency: dead, cold, declining & soft demand', activeCls: 'bg-red-600' },
+  { key: 'winners', label: 'Winners / Hot', hint: 'Highest revenue this period', activeCls: 'bg-emerald-600' },
+  { key: 'breakouts', label: 'Breakouts (New)', hint: 'No sales last year, meaningful revenue now', activeCls: 'bg-blue-600' },
+  { key: 'declining', label: 'Declining', hint: 'Sold last year & this year — biggest % falls', activeCls: 'bg-amber-500' },
+  { key: 'dead', label: 'Dead catalog', hint: 'Earned last year, $0 this period', activeCls: 'bg-gray-700' },
+  { key: 'lowVolume', label: 'Low volume', hint: 'Sold, but bottom-tier revenue', activeCls: 'bg-slate-600' },
+];
+
 const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
 const AUD2 = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 2 });
 const fmt = (n: number) => n.toLocaleString('en-AU');
@@ -123,25 +171,46 @@ function StatusPill({ status }: { status: ProductRow['status'] }) {
   );
 }
 
-function RankRow({ row, rank, maxRev }: { row: ProductRow; rank: number; maxRev: number }) {
-  const pct = maxRev > 0 ? Math.min(row.current.revenue / maxRev, 1) : 0;
+function CategoryChip({ category }: { category: string }) {
+  return (
+    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
+      {category}
+    </span>
+  );
+}
+
+function AbandonedBadge({ row }: { row: ProductRow }) {
+  if (!row.abandonedCarts) return null;
+  return (
+    <span
+      className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-50 text-orange-700 border border-orange-100"
+      title={`${row.abandonedCarts} abandoned carts · ${AUD2.format(row.abandonedValue ?? 0)} at risk`}
+    >
+      {row.abandonedCarts} cart{row.abandonedCarts === 1 ? '' : 's'} · {AUD.format(row.abandonedValue ?? 0)}
+    </span>
+  );
+}
+
+function AttentionRow({ row, rank }: { row: ProductRow; rank: number }) {
   return (
     <div className="flex items-start gap-3 py-2.5 border-b border-gray-50 last:border-0">
       <span className="w-5 text-xs text-gray-400 font-mono pt-0.5">{rank}</span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-medium text-gray-900 truncate max-w-[220px]" title={row.name}>{row.name}</span>
+          <span className="text-sm font-medium text-gray-900 truncate max-w-[240px]" title={row.name}>{row.name}</span>
           <StatusPill status={row.status} />
+          <CategoryChip category={row.category} />
         </div>
-        <div className="flex items-center gap-2 mt-1">
+        <div className="flex items-center gap-2 mt-1 flex-wrap">
           <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${BRAND_SOFT[row.brand]}`}>
             {BRAND_SHORT[row.brand]}
           </span>
-          <span className="text-[11px] text-gray-400">{fmt(row.current.units)} units · {fmt(row.current.orders)} orders</span>
+          <span className="text-[11px] text-gray-400">
+            {fmt(row.current.units)} units · LY {AUD.format(row.lastYear.revenue)}
+          </span>
+          <AbandonedBadge row={row} />
         </div>
-        <div className="mt-1.5 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-          <div className="h-full bg-emerald-400/80 rounded-full" style={{ width: `${Math.max(pct * 100, 2)}%` }} />
-        </div>
+        <div className="text-[11px] text-gray-600 mt-1.5 italic">{row.action}</div>
       </div>
       <div className="text-right flex-shrink-0">
         <div className="text-sm font-bold text-gray-900 tabular-nums">{AUD2.format(row.current.revenue)}</div>
@@ -149,6 +218,28 @@ function RankRow({ row, rank, maxRev }: { row: ProductRow; rank: number; maxRev:
       </div>
     </div>
   );
+}
+
+function csvEscape(v: string | number): string {
+  const s = String(v ?? '');
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function downloadCsv(rows: ProductRow[], filename: string) {
+  const header = ['Product', 'Category', 'Brand', 'Status', 'Bucket', 'Revenue', 'YoY %', 'Units', 'Orders', 'AOV', 'LY Revenue', 'Abandoned Carts', 'Abandoned Value', 'Action'];
+  const lines = rows.map(r => [
+    r.name, r.category, r.brand, r.status, r.bucket,
+    r.current.revenue, r.yoyRevenuePct ?? '', r.current.units, r.current.orders, r.current.aov,
+    r.lastYear.revenue, r.abandonedCarts ?? '', r.abandonedValue ?? '', r.action,
+  ].map(csvEscape).join(','));
+  const csv = [header.join(','), ...lines].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -160,9 +251,11 @@ export default function ProductPerformanceTab() {
   const [range, setRange] = useState<RangeKey>('30d');
   const [brand, setBrand] = useState<BrandFilter>('All');
   const [query, setQuery] = useState('');
-  const [sort, setSort] = useState<'revenue' | 'units' | 'yoy' | 'name'>('revenue');
+  const [sort, setSort] = useState<'revenue' | 'units' | 'yoy' | 'attention' | 'name' | 'abandoned'>('attention');
   const [showAll, setShowAll] = useState(false);
-  const [panel, setPanel] = useState<'winners' | 'losers' | 'declining'>('winners');
+  const [panel, setPanel] = useState<PanelKey>('needsAttention');
+  const [category, setCategory] = useState<string>('All');
+  const [statusFilter, setStatusFilter] = useState<'All' | ProductRow['status']>('All');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -188,44 +281,61 @@ export default function ProductPerformanceTab() {
     if (brand === 'All') {
       return {
         summary: data.combined.summary,
-        top: data.combined.top,
-        bottom: data.combined.bottom,
-        declining: data.combined.declining,
         products: data.combined.products,
+        buckets: data.combined.buckets,
+        pareto: data.combined.pareto,
+        categories: data.combined.categories,
         sourceLabel: 'PP BigCommerce · Blake BC · ETZ/HSC Stripe',
       };
     }
     const s = data.byBrand[brand];
     return {
       summary: s.summary,
-      top: s.top,
-      bottom: s.bottom,
-      declining: s.declining,
       products: s.products,
+      buckets: s.buckets,
+      pareto: s.pareto,
+      categories: s.categories,
       sourceLabel: s.source === 'bigcommerce' ? 'BigCommerce orders'
-        : s.source === 'stripe' ? 'Stripe charges (by description)'
+        : s.source === 'stripe' ? 'Stripe charges (names normalized)'
         : 'Not connected',
     };
   }, [data, brand]);
+
+  // Reset category filter if it no longer exists for the selected brand
+  useEffect(() => {
+    if (active && category !== 'All' && !active.categories.includes(category)) {
+      setCategory('All');
+    }
+  }, [active, category]);
+
+  const panelRows = useMemo<ProductRow[]>(() => {
+    if (!active) return [];
+    return active.buckets[panel] ?? [];
+  }, [active, panel]);
 
   const filteredTable = useMemo(() => {
     if (!active) return [];
     let rows = active.products.filter(r => r.current.revenue > 0 || r.current.units > 0 || r.lastYear.revenue > 0);
     if (query.trim()) {
       const q = query.toLowerCase();
-      rows = rows.filter(r => r.name.toLowerCase().includes(q));
+      rows = rows.filter(r => r.name.toLowerCase().includes(q) || r.category.toLowerCase().includes(q));
     }
+    if (category !== 'All') rows = rows.filter(r => r.category === category);
+    if (statusFilter !== 'All') rows = rows.filter(r => r.status === statusFilter);
     rows = [...rows].sort((a, b) => {
       if (sort === 'name') return a.name.localeCompare(b.name);
       if (sort === 'units') return b.current.units - a.current.units;
       if (sort === 'yoy') return (b.yoyRevenuePct ?? -9999) - (a.yoyRevenuePct ?? -9999);
+      if (sort === 'attention') return b.attentionScore - a.attentionScore;
+      if (sort === 'abandoned') return (b.abandonedCarts ?? 0) - (a.abandonedCarts ?? 0);
       return b.current.revenue - a.current.revenue;
     });
     return rows;
-  }, [active, query, sort]);
+  }, [active, query, sort, category, statusFilter]);
 
   const visible = showAll ? filteredTable : filteredTable.slice(0, 25);
-  const maxRev = Math.max(...(active?.top.map(r => r.current.revenue) ?? [1]), 1);
+
+  const exportName = `product-performance_${brand === 'All' ? 'all' : BRAND_SHORT[brand as ProductBrand]}_${range}.csv`;
 
   return (
     <div className="flex-1 overflow-y-auto bg-gray-50 px-3 md:px-6 py-4 md:py-6">
@@ -235,7 +345,7 @@ export default function ProductPerformanceTab() {
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Product Performance</h2>
           <p className="text-sm text-gray-500 mt-0.5">
-            What&apos;s selling vs soft — by brand · YoY comparison
+            What needs attention · clean names · buckets · YoY
             {data ? ` · ${data.currentLabel}` : ''}
           </p>
         </div>
@@ -256,6 +366,13 @@ export default function ProductPerformanceTab() {
               </button>
             ))}
           </div>
+          <button
+            onClick={() => downloadCsv(filteredTable, exportName)}
+            disabled={!data || filteredTable.length === 0}
+            className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-600 hover:border-gray-400 disabled:opacity-40"
+          >
+            Export CSV
+          </button>
           <button onClick={load} className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1.5">↻</button>
         </div>
       </div>
@@ -306,7 +423,7 @@ export default function ProductPerformanceTab() {
           </div>
 
           {/* Summary */}
-          <div className="bg-white border border-gray-200 rounded-xl mb-5 overflow-hidden">
+          <div className="bg-white border border-gray-200 rounded-xl mb-4 overflow-hidden">
             <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
               <div className="text-sm font-semibold text-gray-800">At a glance · {brand === 'All' ? 'All brands' : brand}</div>
               <Yoy pct={active.summary.yoyRevenuePct} />
@@ -337,6 +454,19 @@ export default function ProductPerformanceTab() {
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Pareto strip */}
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 bg-indigo-50 border border-indigo-100 rounded-xl px-5 py-3 text-xs text-indigo-900 mb-5">
+            <span className="font-semibold uppercase tracking-wide text-indigo-500 text-[10px]">Revenue concentration</span>
+            <span>
+              <span className="font-bold text-base">{active.pareto.top10SharePct}%</span> from top 10 products
+              <span className="text-indigo-400"> ({AUD.format(active.pareto.top10Revenue)})</span>
+            </span>
+            <span>Top 20 = <span className="font-bold">{active.pareto.top20SharePct}%</span></span>
+            <span>
+              <span className="font-bold">{active.pareto.productsFor80Pct}</span> product{active.pareto.productsFor80Pct === 1 ? '' : 's'} drive ~80% of revenue
+            </span>
           </div>
 
           {/* Brand scorecards — only when All */}
@@ -374,36 +504,34 @@ export default function ProductPerformanceTab() {
             </div>
           )}
 
-          {/* Winners / Losers / Declining */}
+          {/* Bucket panels */}
           <div className="bg-white border border-gray-200 rounded-xl mb-5 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap items-center gap-2">
-              {([
-                ['winners', 'What\'s selling', 'bg-emerald-600'],
-                ['losers', 'What\'s not', 'bg-red-500'],
-                ['declining', 'Biggest YoY drops', 'bg-amber-500'],
-              ] as const).map(([id, label, activeCls]) => (
-                <button
-                  key={id}
-                  onClick={() => setPanel(id)}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-colors ${
-                    panel === id ? `${activeCls} text-white` : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-              <span className="text-[11px] text-gray-400 ml-auto">
-                {panel === 'winners' && 'Highest revenue this period'}
-                {panel === 'losers' && 'Lowest revenue among products with sales'}
-                {panel === 'declining' && 'Sold last year and this year — biggest % falls'}
-              </span>
+              {PANELS.map(p => {
+                const count = active.buckets[p.key]?.length ?? 0;
+                return (
+                  <button
+                    key={p.key}
+                    onClick={() => setPanel(p.key)}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-colors ${
+                      panel === p.key ? `${p.activeCls} text-white` : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    {p.label}
+                    <span className={`ml-1.5 ${panel === p.key ? 'text-white/70' : 'text-gray-400'}`}>{count}</span>
+                  </button>
+                );
+              })}
             </div>
-            <div className="px-4 py-1 max-h-[420px] overflow-y-auto">
-              {(panel === 'winners' ? active.top : panel === 'losers' ? active.bottom : active.declining).length === 0 ? (
-                <div className="py-10 text-center text-sm text-gray-400">No products in this list for the selected filters.</div>
+            <div className="px-4 py-1.5 border-b border-gray-50">
+              <span className="text-[11px] text-gray-400">{PANELS.find(p => p.key === panel)?.hint}</span>
+            </div>
+            <div className="px-4 py-1 max-h-[460px] overflow-y-auto">
+              {panelRows.length === 0 ? (
+                <div className="py-10 text-center text-sm text-gray-400">Nothing in this bucket for the selected filters.</div>
               ) : (
-                (panel === 'winners' ? active.top : panel === 'losers' ? active.bottom : active.declining).map((row, i) => (
-                  <RankRow key={`${row.brand}-${row.name}`} row={row} rank={i + 1} maxRev={maxRev} />
+                panelRows.map((row, i) => (
+                  <AttentionRow key={`${row.brand}-${row.name}`} row={row} rank={i + 1} />
                 ))
               )}
             </div>
@@ -421,16 +549,34 @@ export default function ProductPerformanceTab() {
                   value={query}
                   onChange={e => setQuery(e.target.value)}
                   placeholder="Search products…"
-                  className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 w-44"
+                  className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 w-40"
                 />
+                <select
+                  value={category}
+                  onChange={e => setCategory(e.target.value)}
+                  className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white max-w-[140px]"
+                >
+                  <option value="All">All categories</option>
+                  {active.categories.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <select
+                  value={statusFilter}
+                  onChange={e => setStatusFilter(e.target.value as typeof statusFilter)}
+                  className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white"
+                >
+                  <option value="All">All status</option>
+                  {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s === 'dead' ? 'No sales' : s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
+                </select>
                 <select
                   value={sort}
                   onChange={e => setSort(e.target.value as typeof sort)}
                   className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white"
                 >
+                  <option value="attention">Attention</option>
                   <option value="revenue">Revenue</option>
                   <option value="units">Units</option>
                   <option value="yoy">YoY %</option>
+                  <option value="abandoned">Abandoned</option>
                   <option value="name">Name</option>
                 </select>
               </div>
@@ -441,23 +587,26 @@ export default function ProductPerformanceTab() {
                   <tr className="bg-gray-50 border-b border-gray-100 text-[10px] uppercase tracking-wide text-gray-500">
                     <th className="text-left px-4 py-2.5 font-medium w-8">#</th>
                     <th className="text-left px-3 py-2.5 font-medium">Product</th>
+                    <th className="text-left px-3 py-2.5 font-medium">Category</th>
                     <th className="text-left px-3 py-2.5 font-medium">Brand</th>
                     <th className="text-left px-3 py-2.5 font-medium">Status</th>
                     <th className="text-right px-3 py-2.5 font-medium">Revenue</th>
                     <th className="text-right px-3 py-2.5 font-medium">YoY</th>
                     <th className="text-right px-3 py-2.5 font-medium">Units</th>
                     <th className="text-right px-3 py-2.5 font-medium">Orders</th>
-                    <th className="text-right px-4 py-2.5 font-medium">AOV</th>
+                    <th className="text-right px-3 py-2.5 font-medium">Abandoned</th>
+                    <th className="text-left px-4 py-2.5 font-medium">Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {visible.map((row, i) => (
                     <tr key={`${row.brand}-${row.name}`} className="border-t border-gray-50 hover:bg-gray-50/80">
                       <td className="px-4 py-2.5 text-xs text-gray-400 font-mono">{i + 1}</td>
-                      <td className="px-3 py-2.5 max-w-[260px]">
+                      <td className="px-3 py-2.5 max-w-[240px]">
                         <div className="font-medium text-gray-800 truncate" title={row.name}>{row.name}</div>
                         <div className="text-[11px] text-gray-400">LY {AUD2.format(row.lastYear.revenue)}</div>
                       </td>
+                      <td className="px-3 py-2.5"><CategoryChip category={row.category} /></td>
                       <td className="px-3 py-2.5">
                         <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${BRAND_SOFT[row.brand]}`}>
                           {BRAND_SHORT[row.brand]}
@@ -468,12 +617,19 @@ export default function ProductPerformanceTab() {
                       <td className="px-3 py-2.5 text-right"><Yoy pct={row.yoyRevenuePct} /></td>
                       <td className="px-3 py-2.5 text-right font-mono text-gray-700">{fmt(row.current.units)}</td>
                       <td className="px-3 py-2.5 text-right font-mono text-gray-700">{fmt(row.current.orders)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono text-gray-600">{AUD2.format(row.current.aov)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-gray-600">
+                        {row.abandonedCarts ? (
+                          <span title={`${AUD2.format(row.abandonedValue ?? 0)} at risk`}>{row.abandonedCarts}</span>
+                        ) : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-4 py-2.5 max-w-[200px]">
+                        <span className="text-[11px] text-gray-500 truncate block" title={row.action}>{row.action}</span>
+                      </td>
                     </tr>
                   ))}
                   {visible.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400">No products match.</td>
+                      <td colSpan={11} className="px-4 py-10 text-center text-sm text-gray-400">No products match.</td>
                     </tr>
                   )}
                 </tbody>
@@ -488,15 +644,32 @@ export default function ProductPerformanceTab() {
             )}
           </div>
 
-          {/* Legend / trust */}
-          <div className="rounded-xl border border-gray-200 bg-white px-5 py-3 text-xs text-gray-500 leading-relaxed">
-            <span className="font-medium text-gray-700">How to read this: </span>
-            <span className="font-semibold text-emerald-700">Hot</span> = revenue up ≥25% YoY ·
-            <span className="font-semibold text-red-600"> Cold</span> = down ≥25% ·
-            <span className="font-semibold text-amber-700"> Soft</span> = down but milder ·
-            <span className="font-semibold text-blue-700"> New</span> = no LY sales.
-            {' '}PP & Blake use BigCommerce order lines; ETZ & HSC use Stripe charge descriptions (product-level naming depends on Stripe metadata/description).
-            Abandoned carts stay under Actions for now — ask if you want them moved here.
+          {/* Trust strip */}
+          <div className="rounded-xl border border-gray-200 bg-white px-5 py-4 text-xs text-gray-500 leading-relaxed space-y-2">
+            <div>
+              <span className="font-medium text-gray-700">Sources: </span>
+              {data.meta.sources.map((s, i) => (
+                <span key={s.brand}>
+                  {i > 0 && <span className="text-gray-300"> · </span>}
+                  <span className="font-medium text-gray-600">{BRAND_SHORT[s.brand]}</span> {s.source}
+                  {!s.connected && <span className="text-red-400"> (offline)</span>}
+                </span>
+              ))}
+            </div>
+            {data.meta.sampledOrdersNote && (
+              <div><span className="font-medium text-gray-700">Sampling: </span>{data.meta.sampledOrdersNote}</div>
+            )}
+            {data.meta.notes.map((n, i) => (
+              <div key={i} className="text-gray-400">{n}</div>
+            ))}
+            <div className="pt-1 border-t border-gray-100">
+              <span className="font-medium text-gray-700">Status legend: </span>
+              <span className="font-semibold text-emerald-700">Hot</span> up ≥25% YoY ·
+              <span className="font-semibold text-red-600"> Cold</span> down ≥25% ·
+              <span className="font-semibold text-amber-700"> Soft</span> down but milder ·
+              <span className="font-semibold text-blue-700"> New</span> no LY sales ·
+              <span className="font-semibold text-gray-500"> No sales</span> earned LY, $0 now.
+            </div>
           </div>
         </>
       )}

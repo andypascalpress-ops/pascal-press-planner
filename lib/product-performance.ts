@@ -4,6 +4,8 @@
  *  - Excel Test Zone + Excel HSC Copilot: Stripe charge descriptions
  */
 
+import { normalizeProductName, inferCategory } from './product-normalize';
+
 export type ProductBrand =
   | 'Pascal Press'
   | 'Blake Education'
@@ -11,6 +13,15 @@ export type ProductBrand =
   | 'Excel HSC Copilot';
 
 export type RangeKey = '30d' | '60d' | '90d' | 'mtd' | 'lastmonth';
+
+export type ProductBucket =
+  | 'hot'
+  | 'breakout'
+  | 'steady'
+  | 'low_volume'
+  | 'declining'
+  | 'dead'
+  | 'cold';
 
 export interface ProductMetrics {
   revenue: number;
@@ -21,7 +32,9 @@ export interface ProductMetrics {
 
 export interface ProductRow {
   name: string;
+  rawName?: string;
   brand: ProductBrand;
+  category: string;
   current: ProductMetrics;
   lastYear: ProductMetrics;
   yoyRevenuePct: number | null;
@@ -29,6 +42,29 @@ export interface ProductRow {
   yoyUnitsPct: number | null;
   /** hot | steady | soft | cold | new | dead */
   status: 'hot' | 'steady' | 'soft' | 'cold' | 'new' | 'dead';
+  bucket: ProductBucket;
+  action: string;
+  attentionScore: number;
+  abandonedCarts?: number;
+  abandonedValue?: number;
+  abandonedUnits?: number;
+}
+
+export interface Pareto {
+  top10Revenue: number;
+  top10SharePct: number;
+  top20SharePct: number;
+  productsFor80Pct: number;
+}
+
+export interface ProductBuckets {
+  winners: ProductRow[];
+  breakouts: ProductRow[];
+  declining: ProductRow[];
+  cold: ProductRow[];
+  lowVolume: ProductRow[];
+  dead: ProductRow[];
+  needsAttention: ProductRow[];
 }
 
 export interface BrandProductSlice {
@@ -49,6 +85,15 @@ export interface BrandProductSlice {
   top: ProductRow[];
   bottom: ProductRow[];
   declining: ProductRow[]; // sold both periods, YoY down
+  buckets: ProductBuckets;
+  pareto: Pareto;
+  categories: string[];
+}
+
+export interface ProductPerfMeta {
+  notes: string[];
+  sources: { brand: ProductBrand; source: string; connected: boolean }[];
+  sampledOrdersNote?: string;
 }
 
 export interface ProductPerformanceResponse {
@@ -64,7 +109,11 @@ export interface ProductPerformanceResponse {
     bottom: ProductRow[];
     declining: ProductRow[];
     products: ProductRow[];
+    buckets: ProductBuckets;
+    pareto: Pareto;
+    categories: string[];
   };
+  meta: ProductPerfMeta;
 }
 
 // ─── Date helpers (Sydney) ───────────────────────────────────────────────────
@@ -150,6 +199,141 @@ function classifyStatus(curr: ProductMetrics, ly: ProductMetrics, yoy: number | 
   return 'steady';
 }
 
+// ─── Bucket / action / attention scoring ─────────────────────────────────────
+
+function isNoiseName(name: string): boolean {
+  return /^free\s*gift/i.test(name) || /voucher/i.test(name) || name.toLowerCase() === 'unknown';
+}
+
+/** Coarse bucket used for the redesigned panels. lowRevThreshold is per-slice. */
+function classifyBucket(row: ProductRow, lowRevThreshold: number): ProductBucket {
+  const curr = row.current.revenue;
+  const ly = row.lastYear.revenue;
+  const yoy = row.yoyRevenuePct;
+
+  if (curr <= 0 && ly > 0) return 'dead';
+  if (ly === 0 && curr > 0) return 'breakout';
+  if (yoy !== null && yoy >= 25 && curr > 0) return 'hot';
+  if (yoy !== null && yoy <= -25 && curr > 0) return 'cold';
+  if (yoy !== null && yoy < 0 && ly > 0 && curr > 0) return 'declining';
+  if (curr > 0 && curr <= lowRevThreshold) return 'low_volume';
+  return 'steady';
+}
+
+function suggestAction(row: ProductRow): string {
+  switch (row.bucket) {
+    case 'hot':
+      return 'Scale: ads + email feature this week';
+    case 'breakout':
+      return 'Breakout: lock in landing page + nurture';
+    case 'cold':
+      return 'Diagnose: price, stock, ads pause, email re-push';
+    case 'declining':
+      return 'Diagnose: check price/stock, re-push in email';
+    case 'low_volume':
+      return 'Niche: bundle or promote only if margin OK';
+    case 'dead':
+      return 'Dead: clear stock / unpublish / last-chance email';
+    default:
+      return 'Maintain: keep in catalog, monitor';
+  }
+}
+
+function attentionScore(row: ProductRow): number {
+  const curr = row.current.revenue;
+  const ly = row.lastYear.revenue;
+  const drop = Math.max(ly - curr, 0);
+  let score = 0;
+
+  switch (row.bucket) {
+    case 'dead':
+      // Lost all of a previously-earning product — weight by lost revenue.
+      score = 1000 + ly;
+      break;
+    case 'cold':
+      score = 600 + drop;
+      break;
+    case 'declining':
+      score = 300 + drop;
+      break;
+    case 'low_volume':
+      score = 120 + curr;
+      break;
+    case 'breakout':
+      score = 60 + curr * 0.05;
+      break;
+    case 'hot':
+      score = 40;
+      break;
+    default:
+      score = 20;
+  }
+  // Abandoned demand nudges attention up
+  if (row.abandonedValue) score += Math.min(row.abandonedValue, 500) * 0.2;
+  return Math.round(score);
+}
+
+function computePareto(sold: ProductRow[]): Pareto {
+  const sorted = [...sold].sort((a, b) => b.current.revenue - a.current.revenue);
+  const total = sorted.reduce((s, r) => s + r.current.revenue, 0);
+  const top10Revenue = sorted.slice(0, 10).reduce((s, r) => s + r.current.revenue, 0);
+  const top20Revenue = sorted.slice(0, 20).reduce((s, r) => s + r.current.revenue, 0);
+
+  let running = 0;
+  let productsFor80Pct = 0;
+  if (total > 0) {
+    for (const r of sorted) {
+      running += r.current.revenue;
+      productsFor80Pct++;
+      if (running >= total * 0.8) break;
+    }
+  }
+
+  return {
+    top10Revenue: Math.round(top10Revenue * 100) / 100,
+    top10SharePct: total > 0 ? Math.round((top10Revenue / total) * 1000) / 10 : 0,
+    top20SharePct: total > 0 ? Math.round((top20Revenue / total) * 1000) / 10 : 0,
+    productsFor80Pct,
+  };
+}
+
+function computeBuckets(rows: ProductRow[]): ProductBuckets {
+  const sold = rows.filter(r => r.current.revenue > 0 && !isNoiseName(r.name));
+  const winners = [...sold].sort((a, b) => b.current.revenue - a.current.revenue).slice(0, 20);
+  const breakouts = sold
+    .filter(r => r.bucket === 'breakout')
+    .sort((a, b) => b.current.revenue - a.current.revenue)
+    .slice(0, 20);
+  const declining = sold
+    .filter(r => r.bucket === 'declining' || r.bucket === 'cold')
+    .sort((a, b) => (a.yoyRevenuePct ?? 0) - (b.yoyRevenuePct ?? 0))
+    .slice(0, 20);
+  const cold = sold
+    .filter(r => r.bucket === 'cold')
+    .sort((a, b) => (a.yoyRevenuePct ?? 0) - (b.yoyRevenuePct ?? 0))
+    .slice(0, 20);
+  const lowVolume = sold
+    .filter(r => r.bucket === 'low_volume')
+    .sort((a, b) => a.current.revenue - b.current.revenue)
+    .slice(0, 20);
+  // Dead: had sales last year, nothing now (not filtered to sold)
+  const dead = rows
+    .filter(r => r.bucket === 'dead' && r.lastYear.revenue > 0 && !isNoiseName(r.name))
+    .sort((a, b) => b.lastYear.revenue - a.lastYear.revenue)
+    .slice(0, 20);
+  const needsAttention = [...rows]
+    .filter(r => !isNoiseName(r.name) && (r.current.revenue > 0 || r.lastYear.revenue > 0))
+    .filter(r => r.bucket === 'dead' || r.bucket === 'cold' || r.bucket === 'declining' || r.bucket === 'low_volume')
+    .sort((a, b) => b.attentionScore - a.attentionScore)
+    .slice(0, 20);
+
+  return { winners, breakouts, declining, cold, lowVolume, dead, needsAttention };
+}
+
+function uniqueCategories(rows: ProductRow[]): string[] {
+  return [...new Set(rows.filter(r => !isNoiseName(r.name)).map(r => r.category))].sort();
+}
+
 function buildRows(
   brand: ProductBrand,
   currentMap: Map<string, ProductMetrics>,
@@ -166,23 +350,43 @@ function buildRows(
     rows.push({
       name,
       brand,
+      category: inferCategory(name, brand),
       current,
       lastYear,
       yoyRevenuePct,
       yoyOrdersPct: yoyPct(current.orders, lastYear.orders),
       yoyUnitsPct: yoyPct(current.units, lastYear.units),
       status: classifyStatus(current, lastYear, yoyRevenuePct),
+      // filled in by finalizeRows once we know the per-slice threshold
+      bucket: 'steady',
+      action: '',
+      attentionScore: 0,
     });
   }
   return rows.sort((a, b) => b.current.revenue - a.current.revenue);
 }
 
-function sliceFromRows(brand: ProductBrand, source: BrandProductSlice['source'], connected: boolean, rows: ProductRow[]): BrandProductSlice {
-  const isNoise = (name: string) =>
-    /^free\s*gift/i.test(name) || /voucher/i.test(name) || name.toLowerCase() === 'unknown';
+/** Assign bucket/action/attentionScore using a slice-relative low-volume threshold. */
+function finalizeRows(rows: ProductRow[]): ProductRow[] {
+  const sold = rows.filter(r => r.current.revenue > 0 && !isNoiseName(r.name));
+  const revenues = sold.map(r => r.current.revenue).sort((a, b) => a - b);
+  // 20th percentile of paid revenue, floored, as "low volume" cut-off.
+  const idx = Math.floor(revenues.length * 0.2);
+  const lowRevThreshold = revenues.length > 0 ? (revenues[idx] ?? revenues[0]!) : 0;
+
+  for (const r of rows) {
+    r.bucket = classifyBucket(r, lowRevThreshold);
+    r.action = suggestAction(r);
+    r.attentionScore = attentionScore(r);
+  }
+  return rows;
+}
+
+function sliceFromRows(brand: ProductBrand, source: BrandProductSlice['source'], connected: boolean, rowsIn: ProductRow[]): BrandProductSlice {
+  const rows = finalizeRows(rowsIn);
 
   // Paid product sales only for ranking (exclude free gifts / $0 lines)
-  const sold = rows.filter(r => r.current.revenue > 0 && !isNoise(r.name));
+  const sold = rows.filter(r => r.current.revenue > 0 && !isNoiseName(r.name));
   const revenue = sold.reduce((s, r) => s + r.current.revenue, 0);
   const units = sold.reduce((s, r) => s + r.current.units, 0);
   const orders = sold.reduce((s, r) => s + r.current.orders, 0);
@@ -216,6 +420,9 @@ function sliceFromRows(brand: ProductBrand, source: BrandProductSlice['source'],
     top,
     bottom,
     declining,
+    buckets: computeBuckets(rows),
+    pareto: computePareto(sold),
+    categories: uniqueCategories(rows),
   };
 }
 
@@ -265,6 +472,7 @@ async function fetchMonthOrders(base: string, token: string, yearMon: string): P
 }
 
 async function mapBcProducts(
+  brand: ProductBrand,
   storeHash: string,
   token: string,
   start: string,
@@ -303,9 +511,9 @@ async function mapBcProducts(
     results.forEach((result) => {
       if (result.status !== 'fulfilled' || !Array.isArray(result.value)) return;
       for (const item of result.value) {
-        const key = (item.name ?? item.sku ?? 'Unknown').trim();
-        if (!key) continue;
-        // Skip free-gift noise from ranking tables later if $0
+        const raw = (item.name ?? item.sku ?? 'Unknown').trim();
+        if (!raw) continue;
+        const key = normalizeProductName(raw, brand);
         const qty = Number(item.quantity ?? 0);
         const rev = Number(item.price_inc_tax ?? 0) * qty;
         const existing = map.get(key);
@@ -340,14 +548,104 @@ async function fetchBcBrandSlice(
   }
   try {
     const [curr, ly] = await Promise.all([
-      mapBcProducts(storeHash, token, currStart, currEnd),
-      mapBcProducts(storeHash, token, lyStart, lyEnd),
+      mapBcProducts(brand, storeHash, token, currStart, currEnd),
+      mapBcProducts(brand, storeHash, token, lyStart, lyEnd),
     ]);
     return sliceFromRows(brand, 'bigcommerce', true, buildRows(brand, curr, ly));
   } catch (e) {
     console.error(`[product-performance] ${brand}`, e);
     return sliceFromRows(brand, 'bigcommerce', false, []);
   }
+}
+
+// ─── Abandoned carts (Pascal Press) ──────────────────────────────────────────
+
+export interface AbandonedProduct { carts: number; units: number; value: number; }
+
+/**
+ * Fetch a light abandoned-product map for a BigCommerce store (status_id 0).
+ * Keyed by normalized product name. Soft: callers treat failure as "no data".
+ */
+async function fetchAbandonedProducts(
+  brand: ProductBrand,
+  storeHash: string,
+  token: string,
+  start: string,
+  end: string,
+  maxOrders = 120,
+): Promise<Map<string, AbandonedProduct>> {
+  const base = `https://api.bigcommerce.com/stores/${storeHash}/v2`;
+  const map = new Map<string, AbandonedProduct>();
+
+  // status_id 0 = Incomplete (abandoned)
+  const orders: BCOrder[] = [];
+  let page = 1;
+  while (page <= 8) {
+    const url = `${base}/orders?status_id=0&min_date_created=${bcDateParam(start)}&max_date_created=${bcDateParam(end, true)}&limit=250&page=${page}`;
+    const res = await fetch(url, { headers: bcHeaders(token), cache: 'no-store' });
+    if (res.status === 204 || res.status === 404) break;
+    if (!res.ok) throw new Error(`BC abandoned /orders -> ${res.status}`);
+    const data: BCOrder[] = await res.json();
+    if (!Array.isArray(data) || data.length === 0) break;
+    orders.push(...data);
+    if (data.length < 250) break;
+    page++;
+  }
+
+  const inRange = orders
+    .filter(o => {
+      const d = orderDateAEST(o.date_created);
+      return d >= start && d <= end;
+    })
+    .sort((a, b) => Number(b.total_inc_tax || 0) - Number(a.total_inc_tax || 0))
+    .slice(0, maxOrders);
+
+  const CONC = 12;
+  for (let i = 0; i < inRange.length; i += CONC) {
+    const batch = inRange.slice(i, i + CONC);
+    const results = await Promise.allSettled(
+      batch.map(o =>
+        fetch(`${base}/orders/${o.id}/products`, { headers: bcHeaders(token), cache: 'no-store' })
+          .then(r => (r.ok && r.status !== 204) ? r.json() as Promise<BCLineItem[]> : []),
+      ),
+    );
+    results.forEach((result) => {
+      if (result.status !== 'fulfilled' || !Array.isArray(result.value)) return;
+      for (const item of result.value) {
+        const raw = (item.name ?? item.sku ?? 'Unknown').trim();
+        if (!raw) continue;
+        const key = normalizeProductName(raw, brand);
+        const qty = Number(item.quantity ?? 0);
+        const val = Number(item.price_inc_tax ?? 0) * qty;
+        const existing = map.get(key);
+        if (!existing) map.set(key, { carts: 1, units: qty, value: val });
+        else { existing.carts += 1; existing.units += qty; existing.value += val; }
+      }
+    });
+  }
+
+  for (const [, m] of map) m.value = Math.round(m.value * 100) / 100;
+  return map;
+}
+
+/** Attach abandoned metrics onto matching product rows by normalized name. */
+function applyAbandoned(slice: BrandProductSlice, abandoned: Map<string, AbandonedProduct>): void {
+  if (abandoned.size === 0) return;
+  for (const row of slice.products) {
+    const a = abandoned.get(row.name);
+    if (!a) continue;
+    row.abandonedCarts = a.carts;
+    row.abandonedValue = a.value;
+    row.abandonedUnits = a.units;
+    // Refresh attention now that abandoned demand is known
+    row.attentionScore = attentionScore(row);
+  }
+  // Recompute needsAttention ordering with abandoned signal included
+  slice.buckets.needsAttention = [...slice.products]
+    .filter(r => !isNoiseName(r.name) && (r.current.revenue > 0 || r.lastYear.revenue > 0))
+    .filter(r => r.bucket === 'dead' || r.bucket === 'cold' || r.bucket === 'declining' || r.bucket === 'low_volume' || (r.abandonedCarts ?? 0) > 0)
+    .sort((a, b) => b.attentionScore - a.attentionScore)
+    .slice(0, 20);
 }
 
 // ─── Stripe (ETZ / HSC) ──────────────────────────────────────────────────────
@@ -388,6 +686,7 @@ interface StripeCharge {
 }
 
 async function mapStripeProducts(
+  brand: ProductBrand,
   secretKey: string,
   start: string,
   end: string,
@@ -418,13 +717,14 @@ async function mapStripeProducts(
       if (!c.paid || c.status !== 'succeeded') continue;
       const net = (c.amount - (c.amount_refunded || 0)) / 100;
       if (net <= 0) continue;
-      const name = (
+      const rawName = (
         c.metadata?.product_name
         || c.metadata?.product
         || c.metadata?.plan
         || c.description
         || 'Subscription / unspecified'
       ).trim();
+      const name = normalizeProductName(rawName, brand);
       const existing = map.get(name);
       if (!existing) map.set(name, { revenue: net, orders: 1, units: 1, aov: net });
       else {
@@ -455,8 +755,8 @@ async function fetchStripeBrandSlice(
   if (!secretKey) return sliceFromRows(brand, 'none', false, []);
   try {
     const [curr, ly] = await Promise.all([
-      mapStripeProducts(secretKey, currStart, currEnd),
-      mapStripeProducts(secretKey, lyStart, lyEnd),
+      mapStripeProducts(brand, secretKey, currStart, currEnd),
+      mapStripeProducts(brand, secretKey, lyStart, lyEnd),
     ]);
     return sliceFromRows(brand, 'stripe', true, buildRows(brand, curr, ly));
   } catch (e) {
@@ -485,6 +785,30 @@ export async function fetchProductPerformance(range: RangeKey = '30d'): Promise<
     fetchStripeBrandSlice('Excel HSC Copilot', hscKey, currStart, currEnd, lyStart, lyEnd),
   ]);
 
+  // Abandoned-cart signals (Pascal Press primary; Blake if available). Soft fail.
+  const abandonedNotes: string[] = [];
+  await Promise.all([
+    (async () => {
+      if (!ppHash || !ppToken) return;
+      try {
+        const ab = await fetchAbandonedProducts('Pascal Press', ppHash, ppToken, currStart, currEnd);
+        applyAbandoned(pp, ab);
+        if (ab.size > 0) abandonedNotes.push('Abandoned-cart demand matched onto Pascal Press products (BigCommerce incomplete orders).');
+      } catch (e) {
+        console.error('[product-performance] PP abandoned soft-fail', e);
+      }
+    })(),
+    (async () => {
+      if (!blakeHash || !blakeToken) return;
+      try {
+        const ab = await fetchAbandonedProducts('Blake Education', blakeHash, blakeToken, currStart, currEnd);
+        applyAbandoned(blake, ab);
+      } catch (e) {
+        console.error('[product-performance] Blake abandoned soft-fail', e);
+      }
+    })(),
+  ]);
+
   const byBrand: Record<ProductBrand, BrandProductSlice> = {
     'Pascal Press': pp,
     'Blake Education': blake,
@@ -492,12 +816,11 @@ export async function fetchProductPerformance(range: RangeKey = '30d'): Promise<
     'Excel HSC Copilot': hsc,
   };
 
-  const allProducts = [...pp.products, ...blake.products, ...etz.products, ...hsc.products]
-    .sort((a, b) => b.current.revenue - a.current.revenue);
+  const allProducts = finalizeRows(
+    [...pp.products, ...blake.products, ...etz.products, ...hsc.products],
+  ).sort((a, b) => b.current.revenue - a.current.revenue);
 
-  const isNoise = (name: string) =>
-    /^free\s*gift/i.test(name) || /voucher/i.test(name) || name.toLowerCase() === 'unknown';
-  const sold = allProducts.filter(r => r.current.revenue > 0 && !isNoise(r.name));
+  const sold = allProducts.filter(r => r.current.revenue > 0 && !isNoiseName(r.name));
   const revenue = sold.reduce((s, r) => s + r.current.revenue, 0);
   const units = sold.reduce((s, r) => s + r.current.units, 0);
   const orders = sold.reduce((s, r) => s + r.current.orders, 0);
@@ -510,6 +833,21 @@ export async function fetchProductPerformance(range: RangeKey = '30d'): Promise<
     .slice(0, 20);
 
   const anyConnected = pp.connected || blake.connected || etz.connected || hsc.connected;
+
+  const sources = (Object.keys(byBrand) as ProductBrand[]).map(b => ({
+    brand: b,
+    source: byBrand[b].source === 'bigcommerce' ? 'BigCommerce order lines'
+      : byBrand[b].source === 'stripe' ? 'Stripe charges (normalized from description/metadata)'
+      : 'Not connected',
+    connected: byBrand[b].connected,
+  }));
+
+  const notes = [
+    'PP & Blake: revenue from BigCommerce order line items.',
+    'ETZ & HSC: Stripe succeeded charges, product names normalized from description/metadata.',
+    ...abandonedNotes,
+  ];
+  if (abandonedNotes.length === 0) notes.push('Abandoned-cart signals unavailable for this period.');
 
   return {
     connected: anyConnected,
@@ -533,6 +871,14 @@ export async function fetchProductPerformance(range: RangeKey = '30d'): Promise<
       bottom,
       declining,
       products: allProducts,
+      buckets: computeBuckets(allProducts),
+      pareto: computePareto(sold),
+      categories: uniqueCategories(allProducts),
+    },
+    meta: {
+      notes,
+      sources,
+      sampledOrdersNote: 'BigCommerce samples up to 300 orders per period (largest by value); Stripe reads up to 2000 charges per period.',
     },
   };
 }
