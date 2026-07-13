@@ -1,8 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import ProductsSubTab from './ProductsSubTab';
-import AbandonedCartsSubTab from './AbandonedCartsSubTab';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,7 +23,6 @@ interface Props {
 }
 
 type Status = 'idle' | 'fetching' | 'analysing' | 'ready' | 'error';
-type SubTab = 'actions' | 'products' | 'carts';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -430,8 +427,7 @@ function SectionHead({ icon, label, count }: { icon: React.ReactNode; label: str
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, onAddCampaign }: Props) {
-  const [subTab,      setSubTab]      = useState<SubTab>('actions');
-  const [status,      setStatus]      = useState<Status>('idle');
+    const [status,      setStatus]      = useState<Status>('idle');
   const [insights,    setInsights]    = useState<Insight[]>([]);
   const [dismissed,   setDismissed]   = useState<Set<string>>(() => {
     try {
@@ -611,32 +607,13 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
         </div>
       </div>
 
-      {/* ── Sub-tab bar ──────────────────────────────────────────────────────── */}
-      <div className="bg-white border-b border-gray-200 px-4 sm:px-6 shrink-0 flex gap-1">
-        {(['actions', 'products', 'carts'] as SubTab[]).map(t => (
-          <button
-            key={t}
-            onClick={() => setSubTab(t)}
-            className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
-              subTab === t
-                ? 'border-gray-900 text-gray-900'
-                : 'border-transparent text-gray-400 hover:text-gray-600'
-            }`}
-          >
-            {t === 'actions' ? 'Action Items' : t === 'products' ? 'Products' : 'Abandoned Carts'}
-          </button>
-        ))}
-      </div>
-
       {/* ── Body ─────────────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 space-y-5">
 
-        {/* Products sub-tab */}
-        {subTab === 'products' && <ProductsSubTab />}
-        {subTab === 'carts' && <AbandonedCartsSubTab />}
+        
+        
 
-        {/* Actions sub-tab */}
-        {subTab === 'actions' && <>
+        <>
 
         {/* Skeletons while loading */}
         {isLoading && insights.length === 0 && (
@@ -845,7 +822,6 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
 
         <div className="h-6" />
         </>
-        }
       </div>
     </div>
   );

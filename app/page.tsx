@@ -12,6 +12,7 @@ import SpendModal from '@/components/SpendModal';
 import EmailTab from '@/components/EmailTab';
 import OverviewTab from '@/components/OverviewTab';
 import ActionCentreTab from '@/components/ActionCentreTab';
+import ProductPerformanceTab from '@/components/ProductPerformanceTab';
 
 export default function Home() {
   // ── Campaign state ──
@@ -387,6 +388,15 @@ export default function Home() {
                 <span className="hidden sm:inline">Email</span>
               </button>
               <button
+                onClick={() => setView('products')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${view === 'products' ? 'bg-violet-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                </svg>
+                <span className="hidden sm:inline">Products</span>
+              </button>
+              <button
                 onClick={() => setView('action')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${view === 'action' ? 'bg-orange-500 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
               >
@@ -576,6 +586,8 @@ export default function Home() {
           {/* Email view */}
           {view === 'email' && <EmailTab />}
 
+          {view === 'products' && <ProductPerformanceTab />}
+
           {/* Action Centre view */}
           {view === 'action' && (
             <ActionCentreTab
@@ -657,6 +669,12 @@ export default function Home() {
         <button onClick={() => setView('email')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'email' ? 'text-blue-600' : 'text-gray-400'}`}>
           <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="2.5" width="12" height="9" rx="1"/><polyline points="1,2.5 7,8 13,2.5"/></svg>
           <span className="text-[9px] font-medium leading-none mt-0.5">Email</span>
+        </button>
+        <button onClick={() => setView('products')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'products' ? 'text-violet-600' : 'text-gray-400'}`}>
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+          </svg>
+          <span className="text-[9px] font-medium leading-none mt-0.5">Products</span>
         </button>
         <button onClick={() => setView('action')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'action' ? 'text-orange-500' : 'text-gray-400'}`}>
           <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="7,1 9,5.5 14,6 10.5,9.5 11.5,14 7,11.5 2.5,14 3.5,9.5 0,6 5,5.5"/></svg>

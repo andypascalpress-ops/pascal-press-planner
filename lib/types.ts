@@ -72,7 +72,7 @@ export interface SpendColumnMap {
 }
 
 export type FYFilter = 'FY25' | 'FY26' | 'FY27' | 'All';
-export type ViewMode = 'overview' | 'calendar' | 'list' | 'finance' | 'email' | 'action';
+export type ViewMode = 'overview' | 'calendar' | 'list' | 'finance' | 'email' | 'products' | 'action';
 
 export interface OverviewAlert {
   id:       string;
