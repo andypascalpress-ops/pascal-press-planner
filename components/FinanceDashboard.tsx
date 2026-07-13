@@ -106,17 +106,26 @@ const CHART_LABELS = CHART_YMS.map(ym => MONTH_ABBR[parseInt(ym.split('-')[1]!) 
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/** Current calendar month in Australia/Sydney (YYYY-MM). */
 function currentYearMonth(): string {
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Australia/Sydney',
+    year: 'numeric',
+    month: '2-digit',
+  }).format(new Date());
 }
 
-/** Default to last month — the current month is rarely complete. */
+const MONTH_STORAGE_KEY = 'pp_finance_selected_month';
+
+/** Prefer last user choice; otherwise current Sydney month (MTD). */
 function defaultYearMonth(): string {
-  const d = new Date();
-  d.setDate(1);
-  d.setMonth(d.getMonth() - 1);
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = sessionStorage.getItem(MONTH_STORAGE_KEY);
+      if (saved && /^\d{4}-\d{2}$/.test(saved)) return saved;
+    } catch { /* private mode */ }
+  }
+  return currentYearMonth();
 }
 
 function parseYM(ym: string): { year: number; mon: number } {
@@ -1039,7 +1048,7 @@ function CampaignBreakdownTable({ data, loading }: { data: CampaignsResponse | n
 // ─── Main dashboard ───────────────────────────────────────────────────────────
 
 export default function FinanceDashboard({ records, syncing, lastSynced, onSyncGoogleAds }: Props) {
-  const [selectedMonth,    setSelectedMonth   ] = useState<string>(defaultYearMonth());
+  const [selectedMonth,    setSelectedMonth   ] = useState<string>(defaultYearMonth);
   const [revenue,          setRevenue         ] = useState<RevenueResponse | null>(null);
   const [loadingRevenue,   setLoadingRevenue  ] = useState(false);
   const [revenueHistory,   setRevenueHistory  ] = useState<MonthRevHistory[] | null>(null);
@@ -1051,33 +1060,63 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [campaigns,        setCampaigns       ] = useState<CampaignsResponse | null>(null);
   const [loadingCampaigns, setLoadingCampaigns] = useState(false);
 
+  // Persist month choice so remounts (tab switches) don't snap back to default
   useEffect(() => {
+    try { sessionStorage.setItem(MONTH_STORAGE_KEY, selectedMonth); } catch { /* ignore */ }
+  }, [selectedMonth]);
+
+  useEffect(() => {
+    // Abort in-flight requests when month changes so a slower older response
+    // cannot overwrite fresher data (was flipping July → June numbers).
+    const ac = new AbortController();
+    const { signal } = ac;
+    const month = selectedMonth;
+
     setLoadingRevenue(true);
-    fetch('/api/revenue?month=' + selectedMonth)
-      .then(r => r.json())
-      .then((data: RevenueResponse) => { setRevenue(data); })
-      .catch(() => { /* ignore */ })
-      .finally(() => { setLoadingRevenue(false); });
+    setRevenue(null); // clear stale totals immediately on month change
+    setGoogleAdsSpend(null);
+    setGa4Revenue(null);
+    setCampaigns(null);
 
-    // Fetch live Google Ads spend for the selected month
-    fetch('/api/google-ads-spend?month=' + selectedMonth)
+    fetch('/api/revenue?month=' + month, { signal })
       .then(r => r.json())
-      .then((data: GoogleAdsSpendResponse) => { setGoogleAdsSpend(data); })
-      .catch(() => { /* ignore */ });
+      .then((data: RevenueResponse) => {
+        // Only apply if this response is still for the active month
+        if (data?.month && data.month !== month) return;
+        setRevenue(data);
+      })
+      .catch((e) => { if (e?.name !== 'AbortError') { /* ignore */ } })
+      .finally(() => { if (!signal.aborted) setLoadingRevenue(false); });
 
-    // Fetch GA4 revenue by channel for the selected month (PP only)
-    fetch('/api/ga4-revenue?month=' + selectedMonth)
+    fetch('/api/google-ads-spend?month=' + month, { signal })
       .then(r => r.json())
-      .then((data: GA4RevenueResponse) => { setGa4Revenue(data); })
-      .catch(() => { /* ignore */ });
+      .then((data: GoogleAdsSpendResponse) => {
+        if (data?.month && data.month !== month) return;
+        setGoogleAdsSpend(data);
+      })
+      .catch((e) => { if (e?.name !== 'AbortError') { /* ignore */ } });
 
-    // Campaign-level Ads spend + GA4 revenue
+    fetch('/api/ga4-revenue?month=' + month, { signal })
+      .then(r => r.json())
+      .then((data: GA4RevenueResponse) => {
+        if (data?.month && data.month !== month) return;
+        setGa4Revenue(data);
+      })
+      .catch((e) => { if (e?.name !== 'AbortError') { /* ignore */ } });
+
     setLoadingCampaigns(true);
-    fetch('/api/google-ads-campaigns?month=' + selectedMonth)
+    fetch('/api/google-ads-campaigns?month=' + month, { signal })
       .then(r => r.json())
-      .then((data: CampaignsResponse) => { setCampaigns(data); })
-      .catch(() => { setCampaigns(null); })
-      .finally(() => { setLoadingCampaigns(false); });
+      .then((data: CampaignsResponse) => {
+        if (data?.month && data.month !== month) return;
+        setCampaigns(data);
+      })
+      .catch((e) => {
+        if (e?.name !== 'AbortError') setCampaigns(null);
+      })
+      .finally(() => { if (!signal.aborted) setLoadingCampaigns(false); });
+
+    return () => ac.abort();
   }, [selectedMonth]);
 
   useEffect(() => {
