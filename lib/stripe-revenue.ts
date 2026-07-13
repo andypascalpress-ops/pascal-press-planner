@@ -109,34 +109,53 @@ function customerIdOf(customer: StripeCharge['customer']): string | null {
   return customer.id ?? null;
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
- * True if the customer had a real prior purchase before `beforeUnix`.
- * Ignores $0 / sub-$1 auths and fully-refunded-only noise so classification
- * matches Stripe Dashboard "new customers" (first real payment in period).
+ * True if the customer had a real prior purchase (net > $1) before `beforeUnix`.
+ * Returns null if Stripe errors after retries — caller must not treat that as "new"
+ * (a prior bug: failed lookups inflated new-customer counts).
  */
 async function hasPriorPaidCharge(
   customerId: string,
   beforeUnix: number,
   secretKey: string,
-): Promise<boolean> {
-  // Pull a small page — newest prior charges first — and require net > $1
+): Promise<boolean | null> {
   const params = new URLSearchParams({
     customer: customerId,
     'created[lt]': String(beforeUnix),
-    limit: '20',
+    limit: '100', // larger page so old paid charges aren't missed behind recent fails
   });
-  const res = await fetch(`${STRIPE_BASE}/charges?${params}`, {
-    headers: stripeHeaders(secretKey),
-    cache: 'no-store',
-  });
-  if (!res.ok) return false;
-  const data: StripeList<{ paid: boolean; status: string; amount: number; amount_refunded: number }> =
-    await res.json();
-  return data.data.some((c) => {
-    if (!c.paid || c.status !== 'succeeded') return false;
-    const net = (c.amount ?? 0) - (c.amount_refunded ?? 0);
-    return net > 100; // > $1.00 AUD
-  });
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${STRIPE_BASE}/charges?${params}`, {
+        headers: stripeHeaders(secretKey),
+        cache: 'no-store',
+      });
+      if (res.status === 429 || res.status >= 500) {
+        await sleep(250 * (attempt + 1));
+        continue;
+      }
+      if (!res.ok) {
+        console.error('[stripe-revenue] prior charge lookup failed', customerId, res.status);
+        return null;
+      }
+      const data: StripeList<{ paid: boolean; status: string; amount: number; amount_refunded: number }> =
+        await res.json();
+      return data.data.some((c) => {
+        if (!c.paid || c.status !== 'succeeded') return false;
+        const net = (c.amount ?? 0) - (c.amount_refunded ?? 0);
+        return net > 100; // > $1.00 AUD — ignore $0 auths / fully refunded noise
+      });
+    } catch (err) {
+      console.error('[stripe-revenue] prior charge lookup error', customerId, err);
+      await sleep(250 * (attempt + 1));
+    }
+  }
+  return null;
 }
 
 /** Fetch customer.created (unix seconds). Returns null on failure. */
@@ -144,13 +163,24 @@ async function fetchCustomerCreated(
   customerId: string,
   secretKey: string,
 ): Promise<number | null> {
-  const res = await fetch(`${STRIPE_BASE}/customers/${customerId}`, {
-    headers: stripeHeaders(secretKey),
-    cache: 'no-store',
-  });
-  if (!res.ok) return null;
-  const data = await res.json() as { created?: number };
-  return typeof data.created === 'number' ? data.created : null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${STRIPE_BASE}/customers/${customerId}`, {
+        headers: stripeHeaders(secretKey),
+        cache: 'no-store',
+      });
+      if (res.status === 429 || res.status >= 500) {
+        await sleep(250 * (attempt + 1));
+        continue;
+      }
+      if (!res.ok) return null;
+      const data = await res.json() as { created?: number };
+      return typeof data.created === 'number' ? data.created : null;
+    } catch {
+      await sleep(250 * (attempt + 1));
+    }
+  }
+  return null;
 }
 
 async function fetchStripeRevenueWithKey(
@@ -223,28 +253,46 @@ async function fetchStripeRevenueWithKey(
     let returningCustomers = 0;
 
     if (accurate && qualifying.length > 0) {
-      // Stripe Dashboard "New customers" ≈ first real payment in the period.
-      // Also treat customer.created inside the period as new (matches Customers view).
+      // New = first real payment (net > $1) falls in this period — matches Stripe
+      // "customers who made their first payment during this period".
+      // Low concurrency + retries avoid rate-limit false "new" counts.
       const ids = qualifying.map(([id]) => id);
-      const chunkSize = 8;
+      const chunkSize = 4;
+      const pending: string[] = [];
+
       for (let i = 0; i < ids.length; i += chunkSize) {
         const chunk = ids.slice(i, i + chunkSize);
         const chunkResults = await Promise.all(
           chunk.map(async (id) => {
-            const [created, hasPrior] = await Promise.all([
-              fetchCustomerCreated(id, secretKey),
-              hasPriorPaidCharge(id, gte, secretKey),
-            ]);
-            // Created during this window → new, even if edge-case prior noise exists
+            const created = await fetchCustomerCreated(id, secretKey);
+            // Brand-new Stripe customer object this period ⇒ first payment this period
             if (created != null && created >= gte && created <= lte) {
               return 'new' as const;
             }
+            const hasPrior = await hasPriorPaidCharge(id, gte, secretKey);
+            if (hasPrior === null) return 'retry' as const;
             return hasPrior ? 'returning' as const : 'new' as const;
           }),
         );
-        for (const kind of chunkResults) {
-          if (kind === 'returning') returningCustomers++;
+        for (let j = 0; j < chunkResults.length; j++) {
+          const kind = chunkResults[j]!;
+          if (kind === 'retry') pending.push(chunk[j]!);
+          else if (kind === 'returning') returningCustomers++;
           else newCustomers++;
+        }
+      }
+
+      // Second pass for rate-limited lookups (serial, with backoff)
+      for (const id of pending) {
+        await sleep(300);
+        const hasPrior = await hasPriorPaidCharge(id, gte, secretKey);
+        if (hasPrior === true) returningCustomers++;
+        else if (hasPrior === false) newCustomers++;
+        else {
+          // Still unknown after retries: conservatively count as returning so we
+          // never inflate new / understate CAC from API blips.
+          console.error('[stripe-revenue] classifying as returning after failed prior lookup', id);
+          returningCustomers++;
         }
       }
     } else {
