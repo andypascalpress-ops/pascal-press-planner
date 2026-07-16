@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { OverviewAlert } from '@/lib/types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -70,17 +69,6 @@ function budgetBarColor(pct: number): string {
   return 'bg-blue-500';
 }
 
-function alertBg(severity: OverviewAlert['severity']): string {
-  if (severity === 'danger')  return 'bg-red-50 border-red-200 text-red-800';
-  if (severity === 'warning') return 'bg-amber-50 border-amber-200 text-amber-800';
-  return 'bg-blue-50 border-blue-200 text-blue-800';
-}
-
-function alertIcon(severity: OverviewAlert['severity']): string {
-  if (severity === 'danger')  return '🔴';
-  if (severity === 'warning') return '🟡';
-  return '🔵';
-}
 
 function monthLabel(ym: string): string {
   const [y, m] = ym.split('-');
@@ -384,8 +372,6 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
   const [data,       setData]       = useState<OverviewData | null>(null);
   const [loading,    setLoading]    = useState(true);
   const [error,      setError]      = useState('');
-  const [dismissed,  setDismissed]  = useState<Set<string>>(new Set());
-  const [alertsOpen, setAlertsOpen] = useState(true);
   const [band6,      setBand6]      = useState<Band6Data | null>(null);
   const [band6Loading, setBand6Loading] = useState(true);
 
@@ -446,9 +432,8 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
     );
   }
 
-  const { month, daysInMonth, currentDay, pp, etz, hsc, blake, combined, email, alerts, rangeLabel, isMonthly } = data;
+  const { month, daysInMonth, currentDay, pp, etz, hsc, blake, combined, email, rangeLabel, isMonthly } = data;
   const dayPct = currentDay / daysInMonth;
-  const visibleAlerts = alerts.filter(a => !dismissed.has(a.id));
 
   return (
     <div className="flex-1 overflow-y-auto bg-gray-50">
@@ -489,49 +474,6 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
           ))}
         </div>
 
-
-        {/* ── Alerts ── */}
-        {visibleAlerts.length > 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <button
-              className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-              onClick={() => setAlertsOpen(o => !o)}
-            >
-              <span className="flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-700 text-xs font-bold flex items-center justify-center">
-                  {visibleAlerts.length}
-                </span>
-                Alerts requiring attention
-              </span>
-              <svg
-                width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
-                className={`transition-transform ${alertsOpen ? 'rotate-180' : ''}`}
-              >
-                <polyline points="2,4.5 7,9.5 12,4.5"/>
-              </svg>
-            </button>
-            {alertsOpen && (
-              <div className="border-t border-gray-100 divide-y divide-gray-100">
-                {visibleAlerts.map(alert => (
-                  <div key={alert.id} className={`flex items-start gap-3 px-4 py-3 border-l-4 ${alertBg(alert.severity)}`}>
-                    <span className="text-sm mt-0.5">{alertIcon(alert.severity)}</span>
-                    <div className="flex-1 min-w-0">
-                      <span className="text-xs font-semibold uppercase tracking-wide opacity-70">{alert.brand}</span>
-                      <p className="text-sm mt-0.5">{alert.message}</p>
-                    </div>
-                    <button
-                      onClick={() => setDismissed(d => new Set([...d, alert.id]))}
-                      className="text-xs opacity-50 hover:opacity-100 shrink-0 mt-0.5"
-                      title="Dismiss"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* ── KPI cards ── */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
