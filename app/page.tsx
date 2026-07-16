@@ -139,7 +139,9 @@ export default function Home() {
   const handleDelete = async (id: string) => {
     setSaving(true);
     try {
-      const res = await fetch(`/api/campaigns/${id}`, { method: 'DELETE' });
+      const campaign = campaigns.find(c => c.id === id);
+      const brandParam = campaign?.brand ? `?brand=${encodeURIComponent(campaign.brand)}` : '';
+      const res = await fetch(`/api/campaigns/${id}${brandParam}`, { method: 'DELETE' });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         throw new Error(d.error || 'Delete failed');

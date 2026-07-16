@@ -16,11 +16,12 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    await deleteCampaign(params.id);
+    const brand = req.nextUrl.searchParams.get('brand') ?? undefined;
+    await deleteCampaign(params.id, brand);
     return NextResponse.json({ success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
