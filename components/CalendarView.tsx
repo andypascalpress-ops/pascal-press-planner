@@ -14,9 +14,9 @@ interface Props {
 }
 
 type CalMode = 'cards' | 'grid';
-type BrandFilter = 'All Brands' | 'Pascal Press' | 'Excel Test Zone';
+type BrandFilter = 'All Brands' | 'Pascal Press' | 'Excel Test Zone' | 'Excel HSC Copilot';
 
-const BRAND_TABS: BrandFilter[] = ['All Brands', 'Pascal Press', 'Excel Test Zone'];
+const BRAND_TABS: BrandFilter[] = ['All Brands', 'Pascal Press', 'Excel Test Zone', 'Excel HSC Copilot'];
 
 export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMonth, onDelete }: Props) {
   const [selectedType,  setSelectedType]  = useState<string | null>(null);
@@ -50,9 +50,10 @@ export default function CalendarView({ campaigns, selectedFY, onEdit, onAddForMo
             onClick={() => setSelectedBrand(b)}
             className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
               selectedBrand === b
-                ? b === 'Pascal Press'     ? 'bg-blue-600 text-white'
-                : b === 'Excel Test Zone'  ? 'bg-orange-500 text-white'
-                :                           'bg-gray-800 text-white'
+                ? b === 'Pascal Press'      ? 'bg-blue-600 text-white'
+                : b === 'Excel Test Zone'   ? 'bg-orange-500 text-white'
+                : b === 'Excel HSC Copilot' ? 'bg-teal-600 text-white'
+                :                            'bg-gray-800 text-white'
                 : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'
             }`}
           >

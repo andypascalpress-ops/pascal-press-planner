@@ -1,5 +1,5 @@
 import { Campaign, ColumnMap } from './types';
-import { BOARD_NAME, ETZ_BOARD_NAME } from './constants';
+import { BOARD_NAME, ETZ_BOARD_NAME, HSC_BOARD_NAME } from './constants';
 
 const MONDAY_API_URL = 'https://api.monday.com/v2';
 
@@ -373,21 +373,147 @@ async function updateETZCampaign(id: string, campaign: Partial<Campaign>): Promi
   return all.find(c => c.id === id) ?? { id, ...campaign } as Campaign;
 }
 
+// ── HSC board (same column structure as ETZ) ──
+
+let cachedHSCBoardId:   string | null       = null;
+let cachedHSCColumnMap: ETZColumnMap | null = null;
+
+async function getHSCBoardId(): Promise<string> {
+  if (process.env.MONDAY_HSC_BOARD_ID) return process.env.MONDAY_HSC_BOARD_ID;
+  if (cachedHSCBoardId) return cachedHSCBoardId;
+
+  const data = await mondayRequest(`query { boards(limit: 100) { id name } }`);
+  const board = data.boards.find((b: { id: string; name: string }) => b.name === HSC_BOARD_NAME);
+  if (!board) throw new Error(`HSC board "${HSC_BOARD_NAME}" not found.`);
+
+  cachedHSCBoardId = board.id;
+  return board.id;
+}
+
+async function getHSCColumnMap(boardId: string): Promise<ETZColumnMap> {
+  if (cachedHSCColumnMap) return cachedHSCColumnMap;
+
+  const data = await mondayRequest(`
+    query($boardId: [ID!]) {
+      boards(ids: $boardId) { columns { id title } }
+    }
+  `, { boardId: [boardId] });
+
+  const cols: { id: string; title: string }[] = data.boards[0].columns;
+  const findOpt = (title: string) => cols.find(c => c.title === title)?.id;
+
+  const map: ETZColumnMap = {
+    offer:    findOpt('Offer'),
+    products: findOpt('Products'),
+    timeline: findOpt('Campaign Timeline'),
+    notes:    findOpt('Notes'),
+    budget:   findOpt('Budget'),
+  };
+
+  cachedHSCColumnMap = map;
+  return map;
+}
+
+async function getHSCCampaigns(): Promise<Campaign[]> {
+  const boardId = await getHSCBoardId();
+  const colMap  = await getHSCColumnMap(boardId);
+
+  let items:  Campaign[]  = [];
+  let cursor: string|null = null;
+
+  do {
+    const query = cursor
+      ? `query($b:[ID!],$c:String!){boards(ids:$b){items_page(limit:200,cursor:$c){cursor items{id name column_values{id text value}}}}}`
+      : `query($b:[ID!]){boards(ids:$b){items_page(limit:200){cursor items{id name column_values{id text value}}}}}`;
+
+    const variables = cursor ? { b: [boardId], c: cursor } : { b: [boardId] };
+    const data = await mondayRequest(query, variables);
+    const page = data.boards[0].items_page;
+
+    items = items.concat(
+      page.items.map((item: { id: string; name: string; column_values: { id: string; text: string; value: string }[] }) => {
+        const c = etzItemToCampaign(item, colMap);
+        return { ...c, brand: 'Excel HSC Copilot' };
+      })
+    );
+    cursor = page.cursor ?? null;
+  } while (cursor);
+
+  return items;
+}
+
+async function createHSCCampaign(campaign: Omit<Campaign, 'id'>): Promise<Campaign> {
+  const boardId = await getHSCBoardId();
+  const colMap  = await getHSCColumnMap(boardId);
+
+  const cols: Record<string, unknown> = {};
+  if (colMap.offer    && campaign.offerInfo) cols[colMap.offer] = campaign.offerInfo;
+  if (colMap.notes    && campaign.notes)     cols[colMap.notes] = { text: campaign.notes };
+  if (colMap.timeline && campaign.startDate && campaign.endDate) {
+    cols[colMap.timeline] = JSON.stringify({ from: campaign.startDate, to: campaign.endDate });
+  }
+
+  const data = await mondayRequest(`
+    mutation($boardId: ID!, $name: String!, $cols: JSON!) {
+      create_item(board_id: $boardId, item_name: $name, column_values: $cols) {
+        id name column_values { id text value }
+      }
+    }
+  `, { boardId, name: campaign.name, cols: JSON.stringify(cols) });
+
+  const c = etzItemToCampaign(data.create_item, colMap);
+  return { ...c, brand: 'Excel HSC Copilot' };
+}
+
+async function updateHSCCampaign(id: string, campaign: Partial<Campaign>): Promise<Campaign> {
+  const boardId = await getHSCBoardId();
+  const colMap  = await getHSCColumnMap(boardId);
+
+  const cols: Record<string, unknown> = {};
+  if (campaign.name     !== undefined) cols['name'] = campaign.name;
+  if (colMap.offer    && campaign.offerInfo !== undefined) cols[colMap.offer] = campaign.offerInfo;
+  if (colMap.notes    && campaign.notes     !== undefined) cols[colMap.notes] = { text: campaign.notes };
+  if (colMap.timeline && campaign.startDate && campaign.endDate) {
+    cols[colMap.timeline] = JSON.stringify({ from: campaign.startDate, to: campaign.endDate });
+  }
+
+  if (Object.keys(cols).length === 0) {
+    const all = await getCampaigns();
+    return all.find(c => c.id === id) ?? { id, ...campaign } as Campaign;
+  }
+
+  const data = await mondayRequest(`
+    mutation($boardId: ID!, $itemId: ID!, $cols: JSON!) {
+      update: change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $cols) {
+        id name column_values { id text value }
+      }
+    }
+  `, { boardId, itemId: id, cols: JSON.stringify(cols) });
+
+  const updated = data.update;
+  if (updated?.column_values) {
+    const c = etzItemToCampaign(updated, colMap);
+    return { ...c, brand: 'Excel HSC Copilot' };
+  }
+
+  const all = await getCampaigns();
+  return all.find(c => c.id === id) ?? { id, ...campaign } as Campaign;
+}
+
 // ── Public API ──
 
 export async function getCampaigns(): Promise<Campaign[]> {
-  const [pp, etz] = await Promise.all([
+  const [pp, etz, hsc] = await Promise.all([
     getPPCampaigns(),
-    // ETZ is optional — if board not configured or unreachable, return empty
     getETZCampaigns().catch(() => [] as Campaign[]),
+    getHSCCampaigns().catch(() => [] as Campaign[]),
   ]);
-  return [...pp, ...etz];
+  return [...pp, ...etz, ...hsc];
 }
 
 export async function createCampaign(campaign: Omit<Campaign, 'id'>): Promise<Campaign> {
-  if (campaign.brand === 'Excel Test Zone') {
-    return createETZCampaign(campaign);
-  }
+  if (campaign.brand === 'Excel Test Zone')    return createETZCampaign(campaign);
+  if (campaign.brand === 'Excel HSC Copilot') return createHSCCampaign(campaign);
 
   const boardId = await getBoardId();
   const colMap  = await getColumnMap(boardId);
@@ -411,9 +537,8 @@ export async function createCampaign(campaign: Omit<Campaign, 'id'>): Promise<Ca
 }
 
 export async function updateCampaign(id: string, campaign: Partial<Campaign>): Promise<Campaign> {
-  if (campaign.brand === 'Excel Test Zone') {
-    return updateETZCampaign(id, campaign);
-  }
+  if (campaign.brand === 'Excel Test Zone')    return updateETZCampaign(id, campaign);
+  if (campaign.brand === 'Excel HSC Copilot') return updateHSCCampaign(id, campaign);
 
   const boardId = await getBoardId();
   const colMap  = await getColumnMap(boardId);
@@ -448,7 +573,7 @@ export async function updateCampaign(id: string, campaign: Partial<Campaign>): P
 export async function deleteCampaign(id: string, brand?: string): Promise<void> {
   // Resolve board to ensure credentials are valid and board is accessible,
   // then delete by item ID (Monday.com item IDs are globally unique).
-  await (brand === 'Excel Test Zone' ? getETZBoardId() : getBoardId());
+  await (brand === 'Excel Test Zone' ? getETZBoardId() : brand === 'Excel HSC Copilot' ? getHSCBoardId() : getBoardId());
 
   await mondayRequest(`
     mutation($itemId: ID!) {

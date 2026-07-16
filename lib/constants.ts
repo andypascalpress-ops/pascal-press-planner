@@ -42,6 +42,7 @@ export const BRANDS = [
 
 export const BOARD_NAME = 'Pascal Press Marketing Planner';
 export const ETZ_BOARD_NAME = 'ETZ Marketing Planner';
+export const HSC_BOARD_NAME = 'Excel HSC Copilot Marketing Planner';
 export const SPEND_BOARD_NAME = 'Pascal Press Marketing Spend';
 
 export const SPEND_BRANDS = ['Pascal Press', 'Excel Test Zone'] as const;
