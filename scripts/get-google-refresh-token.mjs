@@ -1,6 +1,22 @@
 /**
- * One-time helper script to generate a Google OAuth2 refresh token
+ * Helper script to generate a Google OAuth2 refresh token
  * for use as GOOGLE_ADS_REFRESH_TOKEN in Vercel.
+ *
+ * ─── WHY TOKENS EXPIRE EVERY 7 DAYS ───────────────────────────────────────────
+ * Google only grants long-lived refresh tokens to *published* OAuth apps.
+ * While your app is in "Testing" mode (the default), tokens expire after 7 days.
+ *
+ * PERMANENT FIX — do this once in Google Cloud Console:
+ *   1. Go to: APIs & Services → OAuth consent screen
+ *   2. Click "Publish App" (changes status from Testing → In production)
+ *   3. Confirm. No Google review required for internal/ads scopes.
+ *   4. Then run this script once more to get a fresh, permanent refresh token.
+ *   5. Update GOOGLE_ADS_REFRESH_TOKEN in Vercel → Settings → Environment Variables.
+ *
+ * After publishing, refresh tokens never expire unless the user revokes access.
+ *
+ * ─── QUICK FIX (if the app is still in Testing) ───────────────────────────────
+ * Run this script to get a new token. It lasts another 7 days.
  *
  * Prerequisites:
  *   1. A Google Cloud project with the Google Ads API enabled
@@ -10,7 +26,7 @@
  * Usage:
  *   GOOGLE_CLIENT_ID=your-id GOOGLE_CLIENT_SECRET=your-secret node scripts/get-google-refresh-token.mjs
  *
- * Then copy the printed refresh_token into Vercel as GOOGLE_ADS_REFRESH_TOKEN.
+ * Then copy the printed refresh_token into Vercel as GOOGLE_ADS_REFRESH_TOKEN and redeploy.
  */
 
 import http from 'http';

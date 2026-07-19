@@ -260,6 +260,18 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
         </div>
       )}
 
+      {/* Google Ads token expired / disconnected notice */}
+      {!data.adsConnected && data.adsError && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+          <p className="text-xs font-semibold text-amber-700">Google Ads disconnected</p>
+          <p className="text-xs text-amber-600 mt-0.5 leading-relaxed">
+            {data.adsError.includes('invalid_grant') || data.adsError.includes('expired') || data.adsError.includes('revoked')
+              ? 'Refresh token expired (Google resets it every 7 days for unpublished apps). Run scripts/get-google-refresh-token.mjs and update GOOGLE_ADS_REFRESH_TOKEN in Vercel — or publish the OAuth app in Google Cloud Console for a permanent token.'
+              : 'Could not connect to Google Ads. Check GOOGLE_ADS_* env vars in Vercel.'}
+          </p>
+        </div>
+      )}
+
       {/* Budget bar only when ads are connected */}
       {data.adsConnected && (
         <BudgetBar spend={data.spend} budget={data.budget} dayPct={dayPct} isMonthly={isMonthly} />
