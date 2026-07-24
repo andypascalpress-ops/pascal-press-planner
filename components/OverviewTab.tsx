@@ -19,6 +19,8 @@ interface BrandData {
   budget:         number;
   revenue:        number;
   revenueTarget?: number;
+  aov?:           number | null;
+  aovPrev?:       number | null;
   roas:           number;
   orders:         number;
   revConnected:   boolean;
@@ -211,6 +213,22 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
             {data.revConnected ? AUD.format(data.revenue) : <span className="text-gray-400 text-sm">Not connected</span>}
           </p>
           {data.orders > 0 && <p className="text-xs text-gray-400">{data.orders.toLocaleString()} orders</p>}
+          {/* AOV with MoM comparison */}
+          {data.revConnected && data.aov != null && (
+            <div className="mt-1.5 flex items-center gap-2">
+              <span className="text-sm font-semibold text-gray-800">{AUD.format(data.aov)} AOV</span>
+              {data.aovPrev != null && (() => {
+                const delta = data.aov! - data.aovPrev!;
+                const pct   = Math.round(Math.abs(delta) / data.aovPrev! * 100);
+                const up    = delta >= 0;
+                return (
+                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${up ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                    {up ? '↑' : '↓'} {up ? '+' : '-'}{AUD.format(Math.abs(delta))} ({pct}%) vs last month
+                  </span>
+                );
+              })()}
+            </div>
+          )}
           {/* Sales target bar — Pascal Press only */}
           {data.revConnected && data.revenueTarget && data.revenueTarget > 0 && (() => {
             const pct     = Math.min(data.revenue / data.revenueTarget, 1.05);

@@ -116,7 +116,18 @@ export async function GET(request: Request) {
   // Blake: revenue only for now (no Google Ads account connected)
   const blakeSpend = 0;
 
-  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult, ppConvResult, etzConvResult] =
+  // Previous calendar month — used for AOV comparison (always full month)
+  const [prevY, prevM] = (() => {
+    const y = parseInt(month.slice(0, 4), 10);
+    const m = parseInt(month.slice(5, 7), 10);
+    return m === 1 ? [y - 1, 12] : [y, m - 1];
+  })();
+  const prevMonth    = `${prevY}-${String(prevM).padStart(2, '0')}`;
+  const prevDays     = new Date(prevY, prevM, 0).getDate();
+  const prevStart    = `${prevMonth}-01`;
+  const prevEnd      = `${prevMonth}-${String(prevDays).padStart(2, '0')}`;
+
+  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult, ppConvResult, etzConvResult, ppPrevRevResult] =
     await Promise.allSettled([
       ppCfg
         ? fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' })
@@ -138,6 +149,7 @@ export async function GET(request: Request) {
       // Monthly ranges compare same calendar days last month; short ranges use equal prior days.
       fetchPPWebsiteConversion(startDate, endDate, isMonthly ? 'alignMonth' : 'priorEqual'),
       fetchETZWebsiteConversion(startDate, endDate, isMonthly ? 'alignMonth' : 'priorEqual'),
+      fetchPPRevenue(prevMonth, { start: prevStart, end: prevEnd }),
     ]);
 
   const ppSpend  = ppAdsResult.status  === 'fulfilled'
@@ -147,6 +159,7 @@ export async function GET(request: Request) {
   const hscSpend = hscAdsResult.status === 'fulfilled'
     ? hscAdsResult.value.reduce((s, r) => s + r.actualSpend, 0) : 0;
 
+  const ppPrevRev = ppPrevRevResult.status === 'fulfilled' ? ppPrevRevResult.value : null;
   const ppRev    = ppRevResult.status    === 'fulfilled' ? ppRevResult.value    : null;
   const etzRev   = etzRevResult.status   === 'fulfilled' ? etzRevResult.value   : null;
   const hscRev   = hscRevResult.status   === 'fulfilled' ? hscRevResult.value   : null;
@@ -154,6 +167,13 @@ export async function GET(request: Request) {
   const email    = emailResult.status    === 'fulfilled' ? emailResult.value    : null;
   const ppConv   = ppConvResult.status   === 'fulfilled' ? ppConvResult.value   : null;
   const etzConv  = etzConvResult.status  === 'fulfilled' ? etzConvResult.value  : null;
+
+  const ppAov     = ppRev && (ppRev.totalOrders ?? 0) > 0
+    ? Math.round(ppRev.totalRevenue / ppRev.totalOrders)
+    : null;
+  const ppAovPrev = ppPrevRev && (ppPrevRev.totalOrders ?? 0) > 0
+    ? Math.round(ppPrevRev.totalRevenue / ppPrevRev.totalOrders)
+    : null;
 
   const ppRevenue    = ppRev?.totalRevenue    ?? 0;
   const etzRevenue   = etzRev?.totalRevenue   ?? 0;
@@ -293,6 +313,8 @@ export async function GET(request: Request) {
       budget:        ppBudget,
       revenue:       Math.round(ppRevenue  * 100) / 100,
       revenueTarget: ppRevenueTarget,
+      aov:           ppAov,
+      aovPrev:       ppAovPrev,
       roas:          ppRoas,
       orders:        ppRev?.totalOrders ?? 0,
       revConnected:  ppRev?.connected   ?? false,
