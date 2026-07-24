@@ -15,15 +15,16 @@ interface ConversionSnapshot {
 }
 
 interface BrandData {
-  spend:        number;
-  budget:       number;
-  revenue:      number;
-  roas:         number;
-  orders:       number;
-  revConnected: boolean;
-  adsConnected: boolean;
-  adsError?:    string | null;
-  conversion?:  ConversionSnapshot | null;
+  spend:          number;
+  budget:         number;
+  revenue:        number;
+  revenueTarget?: number;
+  roas:           number;
+  orders:         number;
+  revConnected:   boolean;
+  adsConnected:   boolean;
+  adsError?:      string | null;
+  conversion?:    ConversionSnapshot | null;
 }
 
 interface OverviewData {
@@ -210,6 +211,28 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
             {data.revConnected ? AUD.format(data.revenue) : <span className="text-gray-400 text-sm">Not connected</span>}
           </p>
           {data.orders > 0 && <p className="text-xs text-gray-400">{data.orders.toLocaleString()} orders</p>}
+          {/* Sales target bar — Pascal Press only */}
+          {data.revConnected && data.revenueTarget && data.revenueTarget > 0 && (() => {
+            const pct     = Math.min(data.revenue / data.revenueTarget, 1.05);
+            const over    = data.revenue > data.revenueTarget;
+            const barColor = over ? 'bg-emerald-500' : pct >= 0.75 ? 'bg-blue-500' : pct >= 0.5 ? 'bg-amber-500' : 'bg-red-400';
+            const textColor = over ? 'text-emerald-600 font-medium' : pct >= 0.75 ? 'text-blue-600' : pct >= 0.5 ? 'text-amber-600' : 'text-red-600 font-medium';
+            return (
+              <div className="mt-2 space-y-1">
+                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(pct * 100, 100)}%` }} />
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className={textColor}>
+                    {over ? '✓ ' : ''}{Math.round(pct * 100)}% of {AUD.format(data.revenueTarget)} target
+                  </span>
+                  {!over && (
+                    <span className="text-gray-400">{AUD.format(data.revenueTarget - data.revenue)} to go</span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
         {data.adsConnected && (
           <div>

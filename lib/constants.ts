@@ -77,6 +77,23 @@ export const SPEND_CHANNELS = [
   'Additional Indirect',
 ] as const;
 
+// Pascal Press monthly revenue targets (inc. GST = ex-GST × 1.1)
+// Keyed by month number (1 = January … 12 = December)
+export const PP_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
+  1:  121000, // January
+  2:  106700, // February
+  3:   66000, // March
+  4:   58300, // April
+  5:   77550, // May
+  6:   66000, // June
+  7:   66000, // July
+  8:   73700, // August
+  9:   73700, // September
+  10:  84700, // October
+  11: 121000, // November
+  12:  91300, // December
+};
+
 export const SPEND_COLUMNS_TO_CREATE = [
   { title: 'Brand',               type: 'text'      },
   { title: 'Channel',             type: 'text'      },
