@@ -1,8 +1,91 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { Campaign } from '@/lib/types';
 import { CAMPAIGN_COLORS } from '@/lib/constants';
+
+interface TooltipState {
+  campaign: Campaign;
+  x: number;
+  y: number;
+}
+
+function CampaignTooltip({ tip }: { tip: TooltipState }) {
+  const c = tip.campaign;
+  const dateStr = c.startDate && c.endDate
+    ? `${c.startDate} → ${c.endDate}`
+    : c.dateRange || c.month || '';
+  const color = c.color || CAMPAIGN_COLORS[c.type] || '#888';
+
+  // Keep tooltip on screen
+  const left = Math.min(tip.x + 12, window.innerWidth - 260);
+  const top  = tip.y + 16 + 240 > window.innerHeight ? tip.y - 248 : tip.y + 16;
+
+  return (
+    <div
+      className="fixed z-50 pointer-events-none w-56 bg-white border border-gray-200 rounded-xl shadow-xl p-3 text-xs"
+      style={{ left, top }}
+    >
+      {/* Colour strip + name */}
+      <div className="flex items-start gap-2 mb-2">
+        <div className="w-2.5 h-2.5 rounded-full shrink-0 mt-0.5" style={{ backgroundColor: color }} />
+        <p className="font-semibold text-gray-900 leading-snug">{c.name}</p>
+      </div>
+      <div className="space-y-1 text-gray-500">
+        {c.campaignCode && (
+          <div className="flex justify-between">
+            <span>Code</span>
+            <span className="font-medium text-gray-700">{c.campaignCode}</span>
+          </div>
+        )}
+        {c.type && (
+          <div className="flex justify-between">
+            <span>Type</span>
+            <span className="font-medium text-gray-700">{c.type}</span>
+          </div>
+        )}
+        {c.brand && (
+          <div className="flex justify-between">
+            <span>Brand</span>
+            <span className="font-medium text-gray-700">{c.brand}</span>
+          </div>
+        )}
+        {c.status && (
+          <div className="flex justify-between">
+            <span>Status</span>
+            <span className={`font-medium ${c.status === 'Complete' ? 'text-emerald-600' : c.status === 'Active' ? 'text-blue-600' : 'text-gray-700'}`}>
+              {c.status}
+            </span>
+          </div>
+        )}
+        {dateStr && (
+          <div className="flex justify-between">
+            <span>Dates</span>
+            <span className="font-medium text-gray-700">{dateStr}</span>
+          </div>
+        )}
+        {c.promoCode && (
+          <div className="flex justify-between">
+            <span>Promo</span>
+            <span className="font-medium text-gray-700">{c.promoCode}</span>
+          </div>
+        )}
+        {c.discount && (
+          <div className="flex justify-between">
+            <span>Discount</span>
+            <span className="font-medium text-gray-700">{c.discount}</span>
+          </div>
+        )}
+      </div>
+      {c.revenue > 0 && (
+        <div className="mt-2 pt-2 border-t border-gray-100 flex justify-between">
+          <span className="text-gray-500">Revenue</span>
+          <span className="font-semibold text-emerald-600">${c.revenue.toLocaleString()}</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const MONTH_NAMES = [
   'January','February','March','April','May','June',
@@ -59,6 +142,15 @@ export default function CampaignCalendarGrid({ campaigns, onEdit, onAddForMonth 
   const today = new Date();
   const [year, setYear]   = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth()); // 0-indexed
+  const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+
+  const showTooltip = useCallback((campaign: Campaign, e: React.MouseEvent) => {
+    setTooltip({ campaign, x: e.clientX, y: e.clientY });
+  }, []);
+  const moveTooltip = useCallback((e: React.MouseEvent) => {
+    setTooltip(t => t ? { ...t, x: e.clientX, y: e.clientY } : null);
+  }, []);
+  const hideTooltip = useCallback(() => setTooltip(null), []);
 
   const monthName    = MONTH_NAMES[month];
   const daysInMonth  = new Date(year, month + 1, 0).getDate();
@@ -221,7 +313,9 @@ export default function CampaignCalendarGrid({ campaigns, onEdit, onAddForMonth 
                         <button
                           key={bi}
                           onClick={() => onEdit(bar.c)}
-                          title={bar.c.name + (bar.c.campaignCode ? ` [${bar.c.campaignCode}]` : '')}
+                          onMouseEnter={e => showTooltip(bar.c, e)}
+                          onMouseMove={moveTooltip}
+                          onMouseLeave={hideTooltip}
                           className="h-[22px] text-white text-xs font-medium px-2 truncate hover:opacity-80 transition-opacity text-left"
                           style={{
                             gridColumn: `${bar.startCol + 1} / span ${bar.span}`,
@@ -244,6 +338,9 @@ export default function CampaignCalendarGrid({ campaigns, onEdit, onAddForMonth 
           })}
         </div>
       </div>
+
+      {/* Hover tooltip */}
+      {tooltip && <CampaignTooltip tip={tooltip} />}
 
       {/* Campaign list for this month */}
       {visible.length > 0 && (
