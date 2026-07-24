@@ -160,8 +160,12 @@ export async function GET(request: Request) {
   const hscRevenue   = hscRev?.totalRevenue   ?? 0;
   const blakeRevenue = blakeRev?.totalRevenue ?? 0;
 
-  const ppMonthNum     = parseInt(month.slice(5, 7), 10);
-  const ppRevenueTarget = PP_MONTHLY_REVENUE_TARGETS[ppMonthNum] ?? 0;
+  const ppMonthNum      = parseInt(month.slice(5, 7), 10);
+  const ppMonthlyTarget = PP_MONTHLY_REVENUE_TARGETS[ppMonthNum] ?? 0;
+  const rangeDays       = Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86_400_000) + 1;
+  const ppRevenueTarget = isMonthly
+    ? ppMonthlyTarget
+    : Math.round((ppMonthlyTarget / daysInMonth) * rangeDays);
 
   const ppBudget    = MONTHLY_GOOGLE_BUDGETS['Pascal Press']      ?? 0;
   const etzBudget   = MONTHLY_GOOGLE_BUDGETS['Excel Test Zone']   ?? 0;
