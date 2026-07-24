@@ -11,7 +11,7 @@ import { fetchPPRevenue, fetchBlakeRevenue } from '@/lib/bigcommerce-revenue';
 import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-revenue';
 import { fetchEmailCampaigns } from '@/lib/hubspot-email';
 import { fetchPPWebsiteConversion, fetchETZWebsiteConversion } from '@/lib/google-analytics';
-import { MONTHLY_GOOGLE_BUDGETS, PP_MONTHLY_REVENUE_TARGETS, BLAKE_MONTHLY_REVENUE_TARGETS } from '@/lib/constants';
+import { MONTHLY_GOOGLE_BUDGETS, PP_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_REVENUE_TARGETS, BLAKE_MONTHLY_REVENUE_TARGETS } from '@/lib/constants';
 import { OverviewAlert } from '@/lib/types';
 
 export const dynamic = 'force-dynamic'; // range param must be read at request time
@@ -180,16 +180,14 @@ export async function GET(request: Request) {
   const hscRevenue   = hscRev?.totalRevenue   ?? 0;
   const blakeRevenue = blakeRev?.totalRevenue ?? 0;
 
-  const ppMonthNum        = parseInt(month.slice(5, 7), 10);
-  const ppMonthlyTarget   = PP_MONTHLY_REVENUE_TARGETS[ppMonthNum] ?? 0;
+  const ppMonthNum         = parseInt(month.slice(5, 7), 10);
+  const ppMonthlyTarget    = PP_MONTHLY_REVENUE_TARGETS[ppMonthNum]    ?? 0;
+  const etzMonthlyTarget   = ETZ_MONTHLY_REVENUE_TARGETS[ppMonthNum]   ?? 0;
   const blakeMonthlyTarget = BLAKE_MONTHLY_REVENUE_TARGETS[ppMonthNum] ?? 0;
-  const rangeDays         = Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86_400_000) + 1;
-  const ppRevenueTarget   = isMonthly
-    ? ppMonthlyTarget
-    : Math.round((ppMonthlyTarget / daysInMonth) * rangeDays);
-  const blakeRevenueTarget = isMonthly
-    ? blakeMonthlyTarget
-    : Math.round((blakeMonthlyTarget / daysInMonth) * rangeDays);
+  const rangeDays          = Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86_400_000) + 1;
+  const ppRevenueTarget    = isMonthly ? ppMonthlyTarget    : Math.round((ppMonthlyTarget    / daysInMonth) * rangeDays);
+  const etzRevenueTarget   = isMonthly ? etzMonthlyTarget   : Math.round((etzMonthlyTarget   / daysInMonth) * rangeDays);
+  const blakeRevenueTarget = isMonthly ? blakeMonthlyTarget : Math.round((blakeMonthlyTarget / daysInMonth) * rangeDays);
 
   const ppBudget    = MONTHLY_GOOGLE_BUDGETS['Pascal Press']      ?? 0;
   const etzBudget   = MONTHLY_GOOGLE_BUDGETS['Excel Test Zone']   ?? 0;
@@ -331,14 +329,15 @@ export async function GET(request: Request) {
       } : null,
     },
     etz: {
-      spend:        Math.round(etzSpend * 100) / 100,
-      budget:       etzBudget,
-      revenue:      Math.round(etzRevenue * 100) / 100,
-      roas:         etzRoas,
-      orders:       etzRev?.totalOrders ?? 0,
-      revConnected: etzRev?.connected   ?? false,
-      adsConnected: etzAdsResult.status === 'fulfilled',
-      adsError:     etzAdsError,
+      spend:         Math.round(etzSpend * 100) / 100,
+      budget:        etzBudget,
+      revenue:       Math.round(etzRevenue * 100) / 100,
+      revenueTarget: etzRevenueTarget,
+      roas:          etzRoas,
+      orders:        etzRev?.totalOrders ?? 0,
+      revConnected:  etzRev?.connected   ?? false,
+      adsConnected:  etzAdsResult.status === 'fulfilled',
+      adsError:      etzAdsError,
       conversion:   etzConv?.connected ? {
         rate:      etzConv.current?.conversionRate ?? null,
         deltaPp:   etzConv.deltaPp,

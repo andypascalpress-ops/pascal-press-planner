@@ -94,6 +94,22 @@ export const PP_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
   12:  91300, // December
 };
 
+// Excel Test Zone monthly revenue targets — Online channel only (inc. GST = ex-GST × 1.1)
+export const ETZ_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
+  1:  88000, // January
+  2:  82500, // February
+  3:  49500, // March
+  4:  27500, // April
+  5:  22000, // May
+  6:  16500, // June
+  7:  11000, // July
+  8:  14300, // August
+  9:  18700, // September
+  10: 29700, // October
+  11: 52800, // November
+  12: 61600, // December
+};
+
 // Blake Education monthly revenue targets (inc. GST = ex-GST × 1.1), FY27
 export const BLAKE_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
   1:   8800, // January
