@@ -94,6 +94,22 @@ export const PP_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
   12:  91300, // December
 };
 
+// Blake Education monthly revenue targets (inc. GST = ex-GST × 1.1), FY27
+export const BLAKE_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
+  1:   8800, // January
+  2:  16500, // February
+  3:   8800, // March
+  4:   8250, // April
+  5:   5500, // May
+  6:   8800, // June
+  7:  11000, // July
+  8:  11000, // August
+  9:   8800, // September
+  10: 13200, // October
+  11: 13200, // November
+  12:  5500, // December
+};
+
 export const SPEND_COLUMNS_TO_CREATE = [
   { title: 'Brand',               type: 'text'      },
   { title: 'Channel',             type: 'text'      },
