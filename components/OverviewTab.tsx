@@ -90,11 +90,14 @@ interface Band6ProductRow {
   orders: number;
   revenue: number;
 }
+interface Band6DailyPoint { date: string; cumulative: number; }
+
 interface Band6Data {
   connected:    boolean;
   error?:       string;
   products:     Band6Product[];
   productBreakdown?: Band6ProductRow[];
+  dailySeries?: Band6DailyPoint[];
   revenue:      number;
   orders:       number;
   units:        number;
@@ -102,6 +105,84 @@ interface Band6Data {
   startDate:    string;
   endDate:      string;
   daysRemaining: number;
+}
+
+function Band6Chart({ series, target, startDate, endDate }: {
+  series: Band6DailyPoint[];
+  target: number;
+  startDate: string;
+  endDate: string;
+}) {
+  if (series.length < 2) return null;
+
+  const W = 600; const H = 140; const PAD = { t: 10, r: 16, b: 28, l: 52 };
+  const chartW = W - PAD.l - PAD.r;
+  const chartH = H - PAD.t - PAD.b;
+
+  const t0 = new Date(startDate).getTime();
+  const t1 = new Date(endDate).getTime();
+  const totalMs = t1 - t0;
+
+  const xOf = (date: string) => ((new Date(date).getTime() - t0) / totalMs) * chartW;
+  const yOf = (v: number)    => chartH - (v / target) * chartH;
+
+  // Actual cumulative line
+  const pts = series.map(p => `${xOf(p.date).toFixed(1)},${yOf(p.cumulative).toFixed(1)}`).join(' ');
+
+  // Target trajectory line (straight from 0 to target)
+  const targetPts = `0,${chartH} ${chartW},0`;
+
+  // Today marker
+  const todayX = Math.min(((Date.now() - t0) / totalMs) * chartW, chartW);
+
+  // Y-axis labels
+  const yTicks = [0, 25000, 50000];
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ overflow: 'visible' }}>
+      <g transform={`translate(${PAD.l},${PAD.t})`}>
+        {/* Grid lines */}
+        {yTicks.map(v => (
+          <g key={v}>
+            <line x1={0} y1={yOf(v)} x2={chartW} y2={yOf(v)} stroke="#e5e7eb" strokeWidth={1} />
+            <text x={-6} y={yOf(v) + 4} textAnchor="end" fontSize={10} fill="#9ca3af">
+              {v === 0 ? '$0' : `$${(v / 1000).toFixed(0)}k`}
+            </text>
+          </g>
+        ))}
+
+        {/* Target trajectory (dashed grey) */}
+        <polyline points={targetPts} fill="none" stroke="#d1d5db" strokeWidth={1.5} strokeDasharray="4 3" />
+
+        {/* Actual cumulative (purple) */}
+        <polyline points={pts} fill="none" stroke="#8b5cf6" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+
+        {/* Shaded area under actual line */}
+        <polygon
+          points={`0,${chartH} ${pts} ${xOf(series[series.length - 1]!.date).toFixed(1)},${chartH}`}
+          fill="#8b5cf6" opacity={0.08}
+        />
+
+        {/* Today line */}
+        <line x1={todayX} y1={0} x2={todayX} y2={chartH} stroke="#6b7280" strokeWidth={1} strokeDasharray="3 2" />
+        <text x={todayX + 3} y={10} fontSize={9} fill="#6b7280">today</text>
+
+        {/* Last point dot */}
+        {series.length > 0 && (() => {
+          const last = series[series.length - 1]!;
+          return <circle cx={xOf(last.date)} cy={yOf(last.cumulative)} r={3.5} fill="#8b5cf6" />;
+        })()}
+
+        {/* X axis labels */}
+        {['Jul', 'Aug', 'Sep', 'Oct', 'Nov'].map((m, i) => {
+          const d = new Date(2026, 6 + i, 1);
+          const x = ((d.getTime() - t0) / totalMs) * chartW;
+          if (x < 0 || x > chartW) return null;
+          return <text key={m} x={x} y={chartH + 18} textAnchor="middle" fontSize={10} fill="#9ca3af">{m}</text>;
+        })}
+      </g>
+    </svg>
+  );
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -381,6 +462,25 @@ function Band6TrackerCard({ data }: { data: Band6Data }) {
           <p className="text-xs text-gray-500">Needed/day</p>
         </div>
       </div>
+
+      {/* Sales trend chart */}
+      {data.dailySeries && data.dailySeries.length >= 2 && (
+        <div className="mt-4 border-t border-gray-100 pt-3">
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Cumulative sales trend</p>
+            <div className="flex items-center gap-3 text-xs text-gray-400">
+              <span className="flex items-center gap-1"><span className="inline-block w-4 border-t-2 border-purple-500" />Actual</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-4 border-t border-dashed border-gray-400" />Target pace</span>
+            </div>
+          </div>
+          <Band6Chart
+            series={data.dailySeries}
+            target={data.target}
+            startDate={data.startDate}
+            endDate={data.endDate}
+          />
+        </div>
+      )}
 
       {/* Product revenue breakdown */}
       {rows.length > 0 && (

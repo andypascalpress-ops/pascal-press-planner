@@ -158,6 +158,9 @@ export async function GET(request: Request) {
       match: 'product_id' | 'name';
     }> = [];
 
+    // Daily revenue map for trend chart
+    const dailyMap = new Map<string, number>();
+
     const BATCH = 10;
     for (let i = 0; i < validOrders.length; i += BATCH) {
       const batch = validOrders.slice(i, i + BATCH);
@@ -238,6 +241,10 @@ export async function GET(request: Request) {
         totalRevenue += orderRevenue;
         totalOrders++;
         totalUnits += orderUnits;
+
+        // Accumulate daily revenue for trend chart
+        const orderDate = order.date_created.slice(0, 10);
+        dailyMap.set(orderDate, (dailyMap.get(orderDate) ?? 0) + orderRevenue);
       }
     }
 
@@ -257,6 +264,14 @@ export async function GET(request: Request) {
       }))
       .sort((a, b) => b.revenue - a.revenue);
 
+    // Build cumulative daily series for the trend chart
+    const sortedDates = [...dailyMap.keys()].sort();
+    let cumulative = 0;
+    const dailySeries = sortedDates.map(date => {
+      cumulative += dailyMap.get(date) ?? 0;
+      return { date, cumulative: Math.round(cumulative * 100) / 100 };
+    });
+
     const daysRemaining = Math.max(
       0,
       Math.round((new Date(END_DATE).getTime() - Date.now()) / 86_400_000),
@@ -266,6 +281,7 @@ export async function GET(request: Request) {
       connected:    true,
       products:     products.map(p => ({ id: p.id, name: p.name, sku: p.sku })),
       productBreakdown,
+      dailySeries,
       revenue:      Math.round(totalRevenue * 100) / 100,
       orders:       totalOrders,
       units:        totalUnits,
