@@ -71,6 +71,25 @@ interface GA4HistoryItem {
   };
 }
 
+interface ChannelRevenueItem {
+  channel:      string;
+  revenue:      number;
+  transactions: number;
+  pct:          number;
+}
+
+interface ChannelRevenueBrand {
+  items:        ChannelRevenueItem[];
+  totalRevenue: number;
+  connected:    boolean;
+}
+
+interface ChannelRevenueResponse {
+  month: string;
+  pp:    ChannelRevenueBrand;
+  etz:   ChannelRevenueBrand;
+}
+
 interface WebsiteConversionBrand {
   connected: boolean;
   source: 'ga4';
@@ -116,6 +135,17 @@ const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
+
+const CHANNEL_COLORS: Record<string, string> = {
+  'Organic Search': '#10b981',
+  'Paid Search':    '#2563eb',
+  'Email':          '#7c3aed',
+  'Direct':         '#6b7280',
+  'Referral':       '#f59e0b',
+  'Organic Social': '#ec4899',
+  'Paid Social':    '#f97316',
+  'Other':          '#9ca3af',
+};
 
 function buildChartYMs(): string[] {
   const start = new Date(2026, 0, 1); // Jan 2026
@@ -491,6 +521,8 @@ interface BrandPanelProps {
   liveGoogleAdsConnected?: boolean;
   /** Site-wide conversion (GA4 sessions → purchases) */
   websiteConversion?: WebsiteConversionBrand | null;
+  /** GA4 revenue split by channel (Organic Search, Paid Search, Email, Direct, …) */
+  channelRevenue?: ChannelRevenueBrand | null;
 }
 
 function BrandPanel({
@@ -498,6 +530,7 @@ function BrandPanel({
   records, selectedMonth, revenue, revenueLabel, prevRevenue,
   liveGoogleAdsSpend, liveGoogleAdsConnected,
   websiteConversion,
+  channelRevenue,
 }: BrandPanelProps) {
   const monthRecords = spendForBrandMonth(records, brand, selectedMonth);
   const annualBudget = (ANNUAL_BUDGETS as Record<string, number>)[brand] ?? 0;
@@ -677,6 +710,43 @@ function BrandPanel({
             </div>
           </div>
         </div>
+
+        {/* ── Revenue by Channel ── */}
+        {channelRevenue?.connected && channelRevenue.items.length > 0 && (
+          <div className="px-4 py-4">
+            <div className="rounded-xl border border-slate-200 overflow-hidden">
+              <div className="bg-slate-600 px-4 py-2.5 flex items-center justify-between">
+                <span className="text-white font-bold text-sm tracking-wide">Revenue by Channel</span>
+                <span className="text-slate-300 text-xs font-medium">{AUD.format(channelRevenue.totalRevenue)} total</span>
+              </div>
+              <div className="bg-slate-50 px-4 py-3 space-y-3">
+                {channelRevenue.items.map(({ channel, revenue: chRev, pct }) => {
+                  const chColor = CHANNEL_COLORS[channel] ?? '#9ca3af';
+                  return (
+                    <div key={channel}>
+                      <div className="flex items-center justify-between text-sm mb-1">
+                        <span className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: chColor }} />
+                          <span className="text-gray-700">{channel}</span>
+                        </span>
+                        <span className="flex items-center gap-2.5 tabular-nums">
+                          <span className="font-semibold text-gray-900">{AUD.format(chRev)}</span>
+                          <span className="text-xs text-slate-400 w-9 text-right">{pct}%</span>
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-200 rounded-full h-1.5">
+                        <div
+                          className="h-1.5 rounded-full"
+                          style={{ width: pct + '%', background: chColor }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Total Store Revenue ── */}
         {isConnected && (
@@ -1143,6 +1213,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [campaigns,        setCampaigns       ] = useState<CampaignsResponse | null>(null);
   const [loadingCampaigns, setLoadingCampaigns] = useState(false);
   const [siteConversion,   setSiteConversion  ] = useState<WebsiteConversionResponse | null>(null);
+  const [channelRevenue,   setChannelRevenue  ] = useState<ChannelRevenueResponse | null>(null);
 
   // Persist month choice so remounts (tab switches) don't snap back to default
   useEffect(() => {
@@ -1162,6 +1233,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
     setGa4Revenue(null);
     setCampaigns(null);
     setSiteConversion(null);
+    setChannelRevenue(null);
 
     fetch('/api/revenue?month=' + month, { signal })
       .then(r => r.json())
@@ -1206,6 +1278,14 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
       .then((data: WebsiteConversionResponse) => {
         if (data?.month && data.month !== month) return;
         setSiteConversion(data);
+      })
+      .catch((e) => { if (e?.name !== 'AbortError') { /* ignore */ } });
+
+    fetch('/api/ga4-channel-revenue?month=' + month, { signal })
+      .then(r => r.json())
+      .then((data: ChannelRevenueResponse) => {
+        if (data?.month && data.month !== month) return;
+        setChannelRevenue(data);
       })
       .catch((e) => { if (e?.name !== 'AbortError') { /* ignore */ } });
 
@@ -1451,6 +1531,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             liveGoogleAdsSpend={ppLiveSpend}
             liveGoogleAdsConnected={googleAdsSpend?.pp.connected}
             websiteConversion={siteConversion?.pp ?? null}
+            channelRevenue={channelRevenue?.pp ?? null}
           />
           <BrandPanel
             brand="Excel Test Zone"
@@ -1466,6 +1547,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             liveGoogleAdsSpend={etzLiveSpend}
             liveGoogleAdsConnected={googleAdsSpend?.etz.connected}
             websiteConversion={siteConversion?.etz ?? null}
+            channelRevenue={channelRevenue?.etz ?? null}
           />
         </div>
 

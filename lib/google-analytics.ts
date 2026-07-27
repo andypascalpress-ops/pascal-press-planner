@@ -680,6 +680,79 @@ export async function fetchPaidCampaignRevenue(
 }
 
 // ---------------------------------------------------------------------------
+// Channel revenue breakdown — sessionDefaultChannelGroup
+// ---------------------------------------------------------------------------
+
+export interface ChannelRevenueItem {
+  channel:      string;
+  revenue:      number;
+  transactions: number;
+  pct:          number; // percentage of total (0-100)
+}
+
+export interface ChannelRevenueData {
+  items:        ChannelRevenueItem[];
+  totalRevenue: number;
+  connected:    boolean;
+}
+
+export async function fetchChannelRevenue(
+  startDate: string,
+  endDate:   string,
+  property:  'pp' | 'etz' = 'pp',
+): Promise<ChannelRevenueData> {
+  const empty: ChannelRevenueData = { items: [], totalRevenue: 0, connected: false };
+
+  if (property === 'pp'  && !isConnected())    return empty;
+  if (property === 'etz' && !isETZConnected()) return empty;
+
+  try {
+    const accessToken = await getAccessToken();
+    const base = property === 'etz' ? GA4_ETZ_BASE : GA4_BASE;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = await runReportOnProperty(accessToken, base, {
+      dateRanges: [{ startDate, endDate }],
+      dimensions: [{ name: 'sessionDefaultChannelGroup' }],
+      metrics:    [{ name: 'totalRevenue' }, { name: 'transactions' }],
+      orderBys:   [{ metric: { metricName: 'totalRevenue' }, desc: true }],
+      limit: 20,
+    });
+
+    // Accumulate rows, grouping noise labels under 'Other'
+    const acc: Record<string, { revenue: number; transactions: number }> = {};
+    for (const row of (data.rows ?? [])) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ch  = (row as any).dimensionValues?.[0]?.value ?? '(Other)';
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rev = parseFloat((row as any).metricValues?.[0]?.value ?? '0');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tx  = parseInt((row as any).metricValues?.[1]?.value ?? '0', 10);
+      const label = (ch === 'Unassigned' || ch === '(not set)' || ch === '(Other)') ? 'Other' : ch;
+      if (!acc[label]) acc[label] = { revenue: 0, transactions: 0 };
+      acc[label]!.revenue      += rev;
+      acc[label]!.transactions += tx;
+    }
+
+    const sorted = Object.entries(acc)
+      .map(([channel, v]) => ({ channel, revenue: Math.round(v.revenue * 100) / 100, transactions: v.transactions }))
+      .filter(i => i.revenue > 0)
+      .sort((a, b) => b.revenue - a.revenue);
+
+    const totalRevenue = sorted.reduce((s, i) => s + i.revenue, 0);
+    const items: ChannelRevenueItem[] = sorted.map(i => ({
+      ...i,
+      pct: totalRevenue > 0 ? Math.round((i.revenue / totalRevenue) * 100) : 0,
+    }));
+
+    return { items, totalRevenue: Math.round(totalRevenue * 100) / 100, connected: true };
+  } catch (err) {
+    console.error(`[google-analytics fetchChannelRevenue ${property}]`, err);
+    return empty;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Website conversion rate (sessions → purchases) — site-wide GA4, not Ads
 // ---------------------------------------------------------------------------
 
