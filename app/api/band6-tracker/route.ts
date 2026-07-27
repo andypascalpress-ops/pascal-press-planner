@@ -265,13 +265,17 @@ export async function GET(request: Request) {
       .sort((a, b) => b.revenue - a.revenue);
 
     // Build weekly revenue series for the trend chart
-    const weeklyMap = new Map<string, number>(); // week start (Mon) → revenue
+    // dateStr may be ISO ("2026-07-14") or RFC 2822 ("Mon, 14 Jul 2026 …") — extract YYYY-MM-DD safely
+    const weeklyMap = new Map<string, number>();
     for (const [dateStr, rev] of dailyMap.entries()) {
-      const d = new Date(dateStr + 'T12:00:00Z');
-      const day = d.getUTCDay(); // 0=Sun
-      const daysToMon = day === 0 ? 6 : day - 1;
-      const mon = new Date(d);
-      mon.setUTCDate(d.getUTCDate() - daysToMon);
+      const iso = dateStr.match(/(\d{4})-(\d{2})-(\d{2})/);
+      if (!iso) continue;
+      const [, yr, mo, dy] = iso;
+      const date = new Date(`${yr}-${mo}-${dy}T12:00:00Z`);
+      const dow = date.getUTCDay(); // 0=Sun
+      const daysToMon = dow === 0 ? 6 : dow - 1;
+      const monMs = date.getTime() - daysToMon * 86_400_000;
+      const mon = new Date(monMs);
       const weekKey = mon.toISOString().slice(0, 10);
       weeklyMap.set(weekKey, (weeklyMap.get(weekKey) ?? 0) + rev);
     }
