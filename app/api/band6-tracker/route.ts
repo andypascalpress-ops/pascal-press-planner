@@ -20,7 +20,7 @@ const TARGET_REVENUE = 25_000;
 const START_DATE     = '2026-07-01'; // When the series launched
 const END_DATE       = '2026-11-30'; // Target deadline
 
-export const revalidate = 0; // always fresh — tracker data changes frequently
+export const revalidate = 300; // cache for 5 minutes — sales data doesn't need to be real-time
 
 type RangeKey = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'all';
 
@@ -190,7 +190,7 @@ export async function GET(request: Request) {
     // Daily revenue map for trend chart
     const dailyMap = new Map<string, number>();
 
-    const BATCH = 10;
+    const BATCH = 30;
     for (let i = 0; i < validOrders.length; i += BATCH) {
       const batch = validOrders.slice(i, i + BATCH);
       const results = await Promise.allSettled(
