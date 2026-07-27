@@ -8,6 +8,7 @@ interface Insight {
   id:         string;
   severity:   'critical' | 'warning' | 'opportunity' | 'info';
   category:   'google-ads' | 'email' | 'bigcommerce' | 'band6' | 'seasonal' | 'budget';
+  brand?:     'pp' | 'etz' | 'blake' | 'all';
   title:      string;
   body:       string;
   metric:     string;
@@ -29,17 +30,23 @@ type Status = 'idle' | 'fetching' | 'analysing' | 'ready' | 'error';
 const PP_BUDGET  = 8300;
 const ETZ_BUDGET = 3700;
 
-const CAT_LABELS: Record<string, string> = {
-  'google-ads': 'Google Ads', email: 'Email',
-  bigcommerce: 'BigCommerce', band6: 'Band 6',
-  seasonal: 'Seasonal', budget: 'Budget',
+// Maps category to the tab the user should navigate to for action
+const CAT_NAV: Record<string, string> = {
+  'google-ads':  'finance',
+  'email':       'email',
+  'bigcommerce': 'finance',
+  'band6':       'overview',
+  'seasonal':    'calendar',
+  'budget':      'finance',
 };
 
-const SEV: Record<string, { left: string; badge: string; dot: string }> = {
-  critical:    { left: 'border-l-red-500',   badge: 'bg-red-50 text-red-700 border-red-200',     dot: 'bg-red-500'   },
-  warning:     { left: 'border-l-amber-400',  badge: 'bg-amber-50 text-amber-700 border-amber-200',dot: 'bg-amber-400' },
-  opportunity: { left: 'border-l-blue-500',   badge: 'bg-blue-50 text-blue-700 border-blue-200',  dot: 'bg-blue-500'  },
-  info:        { left: 'border-l-gray-300',   badge: 'bg-gray-50 text-gray-600 border-gray-200',  dot: 'bg-gray-400'  },
+const CAT_LABEL: Record<string, string> = {
+  'google-ads':  'Google Ads',
+  'email':       'Email',
+  'bigcommerce': 'BigCommerce',
+  'band6':       'Band 6',
+  'seasonal':    'Seasonal',
+  'budget':      'Budget',
 };
 
 // ─── Rule-based fallback insights (always run client-side) ────────────────────
@@ -52,12 +59,12 @@ function computeBaselineInsights(
   bcData: any,
 ): Insight[] {
   const now = new Date();
-  const month = now.getMonth(); // 0-based; 6=July
+  const month = now.getMonth();
   const dayOfMonth   = now.getDate();
   const daysInMonth  = new Date(now.getFullYear(), month + 1, 0).getDate();
   const pctThrough   = (dayOfMonth / daysInMonth) * 100;
   const insights: Insight[] = [];
-  const fmt = (n: number) => `$${Math.round(n).toLocaleString('en-AU')}`;
+  const fmt    = (n: number) => `$${Math.round(n).toLocaleString('en-AU')}`;
   const pctStr = (n: number, dp = 1) => `${(n * 100).toFixed(dp)}%`;
 
   // ── Google Ads: budget pacing ─────────────────────────────────────────────
@@ -65,19 +72,19 @@ function computeBaselineInsights(
   const monthName = now.toLocaleString('en-AU', { month: 'long', timeZone: 'Australia/Sydney' });
   const monthRecords = records.filter(r => (r.month ?? '').toLowerCase() === monthName.toLowerCase());
 
-  const adsByBrand: Record<string, { actual: number; budget: number; revenue: number }> = {};
+  const adsByBrand: Record<string, { actual: number; budget: number; revenue: number; brand: 'pp' | 'etz' }> = {};
   for (const r of monthRecords) {
     if (!(r.channel ?? '').toLowerCase().includes('google')) continue;
     const b = r.brand ?? 'Unknown';
-    if (!adsByBrand[b]) adsByBrand[b] = { actual: 0, budget: 0, revenue: 0 };
+    if (!adsByBrand[b]) adsByBrand[b] = { actual: 0, budget: 0, revenue: 0, brand: b === 'Pascal Press' ? 'pp' : 'etz' };
     adsByBrand[b].actual  += Number(r.actualSpend       ?? 0);
     adsByBrand[b].budget  += Number(r.budget            ?? 0);
     adsByBrand[b].revenue += Number(r.attributedRevenue ?? 0);
   }
-  if (!adsByBrand['Pascal Press'])    adsByBrand['Pascal Press']    = { actual: 0, budget: PP_BUDGET,  revenue: 0 };
-  if (!adsByBrand['Excel Test Zone']) adsByBrand['Excel Test Zone'] = { actual: 0, budget: ETZ_BUDGET, revenue: 0 };
+  if (!adsByBrand['Pascal Press'])    adsByBrand['Pascal Press']    = { actual: 0, budget: PP_BUDGET,  revenue: 0, brand: 'pp' };
+  if (!adsByBrand['Excel Test Zone']) adsByBrand['Excel Test Zone'] = { actual: 0, budget: ETZ_BUDGET, revenue: 0, brand: 'etz' };
 
-  for (const [brand, s] of Object.entries(adsByBrand)) {
+  for (const [brandLabel, s] of Object.entries(adsByBrand)) {
     if (!s.budget) continue;
     const expected = (pctThrough / 100) * s.budget;
     const diff     = s.actual - expected;
@@ -86,22 +93,22 @@ function computeBaselineInsights(
 
     if (diff < -300 && s.actual > 0) {
       insights.push({
-        id: `spend-under-${brand.replace(/\s/g, '-').toLowerCase()}`,
-        severity: 'warning', category: 'google-ads',
-        title:   `${brand} Google Ads underpacing — ${fmt(Math.abs(diff))} behind`,
-        body:    `With ${Math.round(pctThrough)}% of ${monthName} elapsed, ${brand} has spent ${fmt(s.actual)} (${pacing}% of budget). Expected: ${fmt(expected)}. Increase daily budgets or add new ad groups to recover spend.`,
+        id: `spend-under-${brandLabel.replace(/\s/g, '-').toLowerCase()}`,
+        severity: 'warning', category: 'google-ads', brand: s.brand,
+        title:   `${brandLabel} Google Ads underpacing — ${fmt(Math.abs(diff))} behind`,
+        body:    `With ${Math.round(pctThrough)}% of ${monthName} elapsed, ${brandLabel} has spent ${fmt(s.actual)} (${pacing}% of budget). Expected: ${fmt(expected)}. Increase daily budgets or add new ad groups to recover spend.`,
         metric:  `${pacing}% paced · ${fmt(Math.abs(diff))} under · ROAS ${roas}`,
-        chatPrompt: `${brand} Google Ads is ${fmt(Math.abs(diff))} behind expected pacing (spent ${fmt(s.actual)} vs expected ${fmt(expected)}). What's the best way to increase spend velocity this week without inflating CPC?`,
+        chatPrompt: `${brandLabel} Google Ads is ${fmt(Math.abs(diff))} behind expected pacing (spent ${fmt(s.actual)} vs expected ${fmt(expected)}). What's the best way to increase spend velocity this week without inflating CPC?`,
         action:  'Increase daily budget',
       });
     } else if (diff > 500) {
       insights.push({
-        id: `spend-over-${brand.replace(/\s/g, '-').toLowerCase()}`,
-        severity: 'warning', category: 'google-ads',
-        title:   `${brand} Google Ads overpacing — ${fmt(diff)} above budget`,
-        body:    `${brand} has spent ${fmt(s.actual)} (${pacing}% of budget) with only ${Math.round(pctThrough)}% of ${monthName} elapsed. At this rate the monthly budget will be exhausted early.`,
+        id: `spend-over-${brandLabel.replace(/\s/g, '-').toLowerCase()}`,
+        severity: 'warning', category: 'google-ads', brand: s.brand,
+        title:   `${brandLabel} Google Ads overpacing — ${fmt(diff)} above budget`,
+        body:    `${brandLabel} has spent ${fmt(s.actual)} (${pacing}% of budget) with only ${Math.round(pctThrough)}% of ${monthName} elapsed. At this rate the monthly budget will be exhausted early.`,
         metric:  `${pacing}% paced · ROAS ${roas}`,
-        chatPrompt: `${brand} Google Ads has overspent — ${pacing}% of budget used with only ${Math.round(pctThrough)}% of the month gone. How do I reduce daily caps or adjust bids to stay within the ${fmt(s.budget)} monthly budget without pausing campaigns?`,
+        chatPrompt: `${brandLabel} Google Ads has overspent — ${pacing}% of budget used with only ${Math.round(pctThrough)}% of the month gone. How do I reduce daily caps or adjust bids to stay within the ${fmt(s.budget)} monthly budget without pausing campaigns?`,
         action:  'Review daily caps',
       });
     }
@@ -109,16 +116,15 @@ function computeBaselineInsights(
 
   // ── Google Ads: campaign-level issues ─────────────────────────────────────
   const allCamps: any[] = [
-    ...(campaignsData?.pp?.campaigns  ?? []).map((c: any) => ({ ...c, brand: 'Pascal Press' })),
-    ...(campaignsData?.etz?.campaigns ?? []).map((c: any) => ({ ...c, brand: 'Excel Test Zone' })),
+    ...(campaignsData?.pp?.campaigns  ?? []).map((c: any) => ({ ...c, brand: 'Pascal Press',   brandKey: 'pp' })),
+    ...(campaignsData?.etz?.campaigns ?? []).map((c: any) => ({ ...c, brand: 'Excel Test Zone', brandKey: 'etz' })),
   ];
 
-  // Zero conversions with meaningful spend
   for (const c of allCamps.filter(c => (c.conversions ?? 0) === 0 && (c.cost ?? 0) > 150).slice(0, 2)) {
     const shortName = (c.name ?? 'Unknown').slice(0, 50);
     insights.push({
       id: `ads-zero-conv-${(c.name ?? '').replace(/\W/g, '-').toLowerCase().slice(0, 24)}`,
-      severity: 'warning', category: 'google-ads',
+      severity: 'warning', category: 'google-ads', brand: c.brandKey,
       title:   `"${shortName}" — ${fmt(c.cost)} spent, 0 conversions`,
       body:    `This campaign has spent ${fmt(c.cost)} this month with zero conversions. Check the landing page, keyword match types, and bid strategy. Consider pausing until fixed or restructuring ad groups.`,
       metric:  `${fmt(c.cost)} spend · 0 conv · CTR ${pctStr((c.ctr ?? 0) * 100)}`,
@@ -127,12 +133,11 @@ function computeBaselineInsights(
     });
   }
 
-  // Low ROAS (below 2× with meaningful spend)
   for (const c of allCamps.filter(c => (c.cost ?? 0) > 300 && (c.roas ?? 0) > 0 && (c.roas ?? 0) < 2).slice(0, 2)) {
     const shortName = (c.name ?? 'Unknown').slice(0, 50);
     insights.push({
       id: `ads-low-roas-${(c.name ?? '').replace(/\W/g, '-').toLowerCase().slice(0, 24)}`,
-      severity: 'warning', category: 'google-ads',
+      severity: 'warning', category: 'google-ads', brand: c.brandKey,
       title:   `"${shortName}" — low ROAS ${(c.roas ?? 0).toFixed(1)}×`,
       body:    `ROAS of ${(c.roas ?? 0).toFixed(1)}× is below a 3× target on ${fmt(c.cost)} spend. Tighten keyword targeting, improve ad relevance score, or switch to target ROAS bidding.`,
       metric:  `ROAS ${(c.roas ?? 0).toFixed(1)}× · ${fmt(c.cost)} spend · ${c.conversions ?? 0} conv`,
@@ -141,10 +146,10 @@ function computeBaselineInsights(
     });
   }
 
-  // ── Term 3 seasonal ───────────────────────────────────────────────────────
+  // ── Seasonal ─────────────────────────────────────────────────────────────
   if (month === 6) {
     insights.push({
-      id: 'seasonal-term3-start', severity: 'opportunity', category: 'seasonal',
+      id: 'seasonal-term3-start', severity: 'opportunity', category: 'seasonal', brand: 'all',
       title:   'Term 3 starts this month — peak season for NAPLAN & HSC',
       body:    'July is the start of Term 3 in most Australian states — the highest-value period for Pascal Press (NAPLAN prep) and Excel Test Zone (HSC practice exams). Budgets should be maximised by mid-July.',
       metric:  'Term 3 · July–September',
@@ -154,7 +159,7 @@ function computeBaselineInsights(
   }
   if (month === 7) {
     insights.push({
-      id: 'seasonal-hsc-trials', severity: 'opportunity', category: 'seasonal',
+      id: 'seasonal-hsc-trials', severity: 'opportunity', category: 'seasonal', brand: 'etz',
       title:   'August: HSC Trial Exams — peak ETZ revenue window',
       body:    'August is when HSC students sit trial exams, making it the strongest month for Excel Test Zone online practice papers. ETZ bids and budgets should be at their highest. Consider remarketing to students who visited but didn\'t convert.',
       metric:  'HSC Trial season · Aug peak',
@@ -164,7 +169,7 @@ function computeBaselineInsights(
   }
   if (month === 8) {
     insights.push({
-      id: 'seasonal-bts-prep', severity: 'opportunity', category: 'seasonal',
+      id: 'seasonal-bts-prep', severity: 'opportunity', category: 'seasonal', brand: 'all',
       title:   'Plan Term 4 / Back to School campaigns now',
       body:    'September is when publishers start planning Term 4 and Back to School campaigns (November–January). Begin building campaign structures and creative assets for Pascal Press workbook promotions.',
       metric:  'BTS prep · Oct–Jan window',
@@ -173,30 +178,25 @@ function computeBaselineInsights(
     });
   }
 
-  // ── Email performance (brand-split) ─────────────────────────────────────
+  // ── Email performance ────────────────────────────────────────────────────
   const emailCampaigns: any[] = emailData?.campaigns ?? emailData?.emails ?? [];
   const sentEmails = emailCampaigns.filter((e: any) => (e.sends ?? 0) > 100);
-
-  // Detect brand from campaign name (ETZ campaigns start with ETZ_ or contain "ETZ")
   const isETZ = (name: string) => /\bETZ\b/i.test(name) || name.toUpperCase().startsWith('ETZ');
-  const isPP  = (name: string) => !isETZ(name) && !/\bBE_\b/i.test(name) && !/\bBlake\b/i.test(name);
+  const ppEmails  = sentEmails.filter(e => !isETZ(e.name ?? ''));
+  const etzEmails = sentEmails.filter(e =>  isETZ(e.name ?? ''));
 
-  const ppEmails  = sentEmails.filter(e => isPP(e.name ?? ''));
-  const etzEmails = sentEmails.filter(e => isETZ(e.name ?? ''));
-
-  // ── Per-brand: worst open rate ────────────────────────────────────────────
-  const brandGroups: Array<{ brandLabel: string; brandEmails: any[]; promoType: string }> = [
-    { brandLabel: 'Pascal Press', brandEmails: ppEmails, promoType: 'NAPLAN prep workbooks' },
-    { brandLabel: 'Excel Test Zone', brandEmails: etzEmails, promoType: 'HSC exam practice papers' },
+  const brandGroups = [
+    { brandLabel: 'Pascal Press',    brandEmails: ppEmails,  promoType: 'NAPLAN prep workbooks',        brandKey: 'pp'  as const },
+    { brandLabel: 'Excel Test Zone', brandEmails: etzEmails, promoType: 'HSC exam practice papers',     brandKey: 'etz' as const },
   ];
-  for (const { brandLabel, brandEmails, promoType } of brandGroups) {
+  for (const { brandLabel, brandEmails, promoType, brandKey } of brandGroups) {
     const worst = [...brandEmails].sort((a, b) => (a.openRate ?? 0) - (b.openRate ?? 0))[0];
     if (worst && (worst.openRate ?? 0) < 0.20) {
       const name = (worst.name ?? 'campaign').slice(0, 55);
       const rate = pctStr(worst.openRate ?? 0);
       insights.push({
         id: `email-open-${brandLabel.replace(/\s/g, '-').toLowerCase()}-${worst.id ?? 'x'}`,
-        severity: 'warning', category: 'email',
+        severity: 'warning', category: 'email', brand: brandKey,
         title:   `${brandLabel}: "${name}" open rate ${rate}`,
         body:    `This ${brandLabel} email had only a ${rate} open rate (${(worst.sends ?? 0).toLocaleString()} sent). For ${promoType}, subject lines that lead with a specific title, grade level, or urgency ("HSC exams in 6 weeks") consistently outperform generic ones.`,
         metric:  `Open ${rate} · ${(worst.sends ?? 0).toLocaleString()} sent · ${(worst.clicks ?? 0)} clicks`,
@@ -206,9 +206,8 @@ function computeBaselineInsights(
     }
   }
 
-  // ── Per-brand: no campaigns sent this month — proactive suggestion ─────────
   const ppSuggestion: string = ((): string => {
-    if (month === 6) return 'Term 3 has just started — send a NAPLAN prep campaign now to capture parents buying workbooks for Year 3-9 students. Subject: "Your child NAPLAN prep starts here".';
+    if (month === 6) return 'Term 3 has just started — send a NAPLAN prep campaign now to capture parents buying workbooks for Year 3-9 students. Subject: "Your child\'s NAPLAN prep starts here".';
     if (month === 7) return 'August is peak Back to School prep research time. A Pascal Press "prepare for next year" email with grade-specific workbook recommendations would convert well.';
     if (month === 8) return 'September — plan your Back to School email sequence now (3 sends: Oct, Nov, Jan). Early prep emails for Pascal Press outperform January sends.';
     return 'Send a Pascal Press product spotlight email featuring your top NAPLAN workbooks for the current term.';
@@ -223,7 +222,7 @@ function computeBaselineInsights(
 
   if (ppEmails.length === 0) {
     insights.push({
-      id: 'email-pp-no-campaigns', severity: 'opportunity', category: 'email',
+      id: 'email-pp-no-campaigns', severity: 'opportunity', category: 'email', brand: 'pp',
       title:   'Pascal Press: no email campaigns sent this month',
       body:    ppSuggestion,
       metric:  `0 PP campaigns · ${ppEmails.length === 0 && sentEmails.length > 0 ? sentEmails.length + ' ETZ only' : 'month to date'}`,
@@ -234,7 +233,7 @@ function computeBaselineInsights(
 
   if (etzEmails.length === 0) {
     insights.push({
-      id: 'email-etz-no-campaigns', severity: 'opportunity', category: 'email',
+      id: 'email-etz-no-campaigns', severity: 'opportunity', category: 'email', brand: 'etz',
       title:   'Excel Test Zone: no email campaigns sent this month',
       body:    etzSuggestion,
       metric:  `0 ETZ campaigns · ${monthName}`,
@@ -243,7 +242,6 @@ function computeBaselineInsights(
     });
   }
 
-  // ── Cross-brand: high unsubscribe ─────────────────────────────────────────
   const worstUnsub = [...sentEmails].sort((a, b) =>
     ((b.unsubscribes ?? 0) / (b.sends ?? 1)) - ((a.unsubscribes ?? 0) / (a.sends ?? 1))
   )[0];
@@ -252,7 +250,7 @@ function computeBaselineInsights(
     if (unsubRate > 0.005) {
       insights.push({
         id: `email-high-unsub-${worstUnsub.id ?? 'x'}`,
-        severity: 'warning', category: 'email',
+        severity: 'warning', category: 'email', brand: isETZ(worstUnsub.name ?? '') ? 'etz' : 'pp',
         title:   `"${(worstUnsub.name ?? 'Email').slice(0, 55)}" — ${pctStr(unsubRate)} unsub rate`,
         body:    `A ${pctStr(unsubRate)} unsubscribe rate is above the 0.5% warning threshold. This suggests misaligned audience expectations or excessive send frequency. Audit the list segment for this campaign.`,
         metric:  `${pctStr(unsubRate)} unsub · ${worstUnsub.unsubscribes ?? 0} unsubs`,
@@ -262,14 +260,13 @@ function computeBaselineInsights(
     }
   }
 
-  // ── Cross-brand: low CTOR ─────────────────────────────────────────────────
   const worstCtor = [...sentEmails]
     .filter(e => (e.opens ?? 0) > 50 && (e.clickToOpen ?? 0) > 0)
     .sort((a, b) => (a.clickToOpen ?? 0) - (b.clickToOpen ?? 0))[0];
   if (worstCtor && (worstCtor.clickToOpen ?? 0) < 0.08) {
     insights.push({
       id: `email-low-ctor-${worstCtor.id ?? 'x'}`,
-      severity: 'info', category: 'email',
+      severity: 'info', category: 'email', brand: isETZ(worstCtor.name ?? '') ? 'etz' : 'pp',
       title:   `"${(worstCtor.name ?? 'Email').slice(0, 55)}" — CTOR ${pctStr(worstCtor.clickToOpen ?? 0)}`,
       body:    `Only ${pctStr(worstCtor.clickToOpen ?? 0)} of people who opened clicked through — below the 8% benchmark. The offer, CTA button copy, or email body isn't compelling enough to drive action.`,
       metric:  `CTOR ${pctStr(worstCtor.clickToOpen ?? 0)} · ${worstCtor.opens ?? 0} opens`,
@@ -278,15 +275,15 @@ function computeBaselineInsights(
     });
   }
 
-  // ── BigCommerce: worst performing products (last 30 days) ───────────────
+  // ── BigCommerce ───────────────────────────────────────────────────────────
   const bottomProducts: any[] = bcData?.bottomProducts ?? [];
   if (bottomProducts.length >= 1 && bcData?.connected) {
     const show  = bottomProducts.slice(0, 5);
     const names = show.map((p: any) => p.name).join(', ');
     const lines = show.map((p: any) => `${p.name} (${fmt(p.revenue)}, ${p.quantity} units)`).join(' · ');
     insights.push({
-      id: 'bc-worst-products', severity: 'opportunity', category: 'bigcommerce',
-      title:   `Lowest-selling products — last 30 days`,
+      id: 'bc-worst-products', severity: 'opportunity', category: 'bigcommerce', brand: 'pp',
+      title:   'Lowest-selling products — last 30 days',
       body:    `These products had the fewest sales over the last 30 days: ${lines}. A targeted email, Google Ads ad group, or limited-time discount could meaningfully lift their revenue.`,
       metric:  `${show.length} products · bottom performers · 30 days`,
       chatPrompt: `Our BigCommerce store's lowest-selling products in the last 30 days are: ${names}. For each one, recommend a specific marketing action — a Google Ads ad group to create, a HubSpot email segment to target, or a discount/offer to run. Include suggested ad copy or subject lines.`,
@@ -294,13 +291,13 @@ function computeBaselineInsights(
     });
   }
 
-  // ── Band 6 tracking ───────────────────────────────────────────────────────
+  // ── Band 6 ───────────────────────────────────────────────────────────────
   const b6 = band6Data?.summary ?? band6Data ?? {};
   const b6Target = Number(b6.target ?? b6.monthlyTarget ?? 0);
   const b6Actual = Number(b6.actual ?? b6.currentRevenue ?? 0);
   if (b6Target > 0 && b6Actual < b6Target * 0.5 && pctThrough > 40) {
     insights.push({
-      id: 'band6-pacing-low', severity: 'warning', category: 'band6',
+      id: 'band6-pacing-low', severity: 'warning', category: 'band6', brand: 'etz',
       title:   `Band 6 tracker: ${Math.round((b6Actual / b6Target) * 100)}% of target with ${Math.round(pctThrough)}% of month elapsed`,
       body:    `Band 6 revenue is at ${fmt(b6Actual)} against a ${fmt(b6Target)} target. At the current pace, the month-end target will be missed. Increase ad exposure for the highest-converting ETZ products.`,
       metric:  `${fmt(b6Actual)} of ${fmt(b6Target)} target`,
@@ -312,7 +309,7 @@ function computeBaselineInsights(
   return insights;
 }
 
-// ─── UI helpers ───────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function currentMonthStr(): string {
   const d = new Date();
@@ -325,87 +322,161 @@ function fmtDate(d: Date) {
   return d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Australia/Sydney' });
 }
 
+// Derive brand status from all insights (including AI-generated ones without brand field)
+function brandStatus(
+  brandKey: 'pp' | 'etz' | 'blake',
+  brandKeywords: string[],
+  insights: Insight[],
+): { dot: 'red' | 'amber' | 'green'; count: number; topIssue: string } {
+  const relevant = insights.filter(i => {
+    if (i.brand === brandKey) return true;
+    if (i.brand === 'all') return false; // all-brand items don't count toward one brand
+    // fallback: scan title for brand keywords
+    return brandKeywords.some(kw => (i.title + ' ' + i.body).toLowerCase().includes(kw.toLowerCase()));
+  });
+  const actionable = relevant.filter(i => i.severity !== 'info');
+  const hasCritical = actionable.some(i => i.severity === 'critical');
+  const hasWarning  = actionable.some(i => i.severity === 'warning');
+  const dot = hasCritical ? 'red' : hasWarning ? 'amber' : 'green';
+  const top = actionable[0];
+  return {
+    dot,
+    count: actionable.length,
+    topIssue: top ? top.title.slice(0, 48) + (top.title.length > 48 ? '…' : '') : '',
+  };
+}
+
+// ─── UI components ────────────────────────────────────────────────────────────
+
 function SkeletonCard({ index }: { index: number }) {
   return (
-    <div className="bg-white rounded-xl border border-l-4 border-gray-200 border-l-gray-200 p-4 space-y-3 animate-pulse"
+    <div className="bg-white rounded-xl border border-gray-200 border-l-4 border-l-gray-200 overflow-hidden animate-pulse"
       style={{ animationDelay: `${index * 120}ms` }}>
-      <div className="flex items-center justify-between">
-        <div className="flex gap-2">
-          <div className="h-5 w-16 bg-gray-200 rounded-full" />
-          <div className="h-5 w-20 bg-gray-200 rounded-full" />
+      <div className="p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <div className="h-5 w-14 bg-gray-200 rounded-full" />
+          <div className="h-5 w-20 bg-gray-100 rounded-full" />
+          <div className="h-5 w-16 bg-gray-100 rounded-full" />
         </div>
-        <div className="h-4 w-4 bg-gray-200 rounded" />
+        <div className="h-4 w-3/4 bg-gray-200 rounded" />
+        <div className="space-y-1.5">
+          <div className="h-3 w-full bg-gray-100 rounded" />
+          <div className="h-3 w-5/6 bg-gray-100 rounded" />
+        </div>
       </div>
-      <div className="h-4 w-3/4 bg-gray-200 rounded" />
-      <div className="space-y-1.5">
-        <div className="h-3 w-full bg-gray-100 rounded" />
-        <div className="h-3 w-5/6 bg-gray-100 rounded" />
-        <div className="h-3 w-2/3 bg-gray-100 rounded" />
-      </div>
-      <div className="flex gap-2 pt-1">
-        <div className="h-7 w-28 bg-gray-200 rounded-lg" />
-        <div className="h-7 w-24 bg-gray-100 rounded-lg" />
+      <div className="px-4 py-2.5 bg-gray-50 border-t border-gray-100 flex gap-2">
+        <div className="h-6 w-24 bg-gray-200 rounded-lg" />
+        <div className="h-6 w-20 bg-gray-100 rounded-lg" />
       </div>
     </div>
   );
 }
 
-function InsightCard({ insight, rank, onDismiss, onOpenChat }: {
-  insight: Insight; rank: number;
-  onDismiss: (id: string) => void;
+const BRAND_TAG: Record<string, { bg: string; text: string; label: string }> = {
+  pp:    { bg: 'bg-blue-50',    text: 'text-blue-700',    label: 'Pascal Press'    },
+  etz:   { bg: 'bg-emerald-50', text: 'text-emerald-700', label: 'Excel Test Zone' },
+  blake: { bg: 'bg-purple-50',  text: 'text-purple-700',  label: 'Blake'           },
+  all:   { bg: 'bg-gray-100',   text: 'text-gray-600',    label: 'All brands'      },
+};
+
+const CAT_STYLE: Record<string, { bg: string; text: string }> = {
+  'google-ads':  { bg: 'bg-orange-50',  text: 'text-orange-700'  },
+  'email':       { bg: 'bg-sky-50',     text: 'text-sky-700'     },
+  'bigcommerce': { bg: 'bg-teal-50',    text: 'text-teal-700'    },
+  'seasonal':    { bg: 'bg-violet-50',  text: 'text-violet-700'  },
+  'band6':       { bg: 'bg-indigo-50',  text: 'text-indigo-700'  },
+  'budget':      { bg: 'bg-red-50',     text: 'text-red-700'     },
+};
+
+const SEV_LEFT: Record<string, string> = {
+  critical:    'border-l-red-500',
+  warning:     'border-l-amber-400',
+  opportunity: 'border-l-blue-500',
+  info:        'border-l-gray-300',
+};
+
+const SEV_BADGE: Record<string, string> = {
+  critical:    'bg-red-50 text-red-700 border-red-200',
+  warning:     'bg-amber-50 text-amber-700 border-amber-200',
+  opportunity: 'bg-blue-50 text-blue-700 border-blue-200',
+  info:        'bg-gray-50 text-gray-500 border-gray-200',
+};
+
+function InsightCard({ insight, onDismiss, onOpenChat, onNavigate }: {
+  insight: Insight;
+  onDismiss:  (id: string) => void;
   onOpenChat: (prompt: string) => void;
+  onNavigate: (tab: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const CH: Record<string, { bg: string; text: string; border: string; bar: string; label: string }> = {
-    'google-ads':  { bg: 'bg-orange-50',  text: 'text-orange-700',  border: 'border-orange-200',  bar: 'bg-orange-500',  label: 'Google Ads'    },
-    'email':       { bg: 'bg-blue-50',    text: 'text-blue-700',    border: 'border-blue-200',    bar: 'bg-blue-500',    label: 'Email'         },
-    'bigcommerce': { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', bar: 'bg-emerald-500', label: 'BigCommerce'   },
-    'seasonal':    { bg: 'bg-purple-50',  text: 'text-purple-700',  border: 'border-purple-200',  bar: 'bg-purple-500',  label: 'Seasonal'      },
-    'band6':       { bg: 'bg-indigo-50',  text: 'text-indigo-700',  border: 'border-indigo-200',  bar: 'bg-indigo-500',  label: 'Band 6'        },
-    'budget':      { bg: 'bg-red-50',     text: 'text-red-700',     border: 'border-red-200',     bar: 'bg-red-500',     label: 'Budget'        },
+  const cat   = CAT_STYLE[insight.category] ?? CAT_STYLE['budget'];
+  const brand = insight.brand ? BRAND_TAG[insight.brand] : null;
+  const navTab = CAT_NAV[insight.category];
+  const navLabel: Record<string, string> = {
+    finance: 'Open Finance', email: 'Open Email', overview: 'Open Overview', calendar: 'Open Calendar',
   };
-  const SEV_LEFT: Record<string, string> = {
-    critical: 'border-l-red-500', warning: 'border-l-amber-400',
-    opportunity: 'border-l-blue-500', info: 'border-l-gray-300',
-  };
-  const SEV_DOT: Record<string, string> = {
-    critical: 'bg-red-500', warning: 'bg-amber-400', opportunity: 'bg-blue-500', info: 'bg-gray-400',
-  };
-  const ch = CH[insight.category] ?? CH['budget'];
+
   return (
-    <div className={`bg-white rounded-xl border border-l-4 ${SEV_LEFT[insight.severity] ?? SEV_LEFT.info} border-gray-200 p-4`}>
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wide ${ch.bg} ${ch.text} ${ch.border}`}>
-            {ch.label}
+    <div className={`bg-white rounded-xl border border-gray-200 border-l-4 ${SEV_LEFT[insight.severity] ?? SEV_LEFT.info} overflow-hidden`}>
+      <div className="p-4">
+        {/* Tags row */}
+        <div className="flex items-center gap-1.5 flex-wrap mb-2.5">
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${SEV_BADGE[insight.severity] ?? SEV_BADGE.info}`}>
+            {insight.severity === 'opportunity' ? 'Do this week' : insight.severity.charAt(0).toUpperCase() + insight.severity.slice(1)}
           </span>
-          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${SEV[insight.severity]?.badge ?? ''}`}>
-            {insight.severity === 'opportunity' ? 'Opportunity' : insight.severity.charAt(0).toUpperCase() + insight.severity.slice(1)}
+          {brand && (
+            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${brand.bg} ${brand.text}`}>
+              {brand.label}
+            </span>
+          )}
+          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${cat.bg} ${cat.text}`}>
+            {CAT_LABEL[insight.category] ?? insight.category}
           </span>
+          <button
+            onClick={() => onDismiss(insight.id)}
+            className="ml-auto text-gray-300 hover:text-gray-500 text-xl leading-none -mr-1"
+            aria-label="Dismiss"
+          >×</button>
         </div>
-        <button onClick={() => onDismiss(insight.id)} className="text-gray-300 hover:text-gray-500 text-xl leading-none shrink-0 -mt-0.5">×</button>
+
+        {/* Title */}
+        <h4 className="text-sm font-semibold text-gray-900 leading-snug mb-2">{insight.title}</h4>
+
+        {/* Body */}
+        <p className={`text-sm text-gray-500 leading-relaxed ${expanded ? '' : 'line-clamp-3'}`}>{insight.body}</p>
+        {insight.body.length > 180 && (
+          <button onClick={() => setExpanded(v => !v)} className="text-xs text-blue-500 hover:text-blue-700 mt-1">
+            {expanded ? 'Show less ↑' : 'Read more ↓'}
+          </button>
+        )}
+
+        {/* Metric pill */}
+        {insight.metric && (
+          <div className={`inline-flex items-center gap-1.5 text-xs font-mono mt-2.5 px-2.5 py-1 rounded-lg ${cat.bg} ${cat.text}`}>
+            {insight.metric}
+          </div>
+        )}
       </div>
-      <h4 className="text-sm font-bold text-gray-900 mb-1.5 leading-snug">{insight.title}</h4>
-      {insight.metric && (
-        <div className={`inline-flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded-lg mb-2 ${ch.bg} ${ch.text}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${SEV_DOT[insight.severity] ?? 'bg-gray-400'} shrink-0`} />
-          {insight.metric}
-        </div>
-      )}
-      <p className={`text-sm text-gray-600 leading-relaxed ${expanded ? '' : 'line-clamp-3'}`}>{insight.body}</p>
-      {insight.body.length > 180 && (
-        <button onClick={() => setExpanded(v => !v)} className="text-xs text-blue-500 hover:text-blue-700 mt-1">
-          {expanded ? 'Show less ↑' : 'Read more ↓'}
-        </button>
-      )}
-      <div className="flex items-center gap-2 mt-3 flex-wrap">
-        <button onClick={() => onOpenChat(insight.chatPrompt)}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold bg-gray-900 hover:bg-gray-800 text-white px-3 py-1.5 rounded-lg transition-colors">
+
+      {/* Footer */}
+      <div className="px-4 py-2.5 bg-gray-50 border-t border-gray-100 flex items-center gap-2 flex-wrap">
+        {navTab && (
+          <button
+            onClick={() => onNavigate(navTab)}
+            className="text-xs font-medium text-gray-700 hover:text-gray-900 bg-white border border-gray-200 hover:border-gray-300 px-2.5 py-1.5 rounded-lg transition-colors"
+          >
+            {navLabel[navTab] ?? 'Open'}
+          </button>
+        )}
+        <button
+          onClick={() => onOpenChat(insight.chatPrompt)}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold bg-gray-900 hover:bg-gray-800 text-white px-3 py-1.5 rounded-lg transition-colors"
+        >
           <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor"><path d="M14 2H2a1 1 0 00-1 1v8a1 1 0 001 1h2v3l3-3h7a1 1 0 001-1V3a1 1 0 00-1-1z"/></svg>
           Ask Claude
         </button>
         {insight.action && (
-          <span className={`text-xs font-medium px-2.5 py-1.5 rounded-lg border ${ch.bg} ${ch.text} ${ch.border}`}>
+          <span className={`text-xs font-medium px-2.5 py-1.5 rounded-lg ${cat.bg} ${cat.text}`}>
             → {insight.action}
           </span>
         )}
@@ -414,33 +485,28 @@ function InsightCard({ insight, rank, onDismiss, onOpenChat }: {
   );
 }
 
-function SectionHead({ icon, label, count }: { icon: React.ReactNode; label: string; count: number }) {
-  return (
-    <div className="flex items-center gap-2 mb-3">
-      {icon}
-      <h3 className="text-xs font-bold text-gray-600 uppercase tracking-wider">{label}</h3>
-      <span className="text-xs text-gray-400 font-medium">({count})</span>
-    </div>
-  );
+function PulseDot({ status }: { status: 'red' | 'amber' | 'green' }) {
+  const cls = status === 'red' ? 'bg-red-500' : status === 'amber' ? 'bg-amber-400' : 'bg-emerald-500';
+  return <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${cls}`} />;
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, onAddCampaign }: Props) {
-    const [status,      setStatus]      = useState<Status>('idle');
-  const [insights,    setInsights]    = useState<Insight[]>([]);
-  const [dismissed,   setDismissed]   = useState<Set<string>>(() => {
+  const [status,       setStatus]       = useState<Status>('idle');
+  const [insights,     setInsights]     = useState<Insight[]>([]);
+  const [dismissed,    setDismissed]    = useState<Set<string>>(() => {
     try {
       const raw = typeof window !== 'undefined' ? localStorage.getItem('ac-dismissed-v2') : null;
       return raw ? new Set<string>(JSON.parse(raw)) : new Set<string>();
     } catch { return new Set<string>(); }
   });
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [errorMsg,    setErrorMsg]    = useState('');
-  const [sources,     setSources]     = useState<Record<string, boolean>>({});
-  const [aiLabel,     setAiLabel]     = useState('');
+  const [lastUpdated,  setLastUpdated]  = useState<Date | null>(null);
+  const [errorMsg,     setErrorMsg]     = useState('');
+  const [sources,      setSources]      = useState<Record<string, boolean>>({});
+  const [aiLabel,      setAiLabel]      = useState('');
   const [bottomProds,  setBottomProds]  = useState<any[]>([]);
-  const [showAllWorst, setShowAllWorst]  = useState(false);
+  const [showAllWorst, setShowAllWorst] = useState(false);
   const [spendData,    setSpendData]    = useState<any[]>([]);
   const [emailSnap,    setEmailSnap]    = useState<any>({});
   const [campaignSnap, setCampaignSnap] = useState<any>({});
@@ -495,12 +561,10 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
     setEmailSnap(emailRes ?? {});
     setCampaignSnap(campaignsRes ?? {});
 
-    // ── Step 1: compute baseline rule-based insights immediately ─────────────
     const baseline = computeBaselineInsights(spendRes, emailRes, band6Res, campaignsRes, bcRes);
     setInsights(baseline);
     setStatus('analysing');
 
-    // ── Step 2: call Claude for deeper AI insights ────────────────────────────
     try {
       const insightRes = await fetch('/api/insights', {
         method: 'POST',
@@ -513,8 +577,6 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
       if (insightRes.ok) {
         const { insights: aiRaw } = await insightRes.json();
         if (Array.isArray(aiRaw) && aiRaw.length > 0) {
-          // Merge: AI insights first (they're richer), then any baseline items
-          // whose ID isn't duplicated by an AI insight in the same category
           const aiCategories = new Set(aiRaw.map((i: Insight) => i.category));
           const dedupedBaseline = baseline.filter(b =>
             !aiCategories.has(b.category) ||
@@ -540,64 +602,80 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
   useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const visible      = insights.filter(i => !dismissed.has(i.id));
-  const critical     = visible.filter(i => i.severity === 'critical' || i.severity === 'warning');
-  const opps         = visible.filter(i => i.severity === 'opportunity');
-  const infoItems    = visible.filter(i => i.severity === 'info');
+  const actNow       = visible.filter(i => i.severity === 'critical' || i.severity === 'warning');
+  const doThisWeek   = visible.filter(i => i.severity === 'opportunity');
+  const notes        = visible.filter(i => i.severity === 'info');
   const isLoading    = status === 'fetching' || status === 'analysing';
   const dismissedCnt = [...dismissed].filter(id => insights.some(i => i.id === id)).length;
 
-  // ── Derived values for dashboard sections ───────────────────────────────
-  const now          = new Date();
-  const monthName    = now.toLocaleString('en-AU', { month: 'long', timeZone: 'Australia/Sydney' });
-  const dayOfMonth   = now.getDate();
-  const daysInMonth  = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const monthPct     = (dayOfMonth / daysInMonth) * 100;
+  // ── Derived values ────────────────────────────────────────────────────────
+  const now         = new Date();
+  const monthName   = now.toLocaleString('en-AU', { month: 'long', timeZone: 'Australia/Sydney' });
+  const dayOfMonth  = now.getDate();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const monthPct    = (dayOfMonth / daysInMonth) * 100;
 
-  const monthRecs    = spendData.filter(r => (r.month ?? '').toLowerCase() === monthName.toLowerCase());
-  const ppSpent      = monthRecs.filter(r => r.brand === 'Pascal Press'    && (r.channel ?? '').toLowerCase().includes('google')).reduce((s, r) => s + Number(r.actualSpend ?? 0), 0);
-  const etzSpent     = monthRecs.filter(r => r.brand === 'Excel Test Zone' && (r.channel ?? '').toLowerCase().includes('google')).reduce((s, r) => s + Number(r.actualSpend ?? 0), 0);
+  const monthRecs   = spendData.filter(r => (r.month ?? '').toLowerCase() === monthName.toLowerCase());
+  const ppSpent     = monthRecs.filter(r => r.brand === 'Pascal Press'    && (r.channel ?? '').toLowerCase().includes('google')).reduce((s, r) => s + Number(r.actualSpend ?? 0), 0);
+  const etzSpent    = monthRecs.filter(r => r.brand === 'Excel Test Zone' && (r.channel ?? '').toLowerCase().includes('google')).reduce((s, r) => s + Number(r.actualSpend ?? 0), 0);
 
   const allEmails:  any[] = emailSnap?.campaigns ?? emailSnap?.emails ?? [];
-  const isETZMail        = (n: string) => /ETZ/i.test(n) || n.toUpperCase().startsWith('ETZ');
+  const isETZMail        = (n: string) => /ETZ/i.test(n) || n.toUpperCase().startsWith('ETZ');
   const ppMails          = allEmails.filter(e => !isETZMail(e.name ?? ''));
   const etzMails         = allEmails.filter(e =>  isETZMail(e.name ?? ''));
   const ppAvgOpen        = ppMails.length  ? ppMails.reduce((s, e)  => s + (e.openRate ?? 0), 0) / ppMails.length  : 0;
   const etzAvgOpen       = etzMails.length ? etzMails.reduce((s, e) => s + (e.openRate ?? 0), 0) / etzMails.length : 0;
 
-  const bcConnected      = bottomProds.length > 0;
-  const fmtMoney         = (n: number) => `$${Math.round(n).toLocaleString('en-AU')}`;
+  const fmtMoney = (n: number) => `$${Math.round(n).toLocaleString('en-AU')}`;
 
-  const pacingStatus     = (spent: number, budget: number) => {
-    if (budget === 0) return 'unknown';
-    const pct = (spent / budget) * 100;
-    if (pct < monthPct - 15) return 'under';
-    if (pct > monthPct + 15) return 'over';
-    return 'on-track';
-  };
+  // Brand pulse (only non-dismissed, actionable insights)
+  const ppPulse    = brandStatus('pp',    ['pascal press', 'pp google'],                     visible);
+  const etzPulse   = brandStatus('etz',   ['excel test zone', 'etz', 'band 6', 'hsc'],       visible);
+  const blakePulse = brandStatus('blake', ['blake'],                                         visible);
+  // Band 6 / seasonal — separate tile derived from ETZ + seasonal items
+  const band6Items = visible.filter(i => i.category === 'band6' || (i.category === 'seasonal' && (i.brand === 'etz' || i.brand === 'all')));
+  const band6Dot: 'red' | 'amber' | 'green' = band6Items.some(i => i.severity === 'critical') ? 'red' : band6Items.some(i => i.severity !== 'info') ? 'amber' : 'green';
+
+  const totalActions = actNow.length + doThisWeek.length;
 
   return (
     <div className="flex flex-col h-full bg-gray-50 overflow-hidden">
 
-      {/* ── Header ───────────────────────────────────────────────────────────── */}
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="bg-white border-b border-gray-200 px-4 py-3 sm:px-6 shrink-0">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <h2 className="text-sm font-bold text-gray-900">Action Centre</h2>
-            {status === 'ready' && lastUpdated && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-sm font-bold text-gray-900">Weekly briefing</h2>
+              {aiLabel && (
+                <span className="text-[10px] bg-violet-50 text-violet-600 border border-violet-200 px-1.5 py-0.5 rounded-full font-medium">
+                  {aiLabel}
+                </span>
+              )}
+              {status === 'analysing' && (
+                <span className="text-[10px] text-blue-500 flex items-center gap-1 animate-pulse">
+                  <svg className="w-2.5 h-2.5 animate-spin" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M14 8a6 6 0 01-6 6 6 6 0 01-6-6 6 6 0 016-6" strokeLinecap="round"/>
+                  </svg>
+                  Claude is analysing…
+                </span>
+              )}
+            </div>
+            {status === 'ready' && lastUpdated ? (
               <p className="text-xs text-gray-400 mt-0.5">
-                Last updated {fmtDate(lastUpdated)} · {fmtTime(lastUpdated)}
-                {aiLabel && <span className="ml-1.5 bg-gray-100 text-gray-400 text-[10px] px-1.5 py-0.5 rounded-full">{aiLabel}</span>}
+                {fmtDate(lastUpdated)} · {fmtTime(lastUpdated)}
+                {totalActions > 0 && <span className="ml-1.5 text-gray-500">&middot; {totalActions} action{totalActions !== 1 ? 's' : ''}</span>}
               </p>
-            )}
-            {isLoading && (
-              <p className="text-xs text-blue-500 mt-0.5 animate-pulse">
-                {status === 'fetching' ? 'Fetching data…' : 'Claude is analysing…'}
-              </p>
-            )}
+            ) : status === 'fetching' ? (
+              <p className="text-xs text-blue-400 mt-0.5 animate-pulse">Fetching data…</p>
+            ) : null}
             {status === 'error' && <p className="text-xs text-red-500 mt-0.5">{errorMsg}</p>}
           </div>
-          <button onClick={refresh} disabled={isLoading}
-            className="shrink-0 flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 px-2.5 py-1.5 rounded-lg disabled:opacity-50 transition-colors">
+          <button
+            onClick={refresh}
+            disabled={isLoading}
+            className="shrink-0 flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 px-2.5 py-1.5 rounded-lg disabled:opacity-50 transition-colors"
+          >
             <svg className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M14 8a6 6 0 01-6 6 6 6 0 01-6-6 6 6 0 016-6" strokeLinecap="round"/>
               <path d="M14 4V8h-4" strokeLinecap="round" strokeLinejoin="round"/>
@@ -607,82 +685,95 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
         </div>
       </div>
 
-      {/* ── Body ─────────────────────────────────────────────────────────────── */}
+      {/* ── Body ───────────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 space-y-5">
 
-        
-        
+        {/* ── Brand Pulse ────────────────────────────────────────────────── */}
+        {(status === 'ready' || status === 'analysing') && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[
+              { label: 'Pascal Press',    pulse: ppPulse,    key: 'pp' },
+              { label: 'Excel Test Zone', pulse: etzPulse,   key: 'etz' },
+              { label: 'Blake Education', pulse: blakePulse, key: 'blake' },
+              {
+                label: 'Band 6 / HSC',
+                pulse: { dot: band6Dot, count: band6Items.filter(i => i.severity !== 'info').length, topIssue: band6Items[0]?.title.slice(0, 48) ?? '' },
+                key: 'b6',
+              },
+            ].map(({ label, pulse, key }) => (
+              <div key={key} className="bg-white rounded-xl border border-gray-200 px-3 py-2.5">
+                <div className="text-[11px] text-gray-400 mb-1.5 leading-none">{label}</div>
+                <div className="flex items-center gap-2">
+                  <PulseDot status={pulse.dot} />
+                  <span className="text-xs font-semibold text-gray-800">
+                    {pulse.dot === 'green' ? 'All clear' : `${pulse.count} action${pulse.count !== 1 ? 's' : ''}`}
+                  </span>
+                </div>
+                {pulse.topIssue && (
+                  <div className="text-[10px] text-gray-400 mt-1 leading-tight line-clamp-1">{pulse.topIssue}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
-        <>
-
-        {/* Skeletons while loading */}
-        {isLoading && insights.length === 0 && (
+        {/* Skeletons while fetching */}
+        {status === 'fetching' && (
           <div className="space-y-3">
             {[0, 1, 2].map(i => <SkeletonCard key={i} index={i} />)}
           </div>
         )}
 
-        {/* AI enhancing banner */}
-        {status === 'analysing' && insights.length > 0 && (
-          <div className="flex items-center gap-2 text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-            <svg className="w-3.5 h-3.5 animate-spin shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M14 8a6 6 0 01-6 6 6 6 0 01-6-6 6 6 0 016-6" strokeLinecap="round"/>
-              <path d="M14 4V8h-4" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            Claude is analysing your campaigns for deeper insights…
-          </div>
-        )}
-
-        {/* ── Act Now (critical + warning) ─────────────────────────────────── */}
-        {critical.length > 0 && (
+        {/* ── Act Now ──────────────────────────────────────────────────────── */}
+        {actNow.length > 0 && (
           <section>
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-              <span className="w-2 h-2 bg-red-500 rounded-full inline-block"/>
-              Act Now · {critical.length} item{critical.length !== 1 ? 's' : ''}
+              <span className="w-2 h-2 bg-red-500 rounded-full inline-block" />
+              Act now · {actNow.length} item{actNow.length !== 1 ? 's' : ''}
             </p>
             <div className="space-y-3">
-              {critical.map((ins, i) => (
-                <InsightCard key={ins.id} rank={i + 1} insight={ins} onDismiss={dismiss} onOpenChat={onOpenChat} />
+              {actNow.map(ins => (
+                <InsightCard key={ins.id} insight={ins} onDismiss={dismiss} onOpenChat={onOpenChat} onNavigate={onNavigate} />
               ))}
             </div>
           </section>
         )}
 
-        {/* ── This Week (opportunities) ─────────────────────────────────────── */}
-        {opps.length > 0 && (
+        {/* ── Do this week ─────────────────────────────────────────────────── */}
+        {doThisWeek.length > 0 && (
           <section>
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-              <span className="w-2 h-2 bg-blue-500 rounded-full inline-block"/>
-              Opportunities · {opps.length}
+              <span className="w-2 h-2 bg-blue-500 rounded-full inline-block" />
+              Do this week · {doThisWeek.length}
             </p>
             <div className="space-y-3">
-              {opps.map((ins, i) => (
-                <InsightCard key={ins.id} rank={i + 1} insight={ins} onDismiss={dismiss} onOpenChat={onOpenChat} />
+              {doThisWeek.map(ins => (
+                <InsightCard key={ins.id} insight={ins} onDismiss={dismiss} onOpenChat={onOpenChat} onNavigate={onNavigate} />
               ))}
             </div>
           </section>
         )}
 
-        {/* ── Notes (info) ─────────────────────────────────────────────────── */}
-        {infoItems.length > 0 && (
+        {/* ── Notes ────────────────────────────────────────────────────────── */}
+        {notes.length > 0 && (
           <section>
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-              <span className="w-2 h-2 bg-gray-400 rounded-full inline-block"/>
-              Notes · {infoItems.length}
+              <span className="w-2 h-2 bg-gray-400 rounded-full inline-block" />
+              Notes · {notes.length}
             </p>
             <div className="space-y-3">
-              {infoItems.map((ins, i) => (
-                <InsightCard key={ins.id} rank={i + 1} insight={ins} onDismiss={dismiss} onOpenChat={onOpenChat} />
+              {notes.map(ins => (
+                <InsightCard key={ins.id} insight={ins} onDismiss={dismiss} onOpenChat={onOpenChat} onNavigate={onNavigate} />
               ))}
             </div>
           </section>
         )}
 
-        {/* ── All-clear state ───────────────────────────────────────────────── */}
+        {/* ── All-clear ────────────────────────────────────────────────────── */}
         {visible.length === 0 && status === 'ready' && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
-            <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center mb-3">
-              <svg className="w-5 h-5 text-green-500" viewBox="0 0 20 20" fill="currentColor">
+            <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center mb-3">
+              <svg className="w-5 h-5 text-emerald-500" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
               </svg>
             </div>
@@ -691,7 +782,7 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
           </div>
         )}
 
-        {/* ── Restore dismissed ─────────────────────────────────────────────── */}
+        {/* ── Restore dismissed ────────────────────────────────────────────── */}
         {dismissedCnt > 0 && status === 'ready' && (
           <div className="text-center">
             <button onClick={restoreDismissed} className="text-xs text-gray-400 hover:text-gray-600 underline">
@@ -700,7 +791,7 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
           </div>
         )}
 
-        {/* ── Worst Performing Products (BigCommerce rolling 30 days) ──────── */}
+        {/* ── Worst Performing Products ─────────────────────────────────────── */}
         {bottomProds.length > 0 && (() => {
           type PatternGroup = { label: string; count: number; names: string[] };
           const SERIES = ['Excel', 'NAPLAN', 'HSC', 'Targeting', 'Selective', 'Science', 'Maths', 'English', 'Reading', 'Writing', 'Grammar', 'History', 'Geography', 'Spelling'];
@@ -726,11 +817,10 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
             <section>
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
                 <span className="w-2 h-2 bg-red-400 rounded-full inline-block"/>
-                Worst Performing Products — Last 30 Days ({bottomProds.length})
+                Worst performing products — last 30 days ({bottomProds.length})
               </p>
 
-              {/* Series pattern callouts */}
-              {patterns.length > 0 ? (
+              {patterns.length > 0 && (
                 <div className="space-y-2 mb-3">
                   {patterns.map((pg) => (
                     <div key={pg.label} className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
@@ -741,20 +831,17 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
                         <div className="text-xs font-bold text-amber-800">Series pattern: {pg.label} — {pg.count} underperforming products</div>
                         <div className="text-[11px] text-amber-700 mt-0.5 truncate">{pg.names.slice(0, 4).join(' · ')}</div>
                       </div>
-                      <button onClick={() => onOpenChat(`Our BigCommerce store has ${pg.count} "${pg.label}" products all underperforming in the last 30 days: ${pg.names.slice(0, 5).join(', ')}. Is this a pricing issue, a visibility/SEO issue, or a seasonal pattern? What specific campaigns should we run to fix this?`)}
-                        className="shrink-0 text-[10px] font-semibold text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-2.5 py-1 rounded-lg transition-colors">
+                      <button
+                        onClick={() => onOpenChat(`Our BigCommerce store has ${pg.count} "${pg.label}" products all underperforming in the last 30 days: ${pg.names.slice(0, 5).join(', ')}. Is this a pricing issue, a visibility/SEO issue, or a seasonal pattern? What specific campaigns should we run to fix this?`)}
+                        className="shrink-0 text-[10px] font-semibold text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-2.5 py-1 rounded-lg transition-colors"
+                      >
                         Ask Claude
                       </button>
                     </div>
                   ))}
                 </div>
-              ) : bottomProds.length >= 5 ? (
-                <div className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 mb-3">
-                  <span className="font-semibold">No series pattern detected</span> — underperformance is spread across product lines, not concentrated in one series.
-                </div>
-              ) : null}
+              )}
 
-              {/* Product list */}
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 bg-gray-50">
                   <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Product</span>
@@ -778,8 +865,10 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
               </div>
 
               {bottomProds.length > 10 && (
-                <button onClick={() => setShowAllWorst(v => !v)}
-                  className="mt-2.5 text-xs font-medium text-blue-500 hover:text-blue-700 w-full text-center py-1">
+                <button
+                  onClick={() => setShowAllWorst(v => !v)}
+                  className="mt-2.5 text-xs font-medium text-blue-500 hover:text-blue-700 w-full text-center py-1"
+                >
                   {showAllWorst ? '↑ Show fewer' : `↓ Show all ${bottomProds.length} products`}
                 </button>
               )}
@@ -788,32 +877,40 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
           );
         })()}
 
-        {/* ── Quick Analysis prompts ────────────────────────────────────────── */}
+        {/* ── Quick prompts ─────────────────────────────────────────────────── */}
         {(status === 'ready' || status === 'analysing') && (
           <section className="bg-white rounded-xl border border-gray-200 p-4">
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Ask Claude</p>
             <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => onOpenChat(`It is ${monthName}, day ${dayOfMonth} of ${daysInMonth}. Pascal Press Google Ads: ${fmtMoney(ppSpent)} spent of ${fmtMoney(PP_BUDGET)} budget. Excel Test Zone: ${fmtMoney(etzSpent)} of ${fmtMoney(ETZ_BUDGET)}. Tell me specifically which brand needs the most urgent action, what to change in Google Ads, and give me exact budget adjustments.`)}
-                className="text-left text-xs bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-xl p-3 transition-colors">
-                <div className="font-bold text-orange-800 mb-0.5">🎯 Google Ads plan</div>
+              <button
+                onClick={() => onOpenChat(`It is ${monthName}, day ${dayOfMonth} of ${daysInMonth}. Pascal Press Google Ads: ${fmtMoney(ppSpent)} spent of ${fmtMoney(PP_BUDGET)} budget. Excel Test Zone: ${fmtMoney(etzSpent)} of ${fmtMoney(ETZ_BUDGET)}. Tell me specifically which brand needs the most urgent action, what to change in Google Ads, and give me exact budget adjustments.`)}
+                className="text-left text-xs bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-xl p-3 transition-colors"
+              >
+                <div className="font-bold text-orange-800 mb-0.5">Google Ads plan</div>
                 <div className="text-orange-600 text-[11px]">Budget adjustments for this week</div>
               </button>
-              <button onClick={() => onOpenChat(`Pascal Press sent ${ppMails.length} email campaigns this month (avg ${(ppAvgOpen * 100).toFixed(1)}% open rate). Excel Test Zone sent ${etzMails.length} (avg ${(etzAvgOpen * 100).toFixed(1)}% open). It is ${monthName} — Term 3 season. What campaigns should each brand send this week? Give me subject lines, send timing, and audience.`)}
-                className="text-left text-xs bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl p-3 transition-colors">
-                <div className="font-bold text-blue-800 mb-0.5">📧 Email strategy</div>
-                <div className="text-blue-600 text-[11px]">PP + ETZ campaigns to send</div>
+              <button
+                onClick={() => onOpenChat(`Pascal Press sent ${ppMails.length} email campaigns this month (avg ${(ppAvgOpen * 100).toFixed(1)}% open rate). Excel Test Zone sent ${etzMails.length} (avg ${(etzAvgOpen * 100).toFixed(1)}% open). It is ${monthName} — Term 3 season. What campaigns should each brand send this week? Give me subject lines, send timing, and audience.`)}
+                className="text-left text-xs bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-xl p-3 transition-colors"
+              >
+                <div className="font-bold text-sky-800 mb-0.5">Email strategy</div>
+                <div className="text-sky-600 text-[11px]">PP + ETZ campaigns to send</div>
               </button>
-              <button onClick={() => {
-                const names = bottomProds.slice(0, 5).map((p: any) => p.name).join(', ');
-                onOpenChat(`Our ${bottomProds.length} worst-performing BigCommerce products last 30 days include: ${names || 'data loading'}. For the top 5, recommend specific actions: a Google Ads ad group, a HubSpot email segment, or a discount offer. Be specific with numbers.`);
-              }}
-                className="text-left text-xs bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl p-3 transition-colors">
-                <div className="font-bold text-emerald-800 mb-0.5">🛒 Fix worst products</div>
-                <div className="text-emerald-600 text-[11px]">Campaign ideas to boost slow sellers</div>
+              <button
+                onClick={() => {
+                  const names = bottomProds.slice(0, 5).map((p: any) => p.name).join(', ');
+                  onOpenChat(`Our ${bottomProds.length} worst-performing BigCommerce products last 30 days include: ${names || 'data loading'}. For the top 5, recommend specific actions: a Google Ads ad group, a HubSpot email segment, or a discount offer. Be specific with numbers.`);
+                }}
+                className="text-left text-xs bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl p-3 transition-colors"
+              >
+                <div className="font-bold text-emerald-800 mb-0.5">Fix worst products</div>
+                <div className="text-emerald-600 text-[11px]">Campaign ideas for slow sellers</div>
               </button>
-              <button onClick={() => onNavigate('calendar')}
-                className="text-left text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl p-3 transition-colors">
-                <div className="font-bold text-gray-700 mb-0.5">📅 Campaign calendar</div>
+              <button
+                onClick={() => onNavigate('calendar')}
+                className="text-left text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl p-3 transition-colors"
+              >
+                <div className="font-bold text-gray-700 mb-0.5">Campaign calendar</div>
                 <div className="text-gray-500 text-[11px]">View and plan all campaigns</div>
               </button>
             </div>
@@ -821,7 +918,6 @@ export default function ActionCentreTab({ onNavigate, onOpenChat, onAddSpend, on
         )}
 
         <div className="h-6" />
-        </>
       </div>
     </div>
   );
