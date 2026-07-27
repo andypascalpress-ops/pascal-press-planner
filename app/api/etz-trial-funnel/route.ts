@@ -1,129 +1,116 @@
 /**
  * GET /api/etz-trial-funnel
- * Calculates free-trial → paid conversion rate for ETZ from Stripe subscriptions.
- *
- * Strategy: two paginated passes (active+trialing default, then canceled) with a
- * 2-year date cap so the function stays well inside Vercel's 60s timeout.
+ * Pulls ETZ free-trial → paid conversion data from HubSpot.
+ * Fetches the dashboard reports (ID 12580086) and also queries
+ * contacts/deals filtered by lifecycle stage for raw funnel numbers.
  */
 import { NextResponse } from 'next/server';
 
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY ?? '';
-const STRIPE_BASE = 'https://api.stripe.com/v1';
+const HS_BASE      = 'https://api.hubapi.com';
+const DASHBOARD_ID = '12580086';
+const PORTAL_ID    = '20605150';
 
 export const revalidate = 0;
 
-function stripeHeaders() {
-  return { Authorization: `Bearer ${STRIPE_SECRET_KEY}` };
+function hsHeaders() {
+  const key = process.env.HUBSPOT_API_KEY ?? '';
+  return {
+    Authorization: `Bearer ${key}`,
+    'Content-Type': 'application/json',
+  };
 }
 
-interface StripeSub {
-  id:          string;
-  status:      string;
-  trial_start: number | null;
-  trial_end:   number | null;
-  canceled_at: number | null;
-  created:     number;
-}
-
-// Fetch up to maxPages * 100 subscriptions for a given status
-async function fetchSubs(status: string, createdGte: number, maxPages = 20): Promise<StripeSub[]> {
-  const all: StripeSub[] = [];
-  let startingAfter: string | undefined;
-
-  for (let page = 0; page < maxPages; page++) {
-    const params = new URLSearchParams({
-      status,
-      'created[gte]': String(createdGte),
-      limit: '100',
-    });
-    if (startingAfter) params.set('starting_after', startingAfter);
-
-    const res = await fetch(`${STRIPE_BASE}/subscriptions?${params}`, {
-      headers: stripeHeaders(),
-      cache: 'no-store',
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Stripe /subscriptions?status=${status} → ${res.status}: ${body.slice(0, 200)}`);
-    }
-    const data: { data: StripeSub[]; has_more: boolean } = await res.json();
-    all.push(...data.data);
-    if (!data.has_more || data.data.length === 0) break;
-    startingAfter = data.data[data.data.length - 1]!.id;
+async function hsGet(path: string) {
+  const res = await fetch(`${HS_BASE}${path}`, { headers: hsHeaders(), cache: 'no-store' });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`HubSpot ${path} → ${res.status}: ${body.slice(0, 300)}`);
   }
-  return all;
+  return res.json();
+}
+
+async function hsPost(path: string, body: unknown) {
+  const res = await fetch(`${HS_BASE}${path}`, {
+    method: 'POST',
+    headers: hsHeaders(),
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HubSpot POST ${path} → ${res.status}: ${text.slice(0, 300)}`);
+  }
+  return res.json();
 }
 
 export async function GET() {
-  if (!STRIPE_SECRET_KEY) {
-    return NextResponse.json({ error: 'STRIPE_SECRET_KEY not configured' }, { status: 500 });
-  }
+  const key = process.env.HUBSPOT_API_KEY ?? '';
+  if (!key) return NextResponse.json({ error: 'HUBSPOT_API_KEY not configured' }, { status: 500 });
 
   try {
-    // 2-year lookback window (unix seconds)
-    const twoYearsAgo = Math.floor(Date.now() / 1000) - 2 * 365 * 24 * 3600;
-
-    // Fetch active+trialing and canceled in parallel (these cover the full funnel)
-    // past_due and paused are treated as "still alive" (not decided) so lower priority
-    const [activeSubs, trialingSubs, canceledSubs, pastDueSubs] = await Promise.all([
-      fetchSubs('active',   twoYearsAgo),
-      fetchSubs('trialing', twoYearsAgo),
-      fetchSubs('canceled', twoYearsAgo),
-      fetchSubs('past_due', twoYearsAgo),
+    // ── 1. Fetch the dashboard metadata + its reports ─────────────────────────
+    const [dashboard, reports] = await Promise.allSettled([
+      hsGet(`/analytics/v2/reports/dashboards/${DASHBOARD_ID}`),
+      hsGet(`/analytics/v2/reports/dashboards/${DASHBOARD_ID}/reports`),
     ]);
 
-    const all = [...activeSubs, ...trialingSubs, ...canceledSubs, ...pastDueSubs];
+    // ── 2. Contact lifecycle stage counts (CRM contacts API) ─────────────────
+    // Free trial contacts are typically in a specific lifecycle stage or have
+    // a custom property. Pull counts grouped by lifecyclestage.
+    const lifecycleCounts = await hsPost('/crm/v3/objects/contacts/search', {
+      filterGroups: [],
+      properties: ['lifecyclestage', 'hs_lead_status'],
+      limit: 0,
+      aggregations: [{ type: 'TERMS', property: 'lifecyclestage' }],
+    }).catch(() => null);
 
-    // Split by whether they ever had a trial
-    const hadTrial = all.filter(s => s.trial_start != null);
+    // ── 3. Try fetching ETZ-specific contact properties that track trial status
+    // Search for contacts with a free_trial property set
+    const [trialContacts, paidContacts] = await Promise.allSettled([
+      hsPost('/crm/v3/objects/contacts/search', {
+        filterGroups: [{
+          filters: [{ propertyName: 'lifecyclestage', operator: 'EQ', value: 'subscriber' }],
+        }],
+        properties: ['email', 'lifecyclestage', 'createdate', 'hs_lead_status'],
+        limit: 1,
+      }),
+      hsPost('/crm/v3/objects/contacts/search', {
+        filterGroups: [{
+          filters: [{ propertyName: 'lifecyclestage', operator: 'EQ', value: 'customer' }],
+        }],
+        properties: ['email', 'lifecyclestage', 'createdate'],
+        limit: 1,
+      }),
+    ]);
 
-    const trialConverted = hadTrial.filter(s => s.status === 'active');
-    const trialStillIn   = hadTrial.filter(s => s.status === 'trialing');
-    const trialCanceled  = hadTrial.filter(s => s.status === 'canceled');
-    const trialPastDue   = hadTrial.filter(s => s.status === 'past_due');
+    // ── 4. Fetch contact property definitions to find trial-related fields ────
+    const properties = await hsGet('/crm/v3/properties/contacts?limit=100').catch(() => null);
+    const trialProps = properties?.results?.filter((p: { name: string; label: string }) =>
+      p.name.toLowerCase().includes('trial') ||
+      p.label.toLowerCase().includes('trial') ||
+      p.name.toLowerCase().includes('free') ||
+      p.label.toLowerCase().includes('free')
+    ) ?? [];
 
-    // Conversion rate denominator: people whose trial outcome is decided
-    const decided        = trialConverted.length + trialCanceled.length + trialPastDue.length;
-    const conversionRate = decided > 0
-      ? Math.round((trialConverted.length / decided) * 1000) / 10
-      : null;
+    // ── 5. Deal pipeline stages (trials often tracked as deals) ──────────────
+    const pipelines = await hsGet('/crm/v3/pipelines/deals').catch(() => null);
 
-    // Monthly breakdown — trial start month
-    const monthly: Record<string, { started: number; converted: number; canceled: number }> = {};
-    for (const s of hadTrial) {
-      const d   = new Date((s.trial_start ?? s.created) * 1000);
-      const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-      if (!monthly[key]) monthly[key] = { started: 0, converted: 0, canceled: 0 };
-      monthly[key].started++;
-      if (s.status === 'active')   monthly[key].converted++;
-      if (s.status === 'canceled') monthly[key].canceled++;
-    }
-
-    const monthlySeries = Object.entries(monthly)
-      .sort(([a], [b]) => b.localeCompare(a))
-      .slice(0, 12)
-      .map(([month, v]) => ({
-        month,
-        started:   v.started,
-        converted: v.converted,
-        canceled:  v.canceled,
-        rate:      v.started > 0 ? Math.round((v.converted / v.started) * 1000) / 10 : 0,
-      }));
+    // ── 6. Fetch report widgets from the dashboard if available ───────────────
+    const reportsList = reports.status === 'fulfilled' ? reports.value : null;
 
     return NextResponse.json({
-      lookback: '2 years',
-      totalFetched:    all.length,
-      totalWithTrial:  hadTrial.length,
-      trialCurrently:  trialStillIn.length,
-      trialConverted:  trialConverted.length,
-      trialCanceled:   trialCanceled.length,
-      trialPastDue:    trialPastDue.length,
-      decided,
-      conversionRate,          // % — null if no data
-      activeTotal:     activeSubs.length,
-      activeFromTrial: trialConverted.length,
-      activeDirect:    activeSubs.filter(s => s.trial_start == null).length,
-      monthlySeries,
+      dashboard:  dashboard.status === 'fulfilled' ? dashboard.value : { error: dashboard.reason?.message },
+      reports:    reportsList,
+      lifecycleCounts,
+      trialContacts: trialContacts.status === 'fulfilled' ? { total: trialContacts.value?.total } : null,
+      paidContacts:  paidContacts.status  === 'fulfilled' ? { total: paidContacts.value?.total  } : null,
+      trialRelatedProperties: trialProps.map((p: { name: string; label: string; type: string }) => ({
+        name: p.name, label: p.label, type: p.type,
+      })),
+      dealPipelines: pipelines?.results?.map((p: { id: string; label: string; stages: { id: string; label: string }[] }) => ({
+        id: p.id, label: p.label,
+        stages: p.stages?.map((s: { id: string; label: string }) => ({ id: s.id, label: s.label })),
+      })),
     });
 
   } catch (e) {
