@@ -728,7 +728,10 @@ export async function fetchChannelRevenue(
       const rev = parseFloat((row as any).metricValues?.[0]?.value ?? '0');
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const tx  = parseInt((row as any).metricValues?.[1]?.value ?? '0', 10);
-      const label = (ch === 'Unassigned' || ch === '(not set)' || ch === '(Other)') ? 'Other' : ch;
+      const label =
+        (ch === 'Unassigned' || ch === '(not set)' || ch === '(Other)') ? 'Other' :
+        (ch === 'Cross-network' || ch === 'Paid Shopping') ? 'Paid Search' :
+        ch;
       if (!acc[label]) acc[label] = { revenue: 0, transactions: 0 };
       acc[label]!.revenue      += rev;
       acc[label]!.transactions += tx;
