@@ -38,9 +38,10 @@ interface OverviewData {
   hsc:          BrandData;
   blake:        BrandData;
   combined: {
-    spend:   number;
-    revenue: number;
-    roas:    number;
+    spend:          number;
+    revenue:        number;
+    roas:           number;
+    revenueTarget?: number;
   };
   email: {
     connected:     boolean;
@@ -202,14 +203,30 @@ function Band6Chart({ series }: { series: Band6WeekPoint[] }) {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function KpiCard({ label, value, sub, valueClass = '' }: {
-  label: string; value: string; sub?: string; valueClass?: string;
+function KpiCard({ label, value, sub, valueClass = '', target }: {
+  label: string; value: string; sub?: string; valueClass?: string; target?: number;
 }) {
+  const numericValue = parseFloat(value.replace(/[^0-9.]/g, ''));
+  const pct   = target && target > 0 ? Math.min(numericValue / target, 1) : 0;
+  const over  = target ? numericValue > target : false;
+  const color = pct >= 1 ? 'bg-emerald-500' : pct >= 0.7 ? 'bg-blue-500' : pct >= 0.4 ? 'bg-amber-500' : 'bg-orange-400';
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col gap-1">
       <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">{label}</span>
       <span className={`text-2xl font-bold text-gray-900 ${valueClass}`}>{value}</span>
       {sub && <span className="text-xs text-gray-500">{sub}</span>}
+      {target && target > 0 && (
+        <div className="mt-1.5 space-y-1">
+          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${Math.min(pct * 100, 100)}%` }} />
+          </div>
+          <div className="flex justify-between text-[11px] text-gray-400">
+            <span>{over ? '✓ ' : ''}{Math.round(pct * 100)}% of {AUD.format(target)} target</span>
+            {!over && <span>{AUD.format(target - numericValue)} to go</span>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -702,8 +719,9 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
           <KpiCard
             label="Total Revenue"
             value={AUD.format(combined.revenue)}
-            sub="PP + ETZ + HSC + Blake this month"
+            sub="PP + ETZ + HSC + Blake"
             valueClass="text-emerald-700"
+            target={combined.revenueTarget}
           />
           <KpiCard
             label="Total Ad Spend"

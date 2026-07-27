@@ -372,9 +372,10 @@ export async function GET(request: Request) {
       conversion:    null,
     },
     combined: {
-      spend:   Math.round(totalSpend   * 100) / 100,
-      revenue: Math.round(totalRevenue * 100) / 100,
-      roas:    combinedRoas,
+      spend:         Math.round(totalSpend   * 100) / 100,
+      revenue:       Math.round(totalRevenue * 100) / 100,
+      roas:          combinedRoas,
+      revenueTarget: ppRevenueTarget + etzRevenueTarget + blakeRevenueTarget,
     },
     email: email ? {
       connected:     email.connected,
