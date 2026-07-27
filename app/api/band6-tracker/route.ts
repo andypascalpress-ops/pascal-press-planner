@@ -5,7 +5,8 @@
  * then aggregates revenue, orders, and units from July 2026 onward.
  * Used by the Overview tab tracker card.
  *
- * Target: $50,000 by 30 November 2026.
+ * Target: $25,000 by 30 November 2026.
+ * Accepts ?range=today|yesterday|last7|last30|mtd|all (default: all)
  */
 import { NextResponse } from 'next/server';
 
@@ -15,11 +16,39 @@ const BC_BASE      = `https://api.bigcommerce.com/stores/${STORE_HASH}/v2`;
 const BC_BASE_V3   = `https://api.bigcommerce.com/stores/${STORE_HASH}/v3`;
 
 // Tracker config
-const TARGET_REVENUE = 50_000;
+const TARGET_REVENUE = 25_000;
 const START_DATE     = '2026-07-01'; // When the series launched
 const END_DATE       = '2026-11-30'; // Target deadline
 
 export const revalidate = 0; // always fresh — tracker data changes frequently
+
+type RangeKey = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'all';
+
+function toAEST(d: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Australia/Sydney',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
+}
+
+function resolveRange(range: RangeKey): { filterStart: string; filterEnd: string; rangeLabel: string } {
+  const now      = new Date();
+  const today    = toAEST(now);
+  const subDays  = (ymd: string, n: number) => {
+    const d = new Date(`${ymd}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - n);
+    return d.toISOString().slice(0, 10);
+  };
+  switch (range) {
+    case 'today':     return { filterStart: today,            filterEnd: today,            rangeLabel: 'Today'        };
+    case 'yesterday': return { filterStart: subDays(today,1), filterEnd: subDays(today,1), rangeLabel: 'Yesterday'    };
+    case 'last7':     return { filterStart: subDays(today,6), filterEnd: today,            rangeLabel: 'Last 7 days'  };
+    case 'last30':    return { filterStart: subDays(today,29),filterEnd: today,            rangeLabel: 'Last 30 days' };
+    case 'mtd':       return { filterStart: `${today.slice(0,7)}-01`, filterEnd: today,   rangeLabel: 'This month'   };
+    case 'all':
+    default:          return { filterStart: START_DATE,       filterEnd: END_DATE,         rangeLabel: 'All time'     };
+  }
+}
 
 function bcHeaders() {
   return {
@@ -111,7 +140,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ connected: false, error: 'BigCommerce not configured' });
   }
 
-  const debug = new URL(request.url).searchParams.get('debug') === '1';
+  const url   = new URL(request.url);
+  const debug = url.searchParams.get('debug') === '1';
+  const range = (url.searchParams.get('range') ?? 'all') as RangeKey;
+  const { filterStart, filterEnd, rangeLabel } = resolveRange(range);
 
   try {
     // ── 1. Discover products via catalog search (best-effort; used for display + ID match)
@@ -119,14 +151,8 @@ export async function GET(request: Request) {
     // Product IDs for exact matching — may be empty if catalog search misses them
     const productIds = new Set(products.map(p => p.id));
 
-    // ── 2. Fetch all orders from July 2026 → today ───────────────────────────
-    // Use Australia/Sydney "today" so the window matches AU storefront days
-    const today = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Australia/Sydney',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(new Date());
+    // ── 2. Fetch ALL orders Jul 2026 → today (full campaign window for goal progress)
+    const today = toAEST(new Date());
     const orders = await fetchAllOrderPages({
       min_date_created: `${START_DATE}T00:00:00+10:00`,
       max_date_created: `${today}T23:59:59+10:00`,
@@ -134,9 +160,12 @@ export async function GET(request: Request) {
     const validOrders = orders.filter(o => !EXCLUDED_STATUSES.has(o.status));
 
     // ── 3. Walk order line items in batches of 10 ────────────────────────────
-    let totalRevenue = 0;
+    let totalRevenue = 0;   // full campaign window — always used for goal progress bar
     let totalOrders  = 0;
     let totalUnits   = 0;
+    let periodRevenue = 0;  // filtered by ?range
+    let periodOrders  = 0;
+    let periodUnits   = 0;
     // productId → aggregate stats for the UI breakdown
     const byProductMap = new Map<number, {
       productId: number;
@@ -245,6 +274,15 @@ export async function GET(request: Request) {
         // Accumulate daily revenue for trend chart
         const orderDate = order.date_created.slice(0, 10);
         dailyMap.set(orderDate, (dailyMap.get(orderDate) ?? 0) + orderRevenue);
+
+        // Period stats (filtered by ?range)
+        const isoMatch = order.date_created.match(/(\d{4}-\d{2}-\d{2})/);
+        const orderISO = isoMatch ? isoMatch[1] : orderDate;
+        if (orderISO >= filterStart && orderISO <= filterEnd) {
+          periodRevenue += orderRevenue;
+          periodOrders++;
+          periodUnits += orderUnits;
+        }
       }
     }
 
@@ -264,18 +302,19 @@ export async function GET(request: Request) {
       }))
       .sort((a, b) => b.revenue - a.revenue);
 
-    // Build weekly revenue series for the trend chart
-    // dateStr may be ISO ("2026-07-14") or RFC 2822 ("Mon, 14 Jul 2026 …") — extract YYYY-MM-DD safely
+    // Build weekly revenue series — filtered to the selected range for the chart
+    // dateStr may be ISO ("2026-07-14") or RFC 2822 — extract YYYY-MM-DD safely
     const weeklyMap = new Map<string, number>();
     for (const [dateStr, rev] of dailyMap.entries()) {
       const iso = dateStr.match(/(\d{4})-(\d{2})-(\d{2})/);
       if (!iso) continue;
       const [, yr, mo, dy] = iso;
-      const date = new Date(`${yr}-${mo}-${dy}T12:00:00Z`);
-      const dow = date.getUTCDay(); // 0=Sun
+      const isoDate = `${yr}-${mo}-${dy}`;
+      if (isoDate < filterStart || isoDate > filterEnd) continue; // only chart the selected range
+      const date = new Date(`${isoDate}T12:00:00Z`);
+      const dow = date.getUTCDay();
       const daysToMon = dow === 0 ? 6 : dow - 1;
-      const monMs = date.getTime() - daysToMon * 86_400_000;
-      const mon = new Date(monMs);
+      const mon = new Date(date.getTime() - daysToMon * 86_400_000);
       const weekKey = mon.toISOString().slice(0, 10);
       weeklyMap.set(weekKey, (weeklyMap.get(weekKey) ?? 0) + rev);
     }
@@ -289,19 +328,24 @@ export async function GET(request: Request) {
     );
 
     const payload: Record<string, unknown> = {
-      connected:    true,
-      products:     products.map(p => ({ id: p.id, name: p.name, sku: p.sku })),
+      connected:      true,
+      products:       products.map(p => ({ id: p.id, name: p.name, sku: p.sku })),
       productBreakdown,
       dailySeries,
-      revenue:      Math.round(totalRevenue * 100) / 100,
-      orders:       totalOrders,
-      units:        totalUnits,
-      target:       TARGET_REVENUE,
-      startDate:    START_DATE,
-      endDate:      END_DATE,
+      revenue:        Math.round(totalRevenue * 100) / 100,   // full campaign window (goal progress)
+      orders:         totalOrders,
+      units:          totalUnits,
+      periodRevenue:  Math.round(periodRevenue * 100) / 100,  // filtered by ?range
+      periodOrders,
+      periodUnits,
+      rangeLabel,
+      range,
+      target:         TARGET_REVENUE,
+      startDate:      START_DATE,
+      endDate:        END_DATE,
       daysRemaining,
-      method:       'line_items total_inc_tax (fallback price_inc_tax × qty), GST-inclusive',
-      orderWindow:  { min: `${START_DATE}T00:00:00+10:00`, max: `${today}T23:59:59+10:00` },
+      method:         'line_items total_inc_tax (fallback price_inc_tax × qty), GST-inclusive',
+      orderWindow:    { min: `${START_DATE}T00:00:00+10:00`, max: `${today}T23:59:59+10:00` },
       validOrderCount: validOrders.length,
       catalogMatchCount: products.length,
     };

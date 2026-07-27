@@ -93,18 +93,23 @@ interface Band6ProductRow {
 interface Band6WeekPoint { date: string; revenue: number; }
 
 interface Band6Data {
-  connected:    boolean;
-  error?:       string;
-  products:     Band6Product[];
+  connected:      boolean;
+  error?:         string;
+  products:       Band6Product[];
   productBreakdown?: Band6ProductRow[];
-  dailySeries?: Band6WeekPoint[];
-  revenue:      number;
-  orders:       number;
-  units:        number;
-  target:       number;
-  startDate:    string;
-  endDate:      string;
-  daysRemaining: number;
+  dailySeries?:   Band6WeekPoint[];
+  revenue:        number;   // full campaign window
+  orders:         number;
+  units:          number;
+  periodRevenue?: number;   // filtered by range
+  periodOrders?:  number;
+  periodUnits?:   number;
+  rangeLabel?:    string;
+  range?:         string;
+  target:         number;
+  startDate:      string;
+  endDate:        string;
+  daysRemaining:  number;
 }
 
 function Band6Chart({ series }: { series: Band6WeekPoint[] }) {
@@ -417,18 +422,56 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
   );
 }
 
-function Band6TrackerCard({ data }: { data: Band6Data }) {
-  const pct           = data.target > 0 ? Math.min(data.revenue / data.target, 1) : 0;
-  const remaining     = Math.max(0, data.target - data.revenue);
-  const dailyNeeded   = data.daysRemaining > 0 ? remaining / data.daysRemaining : null;
-  const barColor      = pct >= 1 ? 'bg-emerald-500' : pct >= 0.7 ? 'bg-blue-500' : pct >= 0.4 ? 'bg-amber-500' : 'bg-orange-400';
-  const needColor     = !dailyNeeded ? 'text-gray-400' : dailyNeeded < 300 ? 'text-emerald-600' : dailyNeeded < 700 ? 'text-amber-600' : 'text-red-600';
-  const rows          = data.productBreakdown ?? [];
-  const productCount  = rows.length > 0 ? rows.length : data.products.length;
+type Band6Range = 'all' | 'mtd' | 'last7' | 'yesterday' | 'today';
+const BAND6_RANGES: { key: Band6Range; label: string }[] = [
+  { key: 'all',       label: 'All time'   },
+  { key: 'mtd',       label: 'This month' },
+  { key: 'last7',     label: 'Last 7 days'},
+  { key: 'yesterday', label: 'Yesterday'  },
+  { key: 'today',     label: 'Today'      },
+];
+
+function Band6TrackerCard() {
+  const [range,   setRange]   = useState<Band6Range>('all');
+  const [data,    setData]    = useState<Band6Data | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/api/band6-tracker?range=${range}`)
+      .then(r => r.json())
+      .then((d: Band6Data) => setData(d))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [range]);
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
+        <div className="w-4 h-4 rounded-full border-2 border-purple-600 border-t-transparent animate-spin" />
+        <p className="text-sm text-gray-400">Loading Band 6 tracker…</p>
+      </div>
+    );
+  }
+  if (!data || !data.connected) return null;
+
+  const pct         = data.target > 0 ? Math.min(data.revenue / data.target, 1) : 0;
+  const remaining   = Math.max(0, data.target - data.revenue);
+  const dailyNeeded = data.daysRemaining > 0 ? remaining / data.daysRemaining : null;
+  const barColor    = pct >= 1 ? 'bg-emerald-500' : pct >= 0.7 ? 'bg-blue-500' : pct >= 0.4 ? 'bg-amber-500' : 'bg-orange-400';
+  const needColor   = !dailyNeeded ? 'text-gray-400' : dailyNeeded < 300 ? 'text-emerald-600' : dailyNeeded < 700 ? 'text-amber-600' : 'text-red-600';
+  const rows        = data.productBreakdown ?? [];
+  const productCount = rows.length > 0 ? rows.length : data.products.length;
+
+  const isFiltered  = range !== 'all';
+  const dispRevenue = isFiltered ? (data.periodRevenue ?? 0) : data.revenue;
+  const dispOrders  = isFiltered ? (data.periodOrders  ?? 0) : data.orders;
+  const dispUnits   = isFiltered ? (data.periodUnits   ?? 0) : data.units;
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
-      <div className="flex items-start justify-between mb-4 gap-3">
+      {/* Header */}
+      <div className="flex items-start justify-between mb-3 gap-3">
         <div>
           <div className="flex items-center gap-2">
             <h3 className="text-sm font-semibold text-gray-800">60 Days to Band 6</h3>
@@ -444,7 +487,7 @@ function Band6TrackerCard({ data }: { data: Band6Data }) {
         </div>
       </div>
 
-      {/* Progress bar */}
+      {/* Progress bar — always full-period */}
       <div className="space-y-1 mb-4">
         <div className="relative h-3 bg-gray-100 rounded-full overflow-hidden">
           <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(pct * 100, 100)}%` }} />
@@ -455,21 +498,47 @@ function Band6TrackerCard({ data }: { data: Band6Data }) {
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Date filter */}
+      <div className="flex flex-wrap gap-1 mb-4">
+        {BAND6_RANGES.map(r => (
+          <button
+            key={r.key}
+            onClick={() => setRange(r.key)}
+            className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+              range === r.key
+                ? 'bg-purple-600 text-white border-purple-600'
+                : 'bg-white text-gray-500 border-gray-200 hover:border-purple-300 hover:text-purple-600'
+            }`}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Stats — filtered when a range is active */}
       <div className="grid grid-cols-3 gap-2">
         <div className="bg-gray-50 rounded-lg p-3 text-center">
-          <p className="text-base font-bold text-gray-900">{data.orders}</p>
+          <p className="text-base font-bold text-gray-900">{dispOrders}</p>
           <p className="text-xs text-gray-500">Orders</p>
         </div>
         <div className="bg-gray-50 rounded-lg p-3 text-center">
-          <p className="text-base font-bold text-gray-900">{data.units}</p>
+          <p className="text-base font-bold text-gray-900">{dispUnits}</p>
           <p className="text-xs text-gray-500">Units sold</p>
         </div>
         <div className="bg-gray-50 rounded-lg p-3 text-center">
-          <p className={`text-base font-bold ${needColor}`}>
-            {dailyNeeded != null ? AUD.format(Math.ceil(dailyNeeded)) : '—'}
-          </p>
-          <p className="text-xs text-gray-500">Needed/day</p>
+          {isFiltered ? (
+            <>
+              <p className="text-base font-bold text-purple-700">{AUD.format(dispRevenue)}</p>
+              <p className="text-xs text-gray-500">Revenue</p>
+            </>
+          ) : (
+            <>
+              <p className={`text-base font-bold ${needColor}`}>
+                {dailyNeeded != null ? AUD.format(Math.ceil(dailyNeeded)) : '—'}
+              </p>
+              <p className="text-xs text-gray-500">Needed/day</p>
+            </>
+          )}
         </div>
       </div>
 
@@ -477,8 +546,10 @@ function Band6TrackerCard({ data }: { data: Band6Data }) {
       {data.dailySeries && data.dailySeries.length >= 1 && (
         <div className="mt-4 border-t border-gray-100 pt-3">
           <div className="flex items-center justify-between mb-1">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Weekly sales — is it growing?</p>
-            <p className="text-xs text-gray-400">Each bar = one week's revenue</p>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              Weekly sales — {data.rangeLabel ?? 'All time'}
+            </p>
+            <p className="text-xs text-gray-400">Each bar = one week</p>
           </div>
           <Band6Chart series={data.dailySeries} />
         </div>
@@ -487,7 +558,7 @@ function Band6TrackerCard({ data }: { data: Band6Data }) {
       {/* Product revenue breakdown */}
       {rows.length > 0 && (
         <div className="mt-4 border-t border-gray-100 pt-3">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">By product</p>
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">By product (all time)</p>
           <div className="space-y-2">
             {rows.map((row) => {
               const share = data.revenue > 0 ? row.revenue / data.revenue : 0;
@@ -532,8 +603,6 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
   const [data,       setData]       = useState<OverviewData | null>(null);
   const [loading,    setLoading]    = useState(true);
   const [error,      setError]      = useState('');
-  const [band6,      setBand6]      = useState<Band6Data | null>(null);
-  const [band6Loading, setBand6Loading] = useState(true);
 
   type DateRange = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth';
   const RANGE_OPTIONS: { key: DateRange; label: string }[] = [
@@ -562,13 +631,6 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
 
   useEffect(() => { load(); }, [load]);
 
-  useEffect(() => {
-    fetch('/api/band6-tracker')
-      .then(r => r.json())
-      .then((d: Band6Data) => setBand6(d))
-      .catch(() => setBand6(null))
-      .finally(() => setBand6Loading(false));
-  }, []);
 
   if (loading) {
     return (
@@ -673,16 +735,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
         </div>
 
         {/* ── Band 6 Tracker ── */}
-        {(band6Loading || (band6 && band6.connected)) && (
-          band6Loading ? (
-            <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
-              <div className="w-4 h-4 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
-              <p className="text-sm text-gray-400">Loading Band 6 tracker…</p>
-            </div>
-          ) : band6 && band6.connected ? (
-            <Band6TrackerCard data={band6} />
-          ) : null
-        )}
+        <Band6TrackerCard />
 
         {/* ── Email snapshot ── */}
         {email && (
