@@ -1,116 +1,92 @@
 /**
  * GET /api/etz-trial-funnel
- * Pulls ETZ free-trial → paid conversion data from HubSpot.
- * Fetches the dashboard reports (ID 12580086) and also queries
- * contacts/deals filtered by lifecycle stage for raw funnel numbers.
+ * Discovers where ETZ free-trial data lives in HubSpot, then returns the funnel.
  */
 import { NextResponse } from 'next/server';
 
-const HS_BASE      = 'https://api.hubapi.com';
-const DASHBOARD_ID = '12580086';
-const PORTAL_ID    = '20605150';
-
+const HS_BASE = 'https://api.hubapi.com';
 export const revalidate = 0;
 
 function hsHeaders() {
-  const key = process.env.HUBSPOT_API_KEY ?? '';
-  return {
-    Authorization: `Bearer ${key}`,
-    'Content-Type': 'application/json',
-  };
+  return { Authorization: `Bearer ${process.env.HUBSPOT_API_KEY ?? ''}`, 'Content-Type': 'application/json' };
 }
 
 async function hsGet(path: string) {
   const res = await fetch(`${HS_BASE}${path}`, { headers: hsHeaders(), cache: 'no-store' });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`HubSpot ${path} → ${res.status}: ${body.slice(0, 300)}`);
-  }
+  if (!res.ok) throw new Error(`GET ${path} → ${res.status}`);
   return res.json();
 }
 
 async function hsPost(path: string, body: unknown) {
   const res = await fetch(`${HS_BASE}${path}`, {
-    method: 'POST',
-    headers: hsHeaders(),
-    body: JSON.stringify(body),
-    cache: 'no-store',
+    method: 'POST', headers: hsHeaders(), body: JSON.stringify(body), cache: 'no-store',
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`HubSpot POST ${path} → ${res.status}: ${text.slice(0, 300)}`);
-  }
+  if (!res.ok) throw new Error(`POST ${path} → ${res.status}`);
   return res.json();
 }
 
+// Count contacts matching a filter
+async function countContacts(filters: object[]) {
+  const r = await hsPost('/crm/v3/objects/contacts/search', {
+    filterGroups: filters.length ? [{ filters }] : [],
+    limit: 1,
+    properties: ['email'],
+  });
+  return r.total ?? 0;
+}
+
 export async function GET() {
-  const key = process.env.HUBSPOT_API_KEY ?? '';
-  if (!key) return NextResponse.json({ error: 'HUBSPOT_API_KEY not configured' }, { status: 500 });
+  if (!process.env.HUBSPOT_API_KEY) {
+    return NextResponse.json({ error: 'HUBSPOT_API_KEY not configured' }, { status: 500 });
+  }
 
   try {
-    // ── 1. Fetch the dashboard metadata + its reports ─────────────────────────
-    const [dashboard, reports] = await Promise.allSettled([
-      hsGet(`/analytics/v2/reports/dashboards/${DASHBOARD_ID}`),
-      hsGet(`/analytics/v2/reports/dashboards/${DASHBOARD_ID}/reports`),
-    ]);
+    // ── 1. All contact properties (find trial-related ones) ───────────────────
+    const allProps = await hsGet('/crm/v3/properties/contacts?limit=1000');
+    const trialProps = (allProps.results ?? []).filter((p: { name: string; label: string }) => {
+      const n = (p.name + ' ' + p.label).toLowerCase();
+      return n.includes('trial') || n.includes('free') || n.includes('subscri') || n.includes('plan') || n.includes('convert');
+    });
 
-    // ── 2. Contact lifecycle stage counts (CRM contacts API) ─────────────────
-    // Free trial contacts are typically in a specific lifecycle stage or have
-    // a custom property. Pull counts grouped by lifecyclestage.
-    const lifecycleCounts = await hsPost('/crm/v3/objects/contacts/search', {
-      filterGroups: [],
-      properties: ['lifecyclestage', 'hs_lead_status'],
-      limit: 0,
-      aggregations: [{ type: 'TERMS', property: 'lifecyclestage' }],
-    }).catch(() => null);
+    // ── 2. Deal pipelines + stages ────────────────────────────────────────────
+    const pipelines = await hsGet('/crm/v3/pipelines/deals');
 
-    // ── 3. Try fetching ETZ-specific contact properties that track trial status
-    // Search for contacts with a free_trial property set
-    const [trialContacts, paidContacts] = await Promise.allSettled([
-      hsPost('/crm/v3/objects/contacts/search', {
-        filterGroups: [{
-          filters: [{ propertyName: 'lifecyclestage', operator: 'EQ', value: 'subscriber' }],
-        }],
-        properties: ['email', 'lifecyclestage', 'createdate', 'hs_lead_status'],
-        limit: 1,
-      }),
-      hsPost('/crm/v3/objects/contacts/search', {
-        filterGroups: [{
-          filters: [{ propertyName: 'lifecyclestage', operator: 'EQ', value: 'customer' }],
-        }],
-        properties: ['email', 'lifecyclestage', 'createdate'],
-        limit: 1,
-      }),
-    ]);
+    // ── 3. Count contacts by lifecycle stage ──────────────────────────────────
+    const stages = ['subscriber', 'lead', 'marketingqualifiedlead', 'salesqualifiedlead', 'opportunity', 'customer', 'evangelist', 'other'];
+    const lifecycleCounts = Object.fromEntries(
+      await Promise.all(stages.map(async s => [s, await countContacts([{ propertyName: 'lifecyclestage', operator: 'EQ', value: s }]).catch(() => '?')]))
+    );
+    const totalContacts = await countContacts([]).catch(() => 0);
 
-    // ── 4. Fetch contact property definitions to find trial-related fields ────
-    const properties = await hsGet('/crm/v3/properties/contacts?limit=100').catch(() => null);
-    const trialProps = properties?.results?.filter((p: { name: string; label: string }) =>
-      p.name.toLowerCase().includes('trial') ||
-      p.label.toLowerCase().includes('trial') ||
-      p.name.toLowerCase().includes('free') ||
-      p.label.toLowerCase().includes('free')
-    ) ?? [];
+    // ── 4. If we found trial-related properties, count them ───────────────────
+    const trialPropCounts: Record<string, unknown> = {};
+    for (const prop of trialProps.slice(0, 10)) {
+      try {
+        const hasValue = await countContacts([{ propertyName: prop.name, operator: 'HAS_PROPERTY' }]);
+        trialPropCounts[prop.name] = { label: prop.label, type: prop.type, contactsWithValue: hasValue };
+      } catch { /* skip */ }
+    }
 
-    // ── 5. Deal pipeline stages (trials often tracked as deals) ──────────────
-    const pipelines = await hsGet('/crm/v3/pipelines/deals').catch(() => null);
+    // ── 5. Fetch list of all contact lists (free trial lists often here) ──────
+    const lists = await hsGet('/contacts/v1/lists?count=100&offset=0').catch(() => null);
+    const trialLists = (lists?.lists ?? []).filter((l: { name: string }) =>
+      l.name.toLowerCase().includes('trial') || l.name.toLowerCase().includes('free')
+    );
 
-    // ── 6. Fetch report widgets from the dashboard if available ───────────────
-    const reportsList = reports.status === 'fulfilled' ? reports.value : null;
+    // ── 6. Reporting dashboards list ──────────────────────────────────────────
+    const dashboards = await hsGet('/reporting/v2/reports?limit=50').catch(() => null);
 
     return NextResponse.json({
-      dashboard:  dashboard.status === 'fulfilled' ? dashboard.value : { error: dashboard.reason?.message },
-      reports:    reportsList,
+      totalContacts,
       lifecycleCounts,
-      trialContacts: trialContacts.status === 'fulfilled' ? { total: trialContacts.value?.total } : null,
-      paidContacts:  paidContacts.status  === 'fulfilled' ? { total: paidContacts.value?.total  } : null,
-      trialRelatedProperties: trialProps.map((p: { name: string; label: string; type: string }) => ({
-        name: p.name, label: p.label, type: p.type,
-      })),
-      dealPipelines: pipelines?.results?.map((p: { id: string; label: string; stages: { id: string; label: string }[] }) => ({
+      trialRelatedProperties: trialProps.map((p: { name: string; label: string; type: string }) => ({ name: p.name, label: p.label, type: p.type })),
+      trialPropCounts,
+      trialLists,
+      dealPipelines: (pipelines.results ?? []).map((p: { id: string; label: string; stages: { id: string; label: string; displayOrder: number }[] }) => ({
         id: p.id, label: p.label,
-        stages: p.stages?.map((s: { id: string; label: string }) => ({ id: s.id, label: s.label })),
+        stages: (p.stages ?? []).sort((a: { displayOrder: number }, b: { displayOrder: number }) => a.displayOrder - b.displayOrder).map((s: { id: string; label: string }) => ({ id: s.id, label: s.label })),
       })),
+      dashboards,
     });
 
   } catch (e) {
