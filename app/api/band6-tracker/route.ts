@@ -271,14 +271,18 @@ export async function GET(request: Request) {
         totalOrders++;
         totalUnits += orderUnits;
 
+        // BC date_created may be RFC 2822 ("Mon, 27 Jul 2026 ...") or ISO.
+        // Parse properly so AEST YYYY-MM-DD comparisons work correctly.
+        const parsedDate = new Date(order.date_created);
+        const orderDate  = !isNaN(parsedDate.getTime())
+          ? toAEST(parsedDate)
+          : (order.date_created.match(/(\d{4}-\d{2}-\d{2})/) ?? ['',''])[1] || order.date_created.slice(0,10);
+
         // Accumulate daily revenue for trend chart
-        const orderDate = order.date_created.slice(0, 10);
         dailyMap.set(orderDate, (dailyMap.get(orderDate) ?? 0) + orderRevenue);
 
         // Period stats (filtered by ?range)
-        const isoMatch = order.date_created.match(/(\d{4}-\d{2}-\d{2})/);
-        const orderISO = isoMatch ? isoMatch[1] : orderDate;
-        if (orderISO >= filterStart && orderISO <= filterEnd) {
+        if (orderDate >= filterStart && orderDate <= filterEnd) {
           periodRevenue += orderRevenue;
           periodOrders++;
           periodUnits += orderUnits;
