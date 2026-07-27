@@ -567,8 +567,16 @@ function BrandPanel({
   const prevNewCusts = prevRevenue?.newCustomers       ?? 0;
   const prevRetCusts = prevRevenue?.returningCustomers ?? 0;
 
-  const googlePaidRev    = revenue?.googlePaidRevenue    ?? 0;
-  const googleOrganicRev = revenue?.googleOrganicRevenue ?? 0;
+  // Prefer channel breakdown totals (sessionDefaultChannelGroup) — captures Paid Search +
+  // Cross-network + Paid Shopping, which sessionMedium=cpc misses for Shopping/PMax.
+  const channelPaidRev    = channelRevenue?.connected
+    ? channelRevenue.items.filter(i => i.channel === 'Paid Search').reduce((s, i) => s + i.revenue, 0)
+    : null;
+  const channelOrganicRev = channelRevenue?.connected
+    ? channelRevenue.items.filter(i => i.channel === 'Organic Search').reduce((s, i) => s + i.revenue, 0)
+    : null;
+  const googlePaidRev    = channelPaidRev    ?? revenue?.googlePaidRevenue    ?? 0;
+  const googleOrganicRev = channelOrganicRev ?? revenue?.googleOrganicRevenue ?? 0;
 
   const aov      = orders > 0 && rev > 0 ? rev / orders : null;
   const cac      = totalSpend > 0 && newCusts > 0 ? totalSpend / newCusts : null;
