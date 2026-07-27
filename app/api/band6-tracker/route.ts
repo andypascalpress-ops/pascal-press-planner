@@ -264,13 +264,20 @@ export async function GET(request: Request) {
       }))
       .sort((a, b) => b.revenue - a.revenue);
 
-    // Build cumulative daily series for the trend chart
-    const sortedDates = [...dailyMap.keys()].sort();
-    let cumulative = 0;
-    const dailySeries = sortedDates.map(date => {
-      cumulative += dailyMap.get(date) ?? 0;
-      return { date, cumulative: Math.round(cumulative * 100) / 100 };
-    });
+    // Build weekly revenue series for the trend chart
+    const weeklyMap = new Map<string, number>(); // week start (Mon) → revenue
+    for (const [dateStr, rev] of dailyMap.entries()) {
+      const d = new Date(dateStr + 'T12:00:00Z');
+      const day = d.getUTCDay(); // 0=Sun
+      const daysToMon = day === 0 ? 6 : day - 1;
+      const mon = new Date(d);
+      mon.setUTCDate(d.getUTCDate() - daysToMon);
+      const weekKey = mon.toISOString().slice(0, 10);
+      weeklyMap.set(weekKey, (weeklyMap.get(weekKey) ?? 0) + rev);
+    }
+    const dailySeries = [...weeklyMap.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([week, revenue]) => ({ date: week, revenue: Math.round(revenue * 100) / 100 }));
 
     const daysRemaining = Math.max(
       0,
