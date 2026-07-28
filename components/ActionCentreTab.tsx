@@ -5,15 +5,16 @@ import { useState, useEffect, useCallback } from 'react';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Insight {
-  id:         string;
-  severity:   'critical' | 'warning' | 'opportunity' | 'info';
-  category:   'google-ads' | 'email' | 'bigcommerce' | 'band6' | 'seasonal' | 'budget';
-  brand?:     'pp' | 'etz' | 'blake' | 'all';
-  title:      string;
-  body:       string;
-  metric:     string;
-  chatPrompt: string;
-  action?:    string;
+  id:              string;
+  severity:        'critical' | 'warning' | 'opportunity' | 'info';
+  category:        'google-ads' | 'email' | 'bigcommerce' | 'band6' | 'seasonal' | 'budget';
+  brand?:          'pp' | 'etz' | 'blake' | 'all';
+  title:           string;
+  body:            string;
+  metric:          string;
+  suggestedAction?: string; // specific "Try this" recommendation shown inline
+  chatPrompt:      string;
+  action?:         string;
 }
 
 interface Props {
@@ -59,122 +60,160 @@ function computeBaselineInsights(
   bcData: any,
 ): Insight[] {
   const now = new Date();
-  const month = now.getMonth();
-  const dayOfMonth   = now.getDate();
-  const daysInMonth  = new Date(now.getFullYear(), month + 1, 0).getDate();
-  const pctThrough   = (dayOfMonth / daysInMonth) * 100;
+  const month = now.getMonth(); // 0-based
+  const dayOfMonth  = now.getDate();
+  const daysInMonth = new Date(now.getFullYear(), month + 1, 0).getDate();
+  const daysLeft    = daysInMonth - dayOfMonth;
+  const pctThrough  = (dayOfMonth / daysInMonth) * 100;
   const insights: Insight[] = [];
   const fmt    = (n: number) => `$${Math.round(n).toLocaleString('en-AU')}`;
-  const pctStr = (n: number, dp = 1) => `${(n * 100).toFixed(dp)}%`;
+  const pct1   = (n: number) => `${(n * 100).toFixed(1)}%`;
 
   // ── Google Ads: budget pacing ─────────────────────────────────────────────
   const records: any[] = Array.isArray(spendData) ? spendData : [];
   const monthName = now.toLocaleString('en-AU', { month: 'long', timeZone: 'Australia/Sydney' });
   const monthRecords = records.filter(r => (r.month ?? '').toLowerCase() === monthName.toLowerCase());
 
-  const adsByBrand: Record<string, { actual: number; budget: number; revenue: number; brand: 'pp' | 'etz' }> = {};
+  const adsByBrand: Record<string, { actual: number; budget: number; revenue: number; brandKey: 'pp' | 'etz' }> = {};
   for (const r of monthRecords) {
     if (!(r.channel ?? '').toLowerCase().includes('google')) continue;
     const b = r.brand ?? 'Unknown';
-    if (!adsByBrand[b]) adsByBrand[b] = { actual: 0, budget: 0, revenue: 0, brand: b === 'Pascal Press' ? 'pp' : 'etz' };
+    if (!adsByBrand[b]) adsByBrand[b] = { actual: 0, budget: 0, revenue: 0, brandKey: b === 'Pascal Press' ? 'pp' : 'etz' };
     adsByBrand[b].actual  += Number(r.actualSpend       ?? 0);
     adsByBrand[b].budget  += Number(r.budget            ?? 0);
     adsByBrand[b].revenue += Number(r.attributedRevenue ?? 0);
   }
-  if (!adsByBrand['Pascal Press'])    adsByBrand['Pascal Press']    = { actual: 0, budget: PP_BUDGET,  revenue: 0, brand: 'pp' };
-  if (!adsByBrand['Excel Test Zone']) adsByBrand['Excel Test Zone'] = { actual: 0, budget: ETZ_BUDGET, revenue: 0, brand: 'etz' };
+  if (!adsByBrand['Pascal Press'])    adsByBrand['Pascal Press']    = { actual: 0, budget: PP_BUDGET,  revenue: 0, brandKey: 'pp' };
+  if (!adsByBrand['Excel Test Zone']) adsByBrand['Excel Test Zone'] = { actual: 0, budget: ETZ_BUDGET, revenue: 0, brandKey: 'etz' };
 
   for (const [brandLabel, s] of Object.entries(adsByBrand)) {
-    if (!s.budget) continue;
-    const expected = (pctThrough / 100) * s.budget;
-    const diff     = s.actual - expected;
-    const pacing   = Math.round((s.actual / s.budget) * 100);
-    const roas     = s.actual > 0 ? (s.revenue / s.actual).toFixed(1) : '—';
+    if (!s.budget || s.actual === 0) continue;
+    const expected    = (pctThrough / 100) * s.budget;
+    const diff        = s.actual - expected;
+    const remaining   = s.budget - s.actual;
+    const pacing      = Math.round((s.actual / s.budget) * 100);
+    const roas        = s.actual > 0 ? (s.revenue / s.actual).toFixed(1) : '—';
+    const dailyNeeded = daysLeft > 0 ? remaining / daysLeft : 0;
+    const dailyCurrent = dayOfMonth > 0 ? s.actual / dayOfMonth : 0;
 
-    if (diff < -300 && s.actual > 0) {
+    if (diff < -300) {
       insights.push({
         id: `spend-under-${brandLabel.replace(/\s/g, '-').toLowerCase()}`,
-        severity: 'warning', category: 'google-ads', brand: s.brand,
-        title:   `${brandLabel} Google Ads underpacing — ${fmt(Math.abs(diff))} behind`,
-        body:    `With ${Math.round(pctThrough)}% of ${monthName} elapsed, ${brandLabel} has spent ${fmt(s.actual)} (${pacing}% of budget). Expected: ${fmt(expected)}. Increase daily budgets or add new ad groups to recover spend.`,
-        metric:  `${pacing}% paced · ${fmt(Math.abs(diff))} under · ROAS ${roas}`,
-        chatPrompt: `${brandLabel} Google Ads is ${fmt(Math.abs(diff))} behind expected pacing (spent ${fmt(s.actual)} vs expected ${fmt(expected)}). What's the best way to increase spend velocity this week without inflating CPC?`,
-        action:  'Increase daily budget',
+        severity: 'warning', category: 'google-ads', brand: s.brandKey,
+        title:   `${brandLabel}: spent ${fmt(s.actual)} of ${fmt(s.budget)} budget — ${fmt(Math.abs(diff))} behind pace`,
+        body:    `Day ${dayOfMonth} of ${daysInMonth}. At the current rate of ${fmt(Math.round(dailyCurrent))}/day, you'll underspend by ${fmt(Math.abs(diff))} by end of month. ${daysLeft} days left to recover ${fmt(remaining)}.`,
+        metric:  `${pacing}% of budget used · ${daysLeft} days left · ROAS ${roas}×`,
+        suggestedAction: `Increase the ${brandLabel} daily budget from ~${fmt(Math.round(dailyCurrent))} to ~${fmt(Math.round(dailyNeeded))} for the remaining ${daysLeft} days to hit the ${fmt(s.budget)} target.`,
+        chatPrompt: `${brandLabel} Google Ads has spent ${fmt(s.actual)} of a ${fmt(s.budget)} budget with ${daysLeft} days left. I need to spend ${fmt(remaining)} more — what's the best way to increase velocity without inflating CPC or wasting spend?`,
+        action:  'Adjust daily budget',
       });
     } else if (diff > 500) {
+      const overBy = Math.round(((s.actual / s.budget) - 1) * 100);
       insights.push({
         id: `spend-over-${brandLabel.replace(/\s/g, '-').toLowerCase()}`,
-        severity: 'warning', category: 'google-ads', brand: s.brand,
-        title:   `${brandLabel} Google Ads overpacing — ${fmt(diff)} above budget`,
-        body:    `${brandLabel} has spent ${fmt(s.actual)} (${pacing}% of budget) with only ${Math.round(pctThrough)}% of ${monthName} elapsed. At this rate the monthly budget will be exhausted early.`,
-        metric:  `${pacing}% paced · ROAS ${roas}`,
-        chatPrompt: `${brandLabel} Google Ads has overspent — ${pacing}% of budget used with only ${Math.round(pctThrough)}% of the month gone. How do I reduce daily caps or adjust bids to stay within the ${fmt(s.budget)} monthly budget without pausing campaigns?`,
-        action:  'Review daily caps',
+        severity: 'warning', category: 'google-ads', brand: s.brandKey,
+        title:   `${brandLabel}: ${pacing}% of budget used — ${fmt(diff)} overpacing`,
+        body:    `Day ${dayOfMonth} of ${daysInMonth}. ${brandLabel} has spent ${fmt(s.actual)} (${overBy}% over expected) and will exhaust the ${fmt(s.budget)} budget ${daysLeft > 0 ? 'before' : 'by'} month end at this rate.`,
+        metric:  `${pacing}% paced · ${fmt(diff)} over · ROAS ${roas}×`,
+        suggestedAction: `Lower the ${brandLabel} daily budget cap to ${fmt(Math.round(remaining / Math.max(daysLeft, 1)))} to spread the remaining ${fmt(remaining)} evenly across ${daysLeft} days.`,
+        chatPrompt: `${brandLabel} Google Ads is ${fmt(diff)} ahead of expected pacing (${pacing}% of budget used on day ${dayOfMonth} of ${daysInMonth}). How do I reduce daily spend without hurting campaign performance or losing auction position?`,
+        action:  'Lower daily cap',
       });
     }
   }
 
   // ── Google Ads: campaign-level issues ─────────────────────────────────────
   const allCamps: any[] = [
-    ...(campaignsData?.pp?.campaigns  ?? []).map((c: any) => ({ ...c, brand: 'Pascal Press',   brandKey: 'pp' })),
-    ...(campaignsData?.etz?.campaigns ?? []).map((c: any) => ({ ...c, brand: 'Excel Test Zone', brandKey: 'etz' })),
+    ...(campaignsData?.pp?.campaigns  ?? []).map((c: any) => ({ ...c, brandLabel: 'Pascal Press',    brandKey: 'pp'  as const })),
+    ...(campaignsData?.etz?.campaigns ?? []).map((c: any) => ({ ...c, brandLabel: 'Excel Test Zone', brandKey: 'etz' as const })),
   ];
 
   for (const c of allCamps.filter(c => (c.conversions ?? 0) === 0 && (c.cost ?? 0) > 150).slice(0, 2)) {
-    const shortName = (c.name ?? 'Unknown').slice(0, 50);
+    const name = (c.name ?? 'Unknown').slice(0, 50);
+    const ctr  = ((c.ctr ?? 0) * 100).toFixed(2);
     insights.push({
       id: `ads-zero-conv-${(c.name ?? '').replace(/\W/g, '-').toLowerCase().slice(0, 24)}`,
-      severity: 'warning', category: 'google-ads', brand: c.brandKey,
-      title:   `"${shortName}" — ${fmt(c.cost)} spent, 0 conversions`,
-      body:    `This campaign has spent ${fmt(c.cost)} this month with zero conversions. Check the landing page, keyword match types, and bid strategy. Consider pausing until fixed or restructuring ad groups.`,
-      metric:  `${fmt(c.cost)} spend · 0 conv · CTR ${pctStr((c.ctr ?? 0) * 100)}`,
-      chatPrompt: `Our Google Ads campaign "${c.name}" (${c.brand}) spent ${fmt(c.cost)} with 0 conversions this month. CTR is ${pctStr((c.ctr ?? 0) * 100)}. What are the most likely causes — is it a landing page, keyword, or bid issue?`,
-      action:  'Audit keywords + landing page',
+      severity: 'critical', category: 'google-ads', brand: c.brandKey,
+      title:   `"${name}" — ${fmt(c.cost)} spent with zero sales`,
+      body:    `This ${c.brandLabel} campaign has spent ${fmt(c.cost)} this month and generated ${c.clicks ?? 0} clicks (${ctr}% CTR) but zero conversions. Every dollar spent here is currently wasted.`,
+      metric:  `${fmt(c.cost)} spend · 0 conversions · ${c.clicks ?? 0} clicks`,
+      suggestedAction: `Pause "${name}" now. Common culprits: keywords like "free", "pdf", "answers", "download" attract non-buyers — add them as negatives before re-enabling.`,
+      chatPrompt: `Our Google Ads campaign "${c.name}" (${c.brandLabel}) has spent ${fmt(c.cost)} with 0 conversions and ${c.clicks ?? 0} clicks (CTR ${ctr}%). Review the keywords in this campaign and tell me which ones are likely wasting spend — list the top 10 to add as negatives.`,
+      action:  'Pause + add negatives',
     });
   }
 
   for (const c of allCamps.filter(c => (c.cost ?? 0) > 300 && (c.roas ?? 0) > 0 && (c.roas ?? 0) < 2).slice(0, 2)) {
-    const shortName = (c.name ?? 'Unknown').slice(0, 50);
+    const name = (c.name ?? 'Unknown').slice(0, 50);
+    const roasVal = (c.roas ?? 0).toFixed(1);
     insights.push({
       id: `ads-low-roas-${(c.name ?? '').replace(/\W/g, '-').toLowerCase().slice(0, 24)}`,
       severity: 'warning', category: 'google-ads', brand: c.brandKey,
-      title:   `"${shortName}" — low ROAS ${(c.roas ?? 0).toFixed(1)}×`,
-      body:    `ROAS of ${(c.roas ?? 0).toFixed(1)}× is below a 3× target on ${fmt(c.cost)} spend. Tighten keyword targeting, improve ad relevance score, or switch to target ROAS bidding.`,
-      metric:  `ROAS ${(c.roas ?? 0).toFixed(1)}× · ${fmt(c.cost)} spend · ${c.conversions ?? 0} conv`,
-      chatPrompt: `"${c.name}" (${c.brand}) has a ${(c.roas ?? 0).toFixed(1)}× ROAS on ${fmt(c.cost)} spend with ${c.conversions ?? 0} conversions. What specific changes — keywords, bids, or ad groups — would improve ROAS above 3×?`,
-      action:  'Review bids + ad relevance',
+      title:   `"${name}" — only ${roasVal}× ROAS on ${fmt(c.cost)} spend`,
+      body:    `This ${c.brandLabel} campaign returned ${fmt(Math.round((c.roas ?? 0) * (c.cost ?? 0)))} from ${fmt(c.cost)} spend (${roasVal}× ROAS). Your target is 3×, meaning you need ${fmt(c.cost * 3)} in revenue to break even on this spend.`,
+      metric:  `${roasVal}× ROAS · ${fmt(c.cost)} spend · ${c.conversions ?? 0} conversions`,
+      suggestedAction: `Switch "${name}" to Target ROAS bidding at 300% and tighten keywords to exact/phrase match only. Broad match on educational keywords spends heavily on low-intent traffic.`,
+      chatPrompt: `"${c.name}" (${c.brandLabel}) has a ${roasVal}× ROAS on ${fmt(c.cost)} spend with ${c.conversions ?? 0} conversions. What specific keyword, bid strategy, and ad group changes would push ROAS above 3×? Be specific — list the exact changes.`,
+      action:  'Switch to Target ROAS',
     });
   }
 
-  // ── Seasonal ─────────────────────────────────────────────────────────────
+  // ── Seasonal — PP and ETZ are SEPARATE products with different audiences ──
   if (month === 6) {
+    // Pascal Press = NAPLAN workbooks (Years 3, 5, 7, 9)
     insights.push({
-      id: 'seasonal-term3-start', severity: 'opportunity', category: 'seasonal', brand: 'all',
-      title:   'Term 3 starts this month — peak season for NAPLAN & HSC',
-      body:    'July is the start of Term 3 in most Australian states — the highest-value period for Pascal Press (NAPLAN prep) and Excel Test Zone (HSC practice exams). Budgets should be maximised by mid-July.',
-      metric:  'Term 3 · July–September',
-      chatPrompt: 'It\'s early July and Term 3 is starting. What specific Google Ads campaigns, keywords, and ad copy should Pascal Press and Excel Test Zone be running right now to maximise NAPLAN prep and HSC prep sales?',
-      action:  'Plan Term 3 campaigns',
+      id: 'seasonal-pp-term3', severity: 'opportunity', category: 'seasonal', brand: 'pp',
+      title:   'Pascal Press: Term 3 is NAPLAN prep season — peak buying window open',
+      body:    'Term 3 has just started across most Australian states. Parents of Year 3, 5, 7 and 9 students are actively searching for NAPLAN workbooks right now. This is Pascal Press\'s highest-converting window of the year.',
+      metric:  'NAPLAN season · Term 3 · Year 3–9',
+      suggestedAction: 'Run a NAPLAN-specific Google Ads campaign targeting "NAPLAN Year [3/5/7/9] practice" and send an email with subject: "NAPLAN is coming — your Year [X] preparation guide".',
+      chatPrompt: 'It\'s Term 3 and NAPLAN prep season for Pascal Press. Write a Google Ads campaign plan for NAPLAN workbooks targeting parents of Year 3, 5, 7 and 9 students — include keywords, ad copy, and a landing page recommendation.',
+      action:  'Launch NAPLAN campaigns',
+    });
+    // ETZ = HSC practice papers (Year 11–12), NOT NAPLAN
+    insights.push({
+      id: 'seasonal-etz-term3', severity: 'opportunity', category: 'seasonal', brand: 'etz',
+      title:   'Excel Test Zone: 14 weeks to HSC exams — urgency window is now',
+      body:    'HSC exams are approximately 14 weeks away. Year 12 students are starting to feel real urgency and will pay for practice papers. This is ETZ\'s highest-intent period — conversion rates are typically 40% above average.',
+      metric:  'HSC season · ~14 weeks to exams',
+      suggestedAction: 'Send an email with subject: "14 weeks until your HSC — which subjects need work?" and increase ETZ Google Ads bids on "HSC practice papers" and "HSC past papers [subject]".',
+      chatPrompt: 'It\'s Term 3 and HSC exams are about 14 weeks away. What specific Google Ads keywords, ad copy, and bid adjustments should Excel Test Zone be running right now to maximise HSC practice paper sales?',
+      action:  'Maximise ETZ HSC campaigns',
     });
   }
+
   if (month === 7) {
+    // ETZ peak: HSC trial exams
     insights.push({
-      id: 'seasonal-hsc-trials', severity: 'opportunity', category: 'seasonal', brand: 'etz',
-      title:   'August: HSC Trial Exams — peak ETZ revenue window',
-      body:    'August is when HSC students sit trial exams, making it the strongest month for Excel Test Zone online practice papers. ETZ bids and budgets should be at their highest. Consider remarketing to students who visited but didn\'t convert.',
-      metric:  'HSC Trial season · Aug peak',
-      chatPrompt: 'It\'s August — HSC trial exams are happening. What should Excel Test Zone\'s Google Ads strategy look like this week? Which keywords, bidding strategies, and ad extensions maximise conversions for practice papers?',
-      action:  'Maximise ETZ budget',
+      id: 'seasonal-etz-hsc-trials', severity: 'opportunity', category: 'seasonal', brand: 'etz',
+      title:   'Excel Test Zone: HSC trial exams are happening now — peak ETZ revenue week',
+      body:    'August is when NSW and VIC schools hold HSC trial exams. Students who just sat trials urgently need practice papers to prepare for the real exams in October. This is typically ETZ\'s single highest revenue week.',
+      metric:  'HSC Trial season · peak week',
+      suggestedAction: 'Maximise ETZ Google Ads budget this week. Send an email with subject: "How did your trial go? Fix the gaps before the real HSC" — target your full student list.',
+      chatPrompt: 'HSC trial exams are happening this week — it\'s the peak revenue window for Excel Test Zone. What should our Google Ads strategy look like right now? What keywords, bids, and budget should we be running?',
+      action:  'Maximise ETZ budget now',
+    });
+    // PP: Back-to-school planning
+    insights.push({
+      id: 'seasonal-pp-bts-plan', severity: 'opportunity', category: 'seasonal', brand: 'pp',
+      title:   'Pascal Press: start building Back to School campaigns for Term 4',
+      body:    'August is the time to plan and build Pascal Press Back to School campaigns for the October–January window. Last year\'s BTS campaigns that launched in early September outperformed late-starting ones by 3×.',
+      metric:  'BTS prep · launch Sep for Oct–Jan',
+      suggestedAction: 'Create a BTS campaign brief now: workbook bundles by year level, Google Ads campaign for "school workbooks 2027", and an email sequence (3 sends: Oct, Nov, Jan).',
+      chatPrompt: 'It\'s August and I need to plan Pascal Press\'s Back to School campaigns for Term 4 and January 2027. Give me a complete campaign plan: Google Ads structure, email send schedule, and subject lines for 3 emails.',
+      action:  'Build BTS campaign plan',
     });
   }
+
   if (month === 8) {
     insights.push({
-      id: 'seasonal-bts-prep', severity: 'opportunity', category: 'seasonal', brand: 'all',
-      title:   'Plan Term 4 / Back to School campaigns now',
-      body:    'September is when publishers start planning Term 4 and Back to School campaigns (November–January). Begin building campaign structures and creative assets for Pascal Press workbook promotions.',
-      metric:  'BTS prep · Oct–Jan window',
-      chatPrompt: 'It\'s September and we should be planning Back to School campaigns for Pascal Press. What campaign types, timings, and budgets should we prepare for the October–January Back to School season?',
-      action:  'Build BTS campaign plan',
+      id: 'seasonal-etz-final-push', severity: 'opportunity', category: 'seasonal', brand: 'etz',
+      title:   'Excel Test Zone: final 6 weeks push before HSC exams',
+      body:    'HSC exams begin in approximately 6 weeks. This is the last buying window for practice papers — students who haven\'t purchased yet are running out of time and conversion intent is highest.',
+      metric:  'HSC final prep · 6 weeks to go',
+      suggestedAction: 'Send a final urgency email: "6 weeks until HSC — last chance to practice". Add a countdown timer or urgency line in ETZ Google Ads ad copy.',
+      chatPrompt: 'HSC exams are 6 weeks away — it\'s the final push for Excel Test Zone practice papers. Write a high-urgency email campaign and suggest Google Ads adjustments to maximise conversions in the last 6 weeks.',
+      action:  'Launch final HSC push',
     });
   }
 
@@ -185,124 +224,162 @@ function computeBaselineInsights(
   const ppEmails  = sentEmails.filter(e => !isETZ(e.name ?? ''));
   const etzEmails = sentEmails.filter(e =>  isETZ(e.name ?? ''));
 
-  const brandGroups = [
-    { brandLabel: 'Pascal Press',    brandEmails: ppEmails,  promoType: 'NAPLAN prep workbooks',        brandKey: 'pp'  as const },
-    { brandLabel: 'Excel Test Zone', brandEmails: etzEmails, promoType: 'HSC exam practice papers',     brandKey: 'etz' as const },
-  ];
-  for (const { brandLabel, brandEmails, promoType, brandKey } of brandGroups) {
+  // Per-brand: worst open rate
+  for (const { brandLabel, brandEmails, brandKey, subjectHints } of [
+    {
+      brandLabel: 'Pascal Press', brandEmails: ppEmails, brandKey: 'pp' as const,
+      subjectHints: [
+        `"NAPLAN is in 4 weeks — your Year 5 prep checklist"`,
+        `"3 NAPLAN questions most Year 5 students get wrong"`,
+        `"Your child's Year [X] NAPLAN: what to focus on this week"`,
+      ],
+    },
+    {
+      brandLabel: 'Excel Test Zone', brandEmails: etzEmails, brandKey: 'etz' as const,
+      subjectHints: [
+        `"Your HSC is in ${month === 6 ? '14' : month === 7 ? '8' : '6'} weeks — how ready are you?"`,
+        `"The practice test that separates Band 5 from Band 6"`,
+        `"Most common mistake students make in HSC [subject] exams"`,
+      ],
+    },
+  ]) {
     const worst = [...brandEmails].sort((a, b) => (a.openRate ?? 0) - (b.openRate ?? 0))[0];
     if (worst && (worst.openRate ?? 0) < 0.20) {
-      const name = (worst.name ?? 'campaign').slice(0, 55);
-      const rate = pctStr(worst.openRate ?? 0);
+      const campaignName = (worst.name ?? 'campaign').slice(0, 55);
+      const openRate     = pct1(worst.openRate ?? 0);
+      const sends        = (worst.sends ?? 0).toLocaleString();
       insights.push({
         id: `email-open-${brandLabel.replace(/\s/g, '-').toLowerCase()}-${worst.id ?? 'x'}`,
         severity: 'warning', category: 'email', brand: brandKey,
-        title:   `${brandLabel}: "${name}" open rate ${rate}`,
-        body:    `This ${brandLabel} email had only a ${rate} open rate (${(worst.sends ?? 0).toLocaleString()} sent). For ${promoType}, subject lines that lead with a specific title, grade level, or urgency ("HSC exams in 6 weeks") consistently outperform generic ones.`,
-        metric:  `Open ${rate} · ${(worst.sends ?? 0).toLocaleString()} sent · ${(worst.clicks ?? 0)} clicks`,
-        chatPrompt: `Our ${brandLabel} email "${worst.name}" had a ${rate} open rate (${worst.sends} sent, ${worst.opens ?? 0} opens). Write 5 alternative subject lines for ${promoType} that use urgency, specificity, or curiosity to lift open rates above 20%. Explain the hook for each.`,
+        title:   `"${campaignName}" sent to ${sends} — only ${openRate} opened it`,
+        body:    `This ${brandLabel} email had a ${openRate} open rate against an industry benchmark of ~22%. ${worst.sends - (worst.opens ?? 0)} people received it but never opened — a stronger subject line would recover a significant chunk.`,
+        metric:  `${openRate} open rate · ${sends} sent · ${worst.opens ?? 0} opens · ${worst.clicks ?? 0} clicks`,
+        suggestedAction: `Try one of these subject lines for the next send:\n• ${subjectHints[0]}\n• ${subjectHints[1]}\n• ${subjectHints[2]}`,
+        chatPrompt: `Our ${brandLabel} email "${worst.name}" had only a ${openRate} open rate (${worst.sends} sent, ${worst.opens ?? 0} opens). Write 5 alternative subject lines using urgency, specificity, and curiosity. For each one, explain the psychological hook that makes it work better.`,
         action:  'Rewrite subject line',
       });
     }
   }
 
-  const ppSuggestion: string = ((): string => {
-    if (month === 6) return 'Term 3 has just started — send a NAPLAN prep campaign now to capture parents buying workbooks for Year 3-9 students. Subject: "Your child\'s NAPLAN prep starts here".';
-    if (month === 7) return 'August is peak Back to School prep research time. A Pascal Press "prepare for next year" email with grade-specific workbook recommendations would convert well.';
-    if (month === 8) return 'September — plan your Back to School email sequence now (3 sends: Oct, Nov, Jan). Early prep emails for Pascal Press outperform January sends.';
-    return 'Send a Pascal Press product spotlight email featuring your top NAPLAN workbooks for the current term.';
-  })();
+  // Per-brand: no campaigns sent
+  const ppSendSuggestion = month === 6
+    ? `"NAPLAN prep: what Year 5 students should do this week"`
+    : month === 7
+      ? `"Prepare for next year — Year [X] workbook recommendations"`
+      : `"Top NAPLAN workbooks for Term ${month < 6 ? 1 : month < 9 ? 3 : 4}"`;
 
-  const etzSuggestion: string = ((): string => {
-    if (month === 6) return 'Term 3 has started — ETZ should send an HSC exam countdown email immediately. Students sitting HSC in October have under 14 weeks. Subject: "14 weeks to your HSC — are you exam-ready?"';
-    if (month === 7) return 'August is peak ETZ season — HSC trial exams are happening now. Send a "trial exam coming up? Practice now" email to your full student list.';
-    if (month === 8) return 'HSC exams are 6-8 weeks away. ETZ should send a final exam prep push email with a CTA to purchase practice papers.';
-    return 'Send an ETZ NAPLAN/HSC practice paper reminder to re-engage students who have not purchased this term.';
-  })();
+  const etzSendSuggestion = month === 6
+    ? `"14 weeks to your HSC — are you exam-ready?"`
+    : month === 7
+      ? `"Trial exams are here — how did you go? Fix the gaps now"`
+      : `"${month === 8 ? '6 weeks' : 'Time'} until your HSC — final practice checklist"`;
 
   if (ppEmails.length === 0) {
     insights.push({
       id: 'email-pp-no-campaigns', severity: 'opportunity', category: 'email', brand: 'pp',
-      title:   'Pascal Press: no email campaigns sent this month',
-      body:    ppSuggestion,
-      metric:  `0 PP campaigns · ${ppEmails.length === 0 && sentEmails.length > 0 ? sentEmails.length + ' ETZ only' : 'month to date'}`,
-      chatPrompt: `Pascal Press hasn't sent any email campaigns yet in ${monthName}. ${ppSuggestion} Draft a complete email campaign for me: subject line, preview text, email body (3 sections), and a clear CTA. Audience: parents of primary school students.`,
-      action:  'Draft PP email campaign',
+      title:   `Pascal Press: 0 email campaigns sent in ${monthName}`,
+      body:    `No Pascal Press emails have been sent this month. Your list is going cold. ${monthName} is an active buying period — parents searching for workbooks are making decisions right now.`,
+      metric:  `0 PP emails · ${monthName}`,
+      suggestedAction: `Send a NAPLAN prep email this week. Suggested subject: ${ppSendSuggestion}. Best send time: Tuesday or Wednesday 7–9am AEST.`,
+      chatPrompt: `Pascal Press hasn't sent any emails in ${monthName}. Draft a complete NAPLAN prep email campaign: subject line, preview text, 3-section email body, and a clear CTA to buy workbooks. Audience: parents of primary school students (Year 3–9).`,
+      action:  'Send PP email now',
     });
   }
 
   if (etzEmails.length === 0) {
     insights.push({
       id: 'email-etz-no-campaigns', severity: 'opportunity', category: 'email', brand: 'etz',
-      title:   'Excel Test Zone: no email campaigns sent this month',
-      body:    etzSuggestion,
-      metric:  `0 ETZ campaigns · ${monthName}`,
-      chatPrompt: `Excel Test Zone hasn't sent any email campaigns yet in ${monthName}. ${etzSuggestion} Draft a complete email campaign for me: subject line, preview text, email body, and a CTA to purchase practice papers. Audience: HSC students and their parents.`,
-      action:  'Draft ETZ email campaign',
+      title:   `Excel Test Zone: 0 email campaigns sent in ${monthName}`,
+      body:    `No ETZ emails this month. With HSC exams approaching, students are actively researching and buying practice papers — silence during this window costs sales.`,
+      metric:  `0 ETZ emails · ${monthName}`,
+      suggestedAction: `Send an HSC prep email this week. Suggested subject: ${etzSendSuggestion}. Best send time: Sunday evening 6–8pm AEST when students are studying.`,
+      chatPrompt: `Excel Test Zone hasn't sent any emails in ${monthName}. Draft a complete HSC prep email: subject line, preview text, 3-section body, and a CTA to buy practice papers. Audience: Year 12 HSC students and their parents.`,
+      action:  'Send ETZ email now',
     });
   }
 
+  // High unsubscribe rate
   const worstUnsub = [...sentEmails].sort((a, b) =>
     ((b.unsubscribes ?? 0) / (b.sends ?? 1)) - ((a.unsubscribes ?? 0) / (a.sends ?? 1))
   )[0];
   if (worstUnsub) {
     const unsubRate = (worstUnsub.unsubscribes ?? 0) / (worstUnsub.sends ?? 1);
     if (unsubRate > 0.005) {
+      const campaignName = (worstUnsub.name ?? 'Email').slice(0, 55);
       insights.push({
         id: `email-high-unsub-${worstUnsub.id ?? 'x'}`,
         severity: 'warning', category: 'email', brand: isETZ(worstUnsub.name ?? '') ? 'etz' : 'pp',
-        title:   `"${(worstUnsub.name ?? 'Email').slice(0, 55)}" — ${pctStr(unsubRate)} unsub rate`,
-        body:    `A ${pctStr(unsubRate)} unsubscribe rate is above the 0.5% warning threshold. This suggests misaligned audience expectations or excessive send frequency. Audit the list segment for this campaign.`,
-        metric:  `${pctStr(unsubRate)} unsub · ${worstUnsub.unsubscribes ?? 0} unsubs`,
-        chatPrompt: `Our email "${worstUnsub.name}" had a ${pctStr(unsubRate)} unsubscribe rate (${worstUnsub.unsubscribes} unsubs from ${worstUnsub.sends} sends). What are the likely causes and how should we fix list segmentation or send frequency?`,
-        action:  'Review segment + frequency',
+        title:   `"${campaignName}" — ${pct1(unsubRate)} unsubscribed (${worstUnsub.unsubscribes ?? 0} people)`,
+        body:    `${worstUnsub.unsubscribes ?? 0} people unsubscribed after receiving this email (${pct1(unsubRate)} rate vs 0.5% warning threshold). Each unsub is a permanent loss from the list.`,
+        metric:  `${pct1(unsubRate)} unsub rate · ${worstUnsub.unsubscribes ?? 0} unsubs from ${(worstUnsub.sends ?? 0).toLocaleString()} sends`,
+        suggestedAction: `Check if this email was sent to the full list instead of an engaged segment. Limit future sends to contacts who opened at least one email in the last 90 days.`,
+        chatPrompt: `Our email "${worstUnsub.name}" had a ${pct1(unsubRate)} unsubscribe rate (${worstUnsub.unsubscribes} unsubs from ${worstUnsub.sends} sends). What are the most likely causes and what segmentation or frequency changes would reduce churn?`,
+        action:  'Review list segment',
       });
     }
   }
 
+  // Low CTOR
   const worstCtor = [...sentEmails]
     .filter(e => (e.opens ?? 0) > 50 && (e.clickToOpen ?? 0) > 0)
     .sort((a, b) => (a.clickToOpen ?? 0) - (b.clickToOpen ?? 0))[0];
   if (worstCtor && (worstCtor.clickToOpen ?? 0) < 0.08) {
+    const ctor = pct1(worstCtor.clickToOpen ?? 0);
     insights.push({
       id: `email-low-ctor-${worstCtor.id ?? 'x'}`,
       severity: 'info', category: 'email', brand: isETZ(worstCtor.name ?? '') ? 'etz' : 'pp',
-      title:   `"${(worstCtor.name ?? 'Email').slice(0, 55)}" — CTOR ${pctStr(worstCtor.clickToOpen ?? 0)}`,
-      body:    `Only ${pctStr(worstCtor.clickToOpen ?? 0)} of people who opened clicked through — below the 8% benchmark. The offer, CTA button copy, or email body isn't compelling enough to drive action.`,
-      metric:  `CTOR ${pctStr(worstCtor.clickToOpen ?? 0)} · ${worstCtor.opens ?? 0} opens`,
-      chatPrompt: `Our email "${worstCtor.name}" had a ${pctStr(worstCtor.clickToOpen ?? 0)} CTOR (${worstCtor.opens} opens, ${worstCtor.clicks ?? 0} clicks). What specific CTA, offer framing, or layout changes would lift click-through for educational content?`,
-      action:  'Improve CTA + offer copy',
+      title:   `"${(worstCtor.name ?? 'Email').slice(0, 55)}" — ${ctor} CTOR (${worstCtor.opens ?? 0} opened, only ${worstCtor.clicks ?? 0} clicked)`,
+      body:    `${worstCtor.opens ?? 0} people opened this email but only ${worstCtor.clicks ?? 0} clicked through (${ctor} CTOR vs 8% benchmark). The email got attention but failed to convert interest into action.`,
+      metric:  `${ctor} CTOR · ${worstCtor.opens ?? 0} opens · ${worstCtor.clicks ?? 0} clicks`,
+      suggestedAction: `Add a single bold CTA button above the fold ("Get the practice paper →") and remove secondary links that compete for clicks.`,
+      chatPrompt: `Our email "${worstCtor.name}" had only a ${ctor} CTOR (${worstCtor.opens} opens, ${worstCtor.clicks ?? 0} clicks). Suggest specific email body and CTA changes to lift click-through above 8% for an educational product email.`,
+      action:  'Improve CTA + layout',
     });
   }
 
   // ── BigCommerce ───────────────────────────────────────────────────────────
   const bottomProducts: any[] = bcData?.bottomProducts ?? [];
   if (bottomProducts.length >= 1 && bcData?.connected) {
-    const show  = bottomProducts.slice(0, 5);
-    const names = show.map((p: any) => p.name).join(', ');
-    const lines = show.map((p: any) => `${p.name} (${fmt(p.revenue)}, ${p.quantity} units)`).join(' · ');
+    const show  = bottomProducts.slice(0, 3);
+    const names = show.map((p: any) => `"${p.name}"`).join(', ');
+    const totalRev = show.reduce((s: number, p: any) => s + (p.revenue ?? 0), 0);
     insights.push({
       id: 'bc-worst-products', severity: 'opportunity', category: 'bigcommerce', brand: 'pp',
-      title:   'Lowest-selling products — last 30 days',
-      body:    `These products had the fewest sales over the last 30 days: ${lines}. A targeted email, Google Ads ad group, or limited-time discount could meaningfully lift their revenue.`,
-      metric:  `${show.length} products · bottom performers · 30 days`,
-      chatPrompt: `Our BigCommerce store's lowest-selling products in the last 30 days are: ${names}. For each one, recommend a specific marketing action — a Google Ads ad group to create, a HubSpot email segment to target, or a discount/offer to run. Include suggested ad copy or subject lines.`,
-      action:  'Plan product campaigns',
+      title:   `${bottomProducts.length} products made under ${fmt(totalRev / show.length)} each in the last 30 days`,
+      body:    `Lowest sellers: ${names}. These products are live in the store but not being promoted. A single targeted email or Google Ads ad group for these specific titles typically lifts them 2–4×.`,
+      metric:  `${bottomProducts.length} products · avg ${fmt(Math.round(totalRev / show.length))} · last 30 days`,
+      suggestedAction: `Create one Google Ads ad group for ${names} using the exact product title as exact-match keywords, or add them to the next PP email as a "hidden gems" section.`,
+      chatPrompt: `Our ${bottomProducts.length} worst-selling BigCommerce products include: ${bottomProducts.slice(0, 5).map((p: any) => p.name).join(', ')}. For each of the top 5, recommend one specific marketing action — a Google Ads ad group to create, a HubSpot email segment, or a discount/bundle. Include specific ad copy or subject lines.`,
+      action:  'Create targeted campaigns',
     });
   }
 
-  // ── Band 6 ───────────────────────────────────────────────────────────────
-  const b6 = band6Data?.summary ?? band6Data ?? {};
-  const b6Target = Number(b6.target ?? b6.monthlyTarget ?? 0);
-  const b6Actual = Number(b6.actual ?? b6.currentRevenue ?? 0);
-  if (b6Target > 0 && b6Actual < b6Target * 0.5 && pctThrough > 40) {
+  // ── Band 6 ── uses season elapsed days (Jul 1 – Nov 30), not month days ──
+  const b6 = band6Data ?? {};
+  // Try every possible field name the API might use
+  const b6Target = Number(b6.target ?? b6.seasonTarget ?? b6.monthlyTarget ?? 25000);
+  const b6Actual = Number(b6.revenue ?? b6.actual ?? b6.currentRevenue ?? b6.periodRevenue ?? 0);
+
+  // Season runs July 1 – November 30
+  const b6SeasonStart = new Date(now.getFullYear(), 6, 1); // Jul 1
+  const b6SeasonEnd   = new Date(now.getFullYear(), 10, 30, 23, 59); // Nov 30
+  const b6SeasonDays  = Math.round((b6SeasonEnd.getTime() - b6SeasonStart.getTime()) / 86400000);
+  const b6DaysElapsed = Math.max(0, Math.round((now.getTime() - b6SeasonStart.getTime()) / 86400000));
+  const b6DaysLeft    = Math.max(0, Math.round((b6SeasonEnd.getTime() - now.getTime()) / 86400000));
+  const b6SeasonPct   = Math.min(100, Math.round((b6DaysElapsed / b6SeasonDays) * 100));
+  const b6ActualPct   = b6Target > 0 ? Math.round((b6Actual / b6Target) * 100) : 0;
+  const b6Gap         = Math.max(0, b6Target - b6Actual);
+  const b6WeeklyNeeded = b6DaysLeft > 0 ? (b6Gap / b6DaysLeft) * 7 : 0;
+
+  if (b6Target > 0 && b6ActualPct < b6SeasonPct - 15 && b6DaysElapsed > 7) {
     insights.push({
       id: 'band6-pacing-low', severity: 'warning', category: 'band6', brand: 'etz',
-      title:   `Band 6 tracker: ${Math.round((b6Actual / b6Target) * 100)}% of target with ${Math.round(pctThrough)}% of month elapsed`,
-      body:    `Band 6 revenue is at ${fmt(b6Actual)} against a ${fmt(b6Target)} target. At the current pace, the month-end target will be missed. Increase ad exposure for the highest-converting ETZ products.`,
-      metric:  `${fmt(b6Actual)} of ${fmt(b6Target)} target`,
-      chatPrompt: `Band 6 tracker is showing ${fmt(b6Actual)} of ${fmt(b6Target)} target with ${Math.round(pctThrough)}% of the month elapsed. What actions should we take this week to improve Band 6 conversion rates for Excel Test Zone?`,
-      action:  'Review Band 6 ad exposure',
+      title:   `Band 6: ${fmt(b6Actual)} of ${fmt(b6Target)} target — ${b6SeasonPct}% through the season`,
+      body:    `The Band 6 season (Jul–Nov) is ${b6SeasonPct}% through but revenue is only at ${b6ActualPct}% of target. ${fmt(b6Gap)} still needed across ${b6DaysLeft} remaining days.`,
+      metric:  `${fmt(b6Actual)} earned · ${fmt(b6Gap)} remaining · ${b6DaysLeft} days left`,
+      suggestedAction: `To hit target, aim for ~${fmt(Math.round(b6WeeklyNeeded))}/week. Increase ETZ Google Ads bids on Band 6 keywords and send a targeted email to students who viewed Band 6 products but didn't purchase.`,
+      chatPrompt: `Band 6 tracker shows ${fmt(b6Actual)} of a ${fmt(b6Target)} season target (Jul–Nov) with ${b6DaysLeft} days remaining. What specific actions — Google Ads bids, email campaigns, or promotions — would close the ${fmt(b6Gap)} gap?`,
+      action:  'Review Band 6 strategy',
     });
   }
 
@@ -454,6 +531,14 @@ function InsightCard({ insight, onDismiss, onOpenChat, onNavigate }: {
         {insight.metric && (
           <div className={`inline-flex items-center gap-1.5 text-xs font-mono mt-2.5 px-2.5 py-1 rounded-lg ${cat.bg} ${cat.text}`}>
             {insight.metric}
+          </div>
+        )}
+
+        {/* Suggested action callout */}
+        {insight.suggestedAction && (
+          <div className="mt-3 border-l-2 border-amber-400 bg-amber-50 pl-3 pr-2 py-2 rounded-r-lg">
+            <p className="text-xs font-semibold text-amber-700 mb-0.5">Try this:</p>
+            <p className="text-xs text-amber-800 leading-relaxed whitespace-pre-line">{insight.suggestedAction}</p>
           </div>
         )}
       </div>
