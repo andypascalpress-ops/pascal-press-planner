@@ -53,7 +53,14 @@ async function parseJsonOrThrow(res: Response, context: string): Promise<any> {
 
 // ─── OAuth ────────────────────────────────────────────────────────────────────
 
+// Module-level token cache — survives across requests on the same Vercel instance.
+// Keyed by refresh token so PP / ETZ / HSC configs each get their own entry.
+const _tokenCache = new Map<string, { token: string; expiresAt: number }>();
+
 async function getAccessToken(cfg: GoogleAdsConfig): Promise<string> {
+  const cached = _tokenCache.get(cfg.refreshToken);
+  if (cached && Date.now() < cached.expiresAt) return cached.token;
+
   const res = await fetch(OAUTH_TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -69,6 +76,9 @@ async function getAccessToken(cfg: GoogleAdsConfig): Promise<string> {
   if (!data.access_token) {
     throw new Error(`Google OAuth failed (HTTP ${res.status}): ${data.error_description ?? data.error ?? JSON.stringify(data)}`);
   }
+  // Cache for (expires_in − 60) seconds so we refresh before actual expiry
+  const ttl = ((data.expires_in as number ?? 3600) - 60) * 1000;
+  _tokenCache.set(cfg.refreshToken, { token: data.access_token as string, expiresAt: Date.now() + ttl });
   return data.access_token as string;
 }
 

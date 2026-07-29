@@ -6,6 +6,7 @@
  * Returns: spend, revenue, ROAS, email snapshot, pacing info, computed alerts.
  */
 import { NextResponse } from 'next/server';
+import { unstable_cache } from 'next/cache';
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
 import { fetchPPRevenue, fetchBlakeRevenue } from '@/lib/bigcommerce-revenue';
 import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-revenue';
@@ -14,7 +15,14 @@ import { fetchPPWebsiteConversion, fetchETZWebsiteConversion } from '@/lib/googl
 import { MONTHLY_GOOGLE_BUDGETS, PP_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_REVENUE_TARGETS, BLAKE_MONTHLY_REVENUE_TARGETS } from '@/lib/constants';
 import { OverviewAlert } from '@/lib/types';
 
-export const dynamic = 'force-dynamic'; // range param must be read at request time
+// Previous-month PP revenue never changes once the month closes — cache it for 24 h.
+const fetchPPRevenueCached = unstable_cache(
+  (month: string, start: string, end: string) => fetchPPRevenue(month, { start, end }),
+  ['pp-revenue-prev-month'],
+  { revalidate: 86400 },
+);
+
+// No force-dynamic — rely on Cache-Control headers so Vercel edge caches per URL (range param included).
 
 const ETZ_START_MONTH = '2026-07';
 
@@ -149,7 +157,7 @@ export async function GET(request: Request) {
       // Monthly ranges compare same calendar days last month; short ranges use equal prior days.
       fetchPPWebsiteConversion(startDate, endDate, isMonthly ? 'alignMonth' : 'priorEqual'),
       fetchETZWebsiteConversion(startDate, endDate, isMonthly ? 'alignMonth' : 'priorEqual'),
-      fetchPPRevenue(prevMonth, { start: prevStart, end: prevEnd }),
+      fetchPPRevenueCached(prevMonth, prevStart, prevEnd),
     ]);
 
   const ppSpend  = ppAdsResult.status  === 'fulfilled'
@@ -385,5 +393,11 @@ export async function GET(request: Request) {
       campaignCount: email.campaigns.length,
     } : null,
     alerts,
+  }, {
+    headers: {
+      // Vercel edge caches each range value separately (URL includes ?range=…).
+      // 2-min fresh + 1-min stale-while-revalidate avoids hitting 11 external APIs on every load.
+      'Cache-Control': 'public, s-maxage=120, stale-while-revalidate=60',
+    },
   });
 }
