@@ -96,11 +96,12 @@ export async function fetchBlakeDownloads(): Promise<BlakeDownloadsData> {
   try {
     const base = `https://api.bigcommerce.com/stores/${BLAKE_STORE_HASH}/v2`;
 
-    // Fetch all digital products
+    // Fetch ALL products (no type filter — Blake's products may not be type=digital
+    // even though they have downloadable files attached)
     const products: Array<{ id: number; name: string }> = [];
     let page = 1;
-    while (true) {
-      const res = await fetch(`${base}/products?type=digital&limit=250&page=${page}`, {
+    while (products.length < 2000) {
+      const res = await fetch(`${base}/products?limit=250&page=${page}`, {
         headers: bcHeaders(BLAKE_ACCESS_TOKEN), cache: 'no-store',
       });
       if (res.status === 204 || res.status === 404) break;
@@ -114,22 +115,29 @@ export async function fetchBlakeDownloads(): Promise<BlakeDownloadsData> {
 
     if (products.length === 0) return { topProducts: [], connected: true };
 
-    // Fetch download files for all products in parallel (each product may have multiple files)
-    const results = await Promise.all(
-      products.map(async (p) => {
-        const res = await fetch(`${base}/products/${p.id}/downloads`, {
-          headers: bcHeaders(BLAKE_ACCESS_TOKEN), cache: 'no-store',
-        });
-        if (!res.ok || res.status === 204) return { productId: p.id, name: p.name, downloads: 0 };
-        const files = await res.json();
-        const total = Array.isArray(files)
-          ? files.reduce((s: number, f: any) => s + (Number(f.num_downloads) || 0), 0)
-          : 0;
-        return { productId: p.id, name: p.name, downloads: total };
-      })
-    );
+    // Check downloads for all products in batches of 50
+    const BATCH = 50;
+    const withDownloads: DownloadProduct[] = [];
 
-    const topProducts = results
+    for (let i = 0; i < products.length; i += BATCH) {
+      const batch = products.slice(i, i + BATCH);
+      const results = await Promise.all(
+        batch.map(async (p) => {
+          const res = await fetch(`${base}/products/${p.id}/downloads`, {
+            headers: bcHeaders(BLAKE_ACCESS_TOKEN), cache: 'no-store',
+          });
+          if (!res.ok || res.status === 204) return null;
+          const files = await res.json();
+          if (!Array.isArray(files) || files.length === 0) return null;
+          const total = files.reduce((s: number, f: any) => s + (Number(f.num_downloads) || 0), 0);
+          if (total === 0) return null;
+          return { productId: p.id, name: p.name, downloads: total };
+        })
+      );
+      for (const r of results) if (r) withDownloads.push(r);
+    }
+
+    const topProducts = withDownloads
       .sort((a, b) => b.downloads - a.downloads)
       .slice(0, 25);
 

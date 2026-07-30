@@ -1,12 +1,19 @@
 import { NextResponse } from 'next/server';
+import { unstable_cache } from 'next/cache';
 import { fetchBlakeDownloads } from '@/lib/blake-data';
 
+// Scanning all products for downloads is expensive — cache result for 12 hours
+const getCachedDownloads = unstable_cache(
+  () => fetchBlakeDownloads(),
+  ['blake-downloads-all'],
+  { revalidate: 43200 },
+);
+
 export async function GET() {
-  const data = await fetchBlakeDownloads();
+  const data = await getCachedDownloads();
   return NextResponse.json(data, {
     headers: {
-      // Download counts change infrequently — cache 1 hour at the edge
-      'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=300',
+      'Cache-Control': 'public, s-maxage=43200, stale-while-revalidate=600',
     },
   });
 }
