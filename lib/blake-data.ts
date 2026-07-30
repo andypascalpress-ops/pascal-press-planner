@@ -187,7 +187,7 @@ export async function fetchBlakeDownloads(): Promise<BlakeDownloadsData> {
         if (!res.ok || res.status === 204) return { ...p, downloads: p.purchaseCount };
         const files = await res.json();
         const numDownloads = Array.isArray(files)
-          ? files.reduce((s: number, f: any) => s + (Number(f.num_downloads) || 0), 0)
+          ? files.reduce((s: number, f: any) => s + (Number(f.total_downloads) || 0), 0)
           : 0;
         return { ...p, downloads: numDownloads > 0 ? numDownloads : p.purchaseCount };
       })
