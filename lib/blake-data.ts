@@ -171,33 +171,13 @@ export async function fetchBlakeDownloads(): Promise<BlakeDownloadsData> {
       monthCounts.set(month, mCount);
     }
 
-    // Top 50 by purchase count — we'll enrich with actual BC num_downloads
-    const topByPurchase = [...productCounts.entries()]
-      .map(([productId, { name, count }]) => ({ productId, name, purchaseCount: count }))
-      .sort((a, b) => b.purchaseCount - a.purchaseCount)
-      .slice(0, 50);
-
-    // Enrich with actual cumulative download counts from BC product downloads API.
-    // This captures subscribers downloading files without a purchase order.
-    const enriched = await Promise.all(
-      topByPurchase.map(async (p) => {
-        const res = await fetch(`${base}/products/${p.productId}/downloads`, {
-          headers: bcHeaders(BLAKE_ACCESS_TOKEN), cache: 'no-store',
-        });
-        if (!res.ok || res.status === 204) return { ...p, downloads: p.purchaseCount };
-        const files = await res.json();
-        const numDownloads = Array.isArray(files)
-          ? files.reduce((s: number, f: any) => s + (Number(f.num_downloads) || 0), 0)
-          : 0;
-        // Fall back to purchase count if the product has no attached download files
-        return { ...p, downloads: numDownloads > 0 ? numDownloads : p.purchaseCount };
-      })
-    );
-
-    const topProducts = enriched
+    // Top 25 by purchase count (orders). Note: the Blake API token does not have
+    // product-read scope so BC's num_downloads field is inaccessible; these counts
+    // represent individual order line items, not subscriber download clicks.
+    const topProducts = [...productCounts.entries()]
+      .map(([productId, { name, count }]) => ({ productId, name, downloads: count }))
       .sort((a, b) => b.downloads - a.downloads)
-      .slice(0, 25)
-      .map(({ productId, name, downloads }) => ({ productId, name, downloads }));
+      .slice(0, 25);
 
     const months         = monthList.map(m => ({ month: m, count: monthCounts.get(m) ?? 0 }));
     const totalPurchases = months.reduce((s, m) => s + m.count, 0);
