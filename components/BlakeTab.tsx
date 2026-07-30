@@ -145,15 +145,15 @@ function DownloadsSection({ data }: { data: BlakeDownloadsData | null }) {
   }
 
   const maxDownloads = data.topProducts[0]?.downloads ?? 1;
-  const totalDownloads = data.topProducts.reduce((s, p) => s + p.downloads, 0);
+  const totalDownloads = data.totalPurchases;
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
         <StatTile
-          label="Total downloads (all time)"
+          label="Total PDF purchases (12 months)"
           value={totalDownloads.toLocaleString()}
-          sub={`across ${data.topProducts.length} digital products`}
+          sub={`across ${data.topProducts.length} products`}
         />
         <StatTile
           label="Top download"

@@ -374,10 +374,10 @@ function BlakeExtraCard() {
         {/* ── File Downloads (cumulative leaderboard) ── */}
         <div>
           <div className="flex items-baseline justify-between mb-3">
-            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">File Downloads (all time)</p>
-            {dls?.connected && dls.topProducts.length > 0 && (
+            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">File Downloads (last 12 months)</p>
+            {dls?.connected && dls.totalPurchases > 0 && (
               <span className="text-xs text-gray-400">
-                {dls.topProducts.reduce((s, p) => s + p.downloads, 0).toLocaleString()} total
+                {dls.totalPurchases.toLocaleString()} purchases
               </span>
             )}
           </div>

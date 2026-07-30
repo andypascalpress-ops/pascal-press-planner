@@ -82,69 +82,107 @@ async function orderHasProduct(orderId: number, productId: number): Promise<bool
 export interface DownloadProduct {
   productId: number;
   name:      string;
-  downloads: number;
+  downloads: number; // purchase count (last 12 months)
+}
+
+export interface DownloadMonth {
+  month: string; // YYYY-MM
+  count: number;
 }
 
 export interface BlakeDownloadsData {
-  topProducts: DownloadProduct[];
-  connected:   boolean;
+  topProducts:    DownloadProduct[];
+  months:         DownloadMonth[];
+  totalPurchases: number;
+  connected:      boolean;
 }
 
+/**
+ * Derives download data from order line items (last 12 months).
+ * Uses the same order-fetching pattern as fetchBlakeSubscriptions so we know it works.
+ * "downloads" here means PDF product purchases — the same data the beadmin page shows.
+ */
 export async function fetchBlakeDownloads(): Promise<BlakeDownloadsData> {
-  if (!BLAKE_STORE_HASH || !BLAKE_ACCESS_TOKEN) return { topProducts: [], connected: false };
+  const empty = { topProducts: [], months: [], totalPurchases: 0, connected: false };
+  if (!BLAKE_STORE_HASH || !BLAKE_ACCESS_TOKEN) return empty;
 
   try {
     const base = `https://api.bigcommerce.com/stores/${BLAKE_STORE_HASH}/v2`;
 
-    // Fetch ALL products (no type filter — Blake's products may not be type=digital
-    // even though they have downloadable files attached)
-    const products: Array<{ id: number; name: string }> = [];
-    let page = 1;
-    while (products.length < 2000) {
-      const res = await fetch(`${base}/products?limit=250&page=${page}`, {
-        headers: bcHeaders(BLAKE_ACCESS_TOKEN), cache: 'no-store',
-      });
-      if (res.status === 204 || res.status === 404) break;
-      if (!res.ok) break;
-      const data = await res.json();
-      if (!Array.isArray(data) || data.length === 0) break;
-      for (const p of data) products.push({ id: p.id, name: p.name });
-      if (data.length < 250) break;
-      page++;
+    const now = new Date();
+    const monthList: string[] = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      monthList.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
     }
 
-    if (products.length === 0) return { topProducts: [], connected: true };
+    // Fetch all months in parallel
+    const ordersByMonth = await Promise.all(
+      monthList.map(async (month) => ({
+        month,
+        orders: (await fetchOrdersForMonth(month)).filter(o => !EXCLUDED_STATUSES.has(o.status)),
+      }))
+    );
 
-    // Check downloads for all products in batches of 50
-    const BATCH = 50;
-    const withDownloads: DownloadProduct[] = [];
+    const allOrders = ordersByMonth.flatMap(({ orders }) => orders);
 
-    for (let i = 0; i < products.length; i += BATCH) {
-      const batch = products.slice(i, i + BATCH);
+    // Fetch ALL line items in batches of 20 (same as subscriptions)
+    const BATCH = 20;
+    type LineItem = { product_id: number; name: string; quantity: number };
+    const itemsByOrder = new Map<number, LineItem[]>();
+
+    for (let i = 0; i < allOrders.length; i += BATCH) {
+      const batch = allOrders.slice(i, i + BATCH);
       const results = await Promise.all(
-        batch.map(async (p) => {
-          const res = await fetch(`${base}/products/${p.id}/downloads`, {
+        batch.map(async (o) => {
+          const res = await fetch(`${base}/orders/${o.id}/products`, {
             headers: bcHeaders(BLAKE_ACCESS_TOKEN), cache: 'no-store',
           });
-          if (!res.ok || res.status === 204) return null;
-          const files = await res.json();
-          if (!Array.isArray(files) || files.length === 0) return null;
-          const total = files.reduce((s: number, f: any) => s + (Number(f.num_downloads) || 0), 0);
-          if (total === 0) return null;
-          return { productId: p.id, name: p.name, downloads: total };
+          if (!res.ok || res.status === 204) return { id: o.id, items: [] as LineItem[] };
+          const data = await res.json();
+          const items: LineItem[] = Array.isArray(data)
+            ? data.map((x: any) => ({
+                product_id: Number(x.product_id),
+                name:       String(x.name ?? ''),
+                quantity:   Number(x.quantity) || 1,
+              }))
+            : [];
+          return { id: o.id, items };
         })
       );
-      for (const r of results) if (r) withDownloads.push(r);
+      for (const { id, items } of results) itemsByOrder.set(id, items);
     }
 
-    const topProducts = withDownloads
+    // Aggregate — exclude subscription product
+    const productCounts = new Map<number, { name: string; count: number }>();
+    const monthCounts   = new Map<string, number>();
+
+    for (const { month, orders } of ordersByMonth) {
+      let mCount = 0;
+      for (const order of orders) {
+        for (const item of (itemsByOrder.get(order.id) ?? [])) {
+          if (item.product_id === SUBSCRIPTION_PRODUCT_ID) continue;
+          const existing = productCounts.get(item.product_id);
+          if (existing) existing.count += item.quantity;
+          else productCounts.set(item.product_id, { name: item.name, count: item.quantity });
+          mCount += item.quantity;
+        }
+      }
+      monthCounts.set(month, mCount);
+    }
+
+    const topProducts = [...productCounts.entries()]
+      .map(([productId, { name, count }]) => ({ productId, name, downloads: count }))
       .sort((a, b) => b.downloads - a.downloads)
       .slice(0, 25);
 
-    return { topProducts, connected: true };
+    const months         = monthList.map(m => ({ month: m, count: monthCounts.get(m) ?? 0 }));
+    const totalPurchases = months.reduce((s, m) => s + m.count, 0);
+
+    return { topProducts, months, totalPurchases, connected: true };
   } catch (err) {
     console.error('[blake-downloads]', err);
-    return { topProducts: [], connected: false };
+    return { topProducts: [], months: [], totalPurchases: 0, connected: false };
   }
 }
 
