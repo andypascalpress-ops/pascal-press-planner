@@ -171,13 +171,32 @@ export async function fetchBlakeDownloads(): Promise<BlakeDownloadsData> {
       monthCounts.set(month, mCount);
     }
 
-    // Top 25 by purchase count (orders). Note: the Blake API token does not have
-    // product-read scope so BC's num_downloads field is inaccessible; these counts
-    // represent individual order line items, not subscriber download clicks.
-    const topProducts = [...productCounts.entries()]
-      .map(([productId, { name, count }]) => ({ productId, name, downloads: count }))
+    // Top 50 by purchase count, then enrich with BC's cumulative num_downloads.
+    // num_downloads captures ALL download clicks including by subscribers,
+    // so it's more accurate than purchase count alone.
+    const topByPurchase = [...productCounts.entries()]
+      .map(([productId, { name, count }]) => ({ productId, name, purchaseCount: count }))
+      .sort((a, b) => b.purchaseCount - a.purchaseCount)
+      .slice(0, 50);
+
+    const enriched = await Promise.all(
+      topByPurchase.map(async (p) => {
+        const res = await fetch(`${base}/products/${p.productId}/downloads`, {
+          headers: bcHeaders(BLAKE_ACCESS_TOKEN), cache: 'no-store',
+        });
+        if (!res.ok || res.status === 204) return { ...p, downloads: p.purchaseCount };
+        const files = await res.json();
+        const numDownloads = Array.isArray(files)
+          ? files.reduce((s: number, f: any) => s + (Number(f.num_downloads) || 0), 0)
+          : 0;
+        return { ...p, downloads: numDownloads > 0 ? numDownloads : p.purchaseCount };
+      })
+    );
+
+    const topProducts = enriched
       .sort((a, b) => b.downloads - a.downloads)
-      .slice(0, 25);
+      .slice(0, 25)
+      .map(({ productId, name, downloads }) => ({ productId, name, downloads }));
 
     const months         = monthList.map(m => ({ month: m, count: monthCounts.get(m) ?? 0 }));
     const totalPurchases = months.reduce((s, m) => s + m.count, 0);
