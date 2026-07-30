@@ -303,7 +303,8 @@ function BudgetBar({ spend, budget, dayPct, isMonthly = true }: {
 interface BlakeSubMonth  { month: string; count: number; revenue: number; }
 interface BlakeSubData   { months: BlakeSubMonth[]; totalCount: number; totalRevenue: number; connected: boolean; }
 interface BlakeDlProduct { productId: number; name: string; downloads: number; }
-interface BlakeDlData    { topProducts: BlakeDlProduct[]; connected: boolean; }
+interface BlakeDlMonth   { month: string; count: number; }
+interface BlakeDlData    { topProducts: BlakeDlProduct[]; months: BlakeDlMonth[]; totalPurchases: number; connected: boolean; }
 
 function BlakeExtraCard() {
   const [subs, setSubs] = useState<BlakeSubData  | null>(null);
