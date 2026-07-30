@@ -298,6 +298,129 @@ function BudgetBar({ spend, budget, dayPct, isMonthly = true }: {
   );
 }
 
+// ─── Blake Education — extra data (subscriptions + downloads) ────────────────
+
+interface BlakeSubMonth  { month: string; count: number; revenue: number; }
+interface BlakeSubData   { months: BlakeSubMonth[]; totalCount: number; totalRevenue: number; connected: boolean; }
+interface BlakeDlProduct { productId: number; name: string; downloads: number; }
+interface BlakeDlData    { topProducts: BlakeDlProduct[]; connected: boolean; }
+
+function BlakeExtraCard() {
+  const [subs, setSubs] = useState<BlakeSubData  | null>(null);
+  const [dls,  setDls]  = useState<BlakeDlData   | null>(null);
+
+  useEffect(() => {
+    fetch('/api/blake-subscriptions').then(r => r.ok ? r.json() : null).then(setSubs).catch(() => {});
+    fetch('/api/blake-downloads').then(r => r.ok ? r.json() : null).then(setDls).catch(() => {});
+  }, []);
+
+  const monthLabel = (ym: string) =>
+    new Date(Number(ym.slice(0,4)), Number(ym.slice(5,7)) - 1, 1)
+      .toLocaleString('en-AU', { month: 'short', year: '2-digit' });
+
+  const maxCount   = Math.max(...(subs?.months.map(m => m.count) ?? [1]), 1);
+  const maxDl      = dls?.topProducts[0]?.downloads ?? 1;
+
+  return (
+    <div className="md:col-span-2 bg-white rounded-xl border border-gray-200 p-5 space-y-6">
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">Blake Education</span>
+        <span className="text-sm font-semibold text-gray-700">Subscriptions &amp; Downloads</span>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* ── Subscriptions (product #1072) ── */}
+        <div>
+          <div className="flex items-baseline justify-between mb-3">
+            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Subscriptions — Product #1072</p>
+            {subs?.connected && (
+              <span className="text-xs text-gray-400">{subs.totalCount} orders · {AUD.format(subs.totalRevenue)}</span>
+            )}
+          </div>
+          {!subs ? (
+            <div className="space-y-2">
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="flex items-center gap-2 animate-pulse">
+                  <div className="w-8 h-3 bg-gray-100 rounded" />
+                  <div className="flex-1 h-4 bg-gray-100 rounded-full" />
+                  <div className="w-4 h-3 bg-gray-100 rounded" />
+                </div>
+              ))}
+            </div>
+          ) : !subs.connected ? (
+            <p className="text-xs text-red-500">Could not connect to Blake BigCommerce.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {subs.months.slice().reverse().slice(0, 12).map(m => (
+                <div key={m.month} className="flex items-center gap-2">
+                  <span className="text-[11px] text-gray-400 w-10 shrink-0 text-right">{monthLabel(m.month)}</span>
+                  <div className="flex-1 h-4 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-violet-400 rounded-full transition-all"
+                      style={{ width: m.count > 0 ? `${(m.count / maxCount) * 100}%` : '0%' }}
+                    />
+                  </div>
+                  <span className="text-[11px] font-semibold text-gray-700 w-5 text-right tabular-nums">{m.count}</span>
+                  <span className="text-[11px] text-gray-400 w-16 text-right tabular-nums">{m.revenue > 0 ? AUD.format(m.revenue) : '—'}</span>
+                </div>
+              ))}
+              {subs.totalCount === 0 && (
+                <p className="text-xs text-gray-400">No subscription orders in the last 12 months.</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── File Downloads (cumulative leaderboard) ── */}
+        <div>
+          <div className="flex items-baseline justify-between mb-3">
+            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">File Downloads (all time)</p>
+            {dls?.connected && dls.topProducts.length > 0 && (
+              <span className="text-xs text-gray-400">
+                {dls.topProducts.reduce((s, p) => s + p.downloads, 0).toLocaleString()} total
+              </span>
+            )}
+          </div>
+          {!dls ? (
+            <div className="space-y-2">
+              {[...Array(8)].map((_, i) => (
+                <div key={i} className="flex items-center gap-2 animate-pulse">
+                  <div className="flex-1 h-3 bg-gray-100 rounded" />
+                  <div className="w-8 h-3 bg-gray-100 rounded" />
+                </div>
+              ))}
+            </div>
+          ) : !dls.connected ? (
+            <p className="text-xs text-red-500">Could not fetch download data from Blake BigCommerce.</p>
+          ) : dls.topProducts.length === 0 ? (
+            <p className="text-xs text-gray-400">No digital products found.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {dls.topProducts.slice(0, 12).map((p, i) => (
+                <div key={p.productId} className="flex items-center gap-2">
+                  <span className="text-[11px] text-gray-300 w-4 shrink-0 text-right">{i + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] text-gray-700 truncate leading-tight">{p.name}</p>
+                    <div className="mt-0.5 h-1 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-violet-300 rounded-full"
+                        style={{ width: `${(p.downloads / maxDl) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                  <span className="text-[11px] font-semibold text-gray-700 w-12 text-right tabular-nums shrink-0">
+                    {p.downloads.toLocaleString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
   name: string;
   data: BrandData;
@@ -750,6 +873,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
           {blake && (
             <BrandCard name="Blake Education" data={blake} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
           )}
+          {blake && <BlakeExtraCard />}
         </div>
 
         {/* ── Band 6 Tracker ── */}
