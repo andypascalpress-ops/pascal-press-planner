@@ -243,36 +243,58 @@ export default function ProductsSubTab() {
       {/* ── Most Abandoned Products ── */}
       {abandoned && abandoned.length > 0 && (() => {
         const maxCarts = abandoned[0]!.carts;
+        const totalLost = abandoned.slice(0, 15).reduce((s, p) => s + p.value, 0);
         return (
           <div className="mt-2 border-t border-gray-100 pt-5">
-            <div className="flex items-baseline justify-between mb-3">
-              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Most Abandoned Products</p>
-              <span className="text-xs text-gray-400">last 30 days · incomplete checkouts</span>
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <p className="text-sm font-semibold text-gray-800">Most Abandoned Products</p>
+                <p className="text-xs text-gray-400 mt-0.5">Last 30 days · incomplete checkouts only</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm font-bold text-red-500 tabular-nums">{AUD.format(totalLost)}</p>
+                <p className="text-[10px] text-gray-400">total lost revenue</p>
+              </div>
             </div>
-            <div className="space-y-2">
-              {abandoned.slice(0, 15).map((p, i) => (
-                <div key={p.name} className="flex items-center gap-2">
-                  <span className="text-[11px] text-gray-300 w-4 shrink-0 text-right">{i + 1}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[11px] text-gray-700 truncate leading-tight" title={p.name}>{p.name}</p>
-                    <div className="mt-0.5 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-orange-300 rounded-full"
-                        style={{ width: `${(p.carts / maxCarts) * 100}%` }}
-                      />
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className="text-[11px] font-semibold text-gray-700 tabular-nums">
-                      {p.carts} {p.carts === 1 ? 'cart' : 'carts'}
-                    </span>
-                    {p.value > 0 && (
-                      <p className="text-[10px] text-gray-400 tabular-nums">{AUD.format(p.value)} lost</p>
-                    )}
-                  </div>
-                </div>
-              ))}
+            <div className="overflow-x-auto rounded-lg border border-gray-100">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-100">
+                    <th className="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wide w-6">#</th>
+                    <th className="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Product</th>
+                    <th className="px-3 py-2 text-right text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Abandoned carts</th>
+                    <th className="px-3 py-2 text-right text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Units</th>
+                    <th className="px-3 py-2 text-right text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Lost revenue</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {abandoned.slice(0, 15).map((p, i) => (
+                    <tr key={p.name} className="border-b border-gray-50 hover:bg-orange-50/30 transition-colors">
+                      <td className="px-3 py-2.5 text-[11px] text-gray-400 font-medium">{i + 1}</td>
+                      <td className="px-3 py-2.5">
+                        <p className="text-sm font-medium text-gray-800 leading-tight">{p.name}</p>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="w-20 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-orange-400 rounded-full" style={{ width: `${(p.carts / maxCarts) * 100}%` }} />
+                          </div>
+                          <span className="text-sm font-semibold text-gray-800 tabular-nums w-6 text-right">{p.carts}</span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5 text-right text-sm text-gray-600 tabular-nums">{p.units}</td>
+                      <td className="px-3 py-2.5 text-right">
+                        {p.value > 0
+                          ? <span className="text-sm font-semibold text-red-500 tabular-nums">{AUD.format(p.value)}</span>
+                          : <span className="text-xs text-gray-300">—</span>
+                        }
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
+            <p className="text-[10px] text-gray-400 mt-2">Based on a sample of up to 60 recent incomplete orders</p>
           </div>
         );
       })()}
