@@ -422,6 +422,81 @@ function BlakeExtraCard() {
   );
 }
 
+// ─── Pascal Press — Abandoned Cart Rate ──────────────────────────────────────
+
+interface PPAbandonedCartsData {
+  connected:         boolean;
+  days:              number;
+  currentRate:       number;
+  previousRate:      number;
+  deltaRatePp:       number;
+  currentAbandoned:  number;
+  currentCompleted:  number;
+  previousAbandoned: number;
+  previousCompleted: number;
+}
+
+function PPAbandonedCartCard() {
+  const [data, setData] = useState<PPAbandonedCartsData | null>(null);
+
+  useEffect(() => {
+    fetch('/api/bc-abandoned-carts?days=30')
+      .then(r => r.ok ? r.json() : null)
+      .then(setData)
+      .catch(() => {});
+  }, []);
+
+  if (!data) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-5 animate-pulse">
+        <div className="h-4 w-48 bg-gray-100 rounded mb-4" />
+        <div className="h-8 w-24 bg-gray-100 rounded mb-2" />
+        <div className="h-3 w-64 bg-gray-100 rounded" />
+      </div>
+    );
+  }
+  if (!data.connected) return null;
+
+  const direction  = data.deltaRatePp < -1 ? 'down' : data.deltaRatePp > 1 ? 'up' : 'flat';
+  const deltaColor = direction === 'down' ? 'bg-emerald-100 text-emerald-700'
+                   : direction === 'up'   ? 'bg-red-100 text-red-700'
+                   : 'bg-gray-100 text-gray-600';
+  const deltaArrow = direction === 'down' ? '↓' : direction === 'up' ? '↑' : '→';
+  const deltaLabel = direction === 'down' ? 'lower' : direction === 'up' ? 'higher' : 'unchanged';
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-5">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Pascal Press</span>
+          <span className="text-sm font-semibold text-gray-700">Abandoned Cart Rate</span>
+        </div>
+        <span className="text-xs text-gray-400">Last {data.days} days vs prior {data.days} days</span>
+      </div>
+
+      <div className="flex items-end gap-8">
+        {/* Current rate */}
+        <div>
+          <p className="text-3xl font-bold text-gray-900">{data.currentRate.toFixed(1)}%</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {data.currentAbandoned} abandoned · {data.currentCompleted} completed
+          </p>
+        </div>
+
+        {/* Comparison */}
+        <div className="flex flex-col gap-1 pb-0.5">
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${deltaColor}`}>
+            {deltaArrow} {Math.abs(data.deltaRatePp).toFixed(1)}pp {deltaLabel} than prior period
+          </span>
+          <span className="text-xs text-gray-400">
+            Prior: {data.previousRate.toFixed(1)}% · {data.previousAbandoned} abandoned / {data.previousAbandoned + data.previousCompleted} initiated
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
   name: string;
   data: BrandData;
@@ -876,6 +951,9 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
           )}
           {blake && <BlakeExtraCard />}
         </div>
+
+        {/* ── Pascal Press — Abandoned Cart Rate ── */}
+        <PPAbandonedCartCard />
 
         {/* ── Band 6 Tracker ── */}
         <Band6TrackerCard />
