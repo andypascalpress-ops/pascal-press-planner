@@ -1053,8 +1053,15 @@ export interface CartAbandonmentPeriod {
   addToCarts:  number;
   checkouts:   number;
   purchases:   number;
-  /** (addToCarts - purchases) / addToCarts * 100 — clamped 0–100 */
+  /** Rate calculated using the best available denominator — see method */
   abandonRate: number;
+  /**
+   * 'addToCarts'  — full funnel: (addToCarts - purchases) / addToCarts
+   * 'checkouts'   — checkout funnel: (checkouts - purchases) / checkouts
+   *                 used when addToCarts < checkouts (add_to_cart event not firing in GA4)
+   * 'none'        — no usable data
+   */
+  method:      'addToCarts' | 'checkouts' | 'none';
   startDate:   string;
   endDate:     string;
 }
@@ -1064,8 +1071,6 @@ export interface CartAbandonmentData {
   current:     CartAbandonmentPeriod | null;
   previous:    CartAbandonmentPeriod | null;
   deltaRatePp: number | null;
-  /** true when addToCarts === 0 — ecommerce events may not be configured in GA4 */
-  noEcommerceEvents: boolean;
 }
 
 export async function fetchCartAbandonment(
@@ -1073,15 +1078,15 @@ export async function fetchCartAbandonment(
   endDate:   string,
 ): Promise<CartAbandonmentData> {
   const empty: CartAbandonmentData = {
-    connected: false, current: null, previous: null, deltaRatePp: null, noEcommerceEvents: false,
+    connected: false, current: null, previous: null, deltaRatePp: null,
   };
   if (!isConnected()) return empty;
 
   try {
     const accessToken = await getAccessToken();
 
-    const n        = daysInclusive(startDate, endDate);
-    const prevEnd  = addDaysYmd(startDate, -1);
+    const n         = daysInclusive(startDate, endDate);
+    const prevEnd   = addDaysYmd(startDate, -1);
     const prevStart = addDaysYmd(prevEnd, -(n - 1));
 
     const fetchPeriod = async (start: string, end: string): Promise<CartAbandonmentPeriod> => {
@@ -1094,14 +1099,22 @@ export async function fetchCartAbandonment(
           { name: 'ecommercePurchases' },
         ],
       });
-      const row       = data.rows?.[0];
+      const row        = data.rows?.[0];
       const addToCarts = Math.round(parseFloat(row?.metricValues?.[0]?.value ?? '0'));
       const checkouts  = Math.round(parseFloat(row?.metricValues?.[1]?.value ?? '0'));
       const purchases  = Math.round(parseFloat(row?.metricValues?.[2]?.value ?? '0'));
-      const abandonRate = addToCarts > 0
-        ? Math.round(Math.max(0, (addToCarts - purchases) / addToCarts * 100) * 10) / 10
+
+      // If addToCarts < checkouts the add_to_cart GA4 event isn't firing reliably.
+      // Fall back to checkout abandonment: (checkouts - purchases) / checkouts.
+      const useCheckouts = addToCarts < checkouts;
+      const denominator  = useCheckouts ? checkouts : addToCarts;
+      const method: CartAbandonmentPeriod['method'] =
+        denominator === 0 ? 'none' : useCheckouts ? 'checkouts' : 'addToCarts';
+      const abandonRate = denominator > 0
+        ? Math.round(Math.max(0, (denominator - purchases) / denominator * 100) * 10) / 10
         : 0;
-      return { addToCarts, checkouts, purchases, abandonRate, startDate: start, endDate: end };
+
+      return { addToCarts, checkouts, purchases, abandonRate, method, startDate: start, endDate: end };
     };
 
     const [current, previous] = await Promise.all([
@@ -1109,10 +1122,9 @@ export async function fetchCartAbandonment(
       fetchPeriod(prevStart, prevEnd),
     ]);
 
-    const deltaRatePp       = Math.round((current.abandonRate - previous.abandonRate) * 10) / 10;
-    const noEcommerceEvents = current.addToCarts === 0;
+    const deltaRatePp = Math.round((current.abandonRate - previous.abandonRate) * 10) / 10;
 
-    return { connected: true, current, previous, deltaRatePp, noEcommerceEvents };
+    return { connected: true, current, previous, deltaRatePp };
   } catch (err) {
     console.error('[google-analytics fetchCartAbandonment]', err);
     return empty;

@@ -429,17 +429,17 @@ interface CartPeriod {
   checkouts:   number;
   purchases:   number;
   abandonRate: number;
+  method:      'addToCarts' | 'checkouts' | 'none';
   startDate:   string;
   endDate:     string;
 }
 
 interface CartAbandonmentData {
-  connected:         boolean;
-  days:              number;
-  current:           CartPeriod | null;
-  previous:          CartPeriod | null;
-  deltaRatePp:       number | null;
-  noEcommerceEvents: boolean;
+  connected:   boolean;
+  days:        number;
+  current:     CartPeriod | null;
+  previous:    CartPeriod | null;
+  deltaRatePp: number | null;
 }
 
 function PPAbandonedCartCard() {
@@ -461,20 +461,9 @@ function PPAbandonedCartCard() {
       </div>
     );
   }
-  if (!data.connected || !data.current) return null;
+  if (!data.connected || !data.current || data.current.method === 'none') return null;
 
-  if (data.noEcommerceEvents) {
-    return (
-      <div className="bg-white rounded-xl border border-gray-200 p-5">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Pascal Press</span>
-          <span className="text-sm font-semibold text-gray-700">Abandoned Cart Rate</span>
-        </div>
-        <p className="text-sm text-amber-600">GA4 add_to_cart events returned 0 — enhanced ecommerce tracking may not be configured on pascalpress.com.au.</p>
-      </div>
-    );
-  }
-
+  const method     = data.current.method;
   const rate       = data.current.abandonRate;
   const prevRate   = data.previous?.abandonRate ?? null;
   const delta      = data.deltaRatePp ?? 0;
@@ -486,24 +475,40 @@ function PPAbandonedCartCard() {
   const deltaLabel = direction === 'down' ? 'lower' : direction === 'up' ? 'higher' : 'unchanged';
 
   const benchmark =
-    rate < 60 ? { label: 'Well below average — great', color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' } :
-    rate < 65 ? { label: 'Below average — good',        color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' } :
-    rate < 75 ? { label: 'Industry average',             color: 'text-amber-600',   bg: 'bg-amber-50 border-amber-200'   } :
-    rate < 82 ? { label: 'Above average — room to improve', color: 'text-orange-600', bg: 'bg-orange-50 border-orange-200' } :
-              { label: 'High — action needed',            color: 'text-red-600',    bg: 'bg-red-50 border-red-200'       };
+    rate < 60 ? { label: 'Well below average — great',      color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' } :
+    rate < 65 ? { label: 'Below average — good',             color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' } :
+    rate < 75 ? { label: 'Industry average',                 color: 'text-amber-600',   bg: 'bg-amber-50 border-amber-200'   } :
+    rate < 82 ? { label: 'Above average — room to improve',  color: 'text-orange-600',  bg: 'bg-orange-50 border-orange-200' } :
+              { label: 'High — action needed',               color: 'text-red-600',     bg: 'bg-red-50 border-red-200'       };
 
-  const markerPct = Math.min(rate, 100);
+  const markerPct     = Math.min(rate, 100);
+  const purchaseRate  = data.current.checkouts > 0
+    ? Math.round(data.current.purchases / data.current.checkouts * 100) : 0;
 
-  // Funnel drop-off rates
-  const checkoutRate  = data.current.addToCarts > 0 ? Math.round(data.current.checkouts  / data.current.addToCarts  * 100) : 0;
-  const purchaseRate  = data.current.checkouts  > 0 ? Math.round(data.current.purchases  / data.current.checkouts   * 100) : 0;
+  // Sub-label under the big number depends on which denominator was used
+  const metricLabel = method === 'checkouts'
+    ? `${data.current.checkouts.toLocaleString()} checkouts · ${data.current.purchases.toLocaleString()} purchases`
+    : `${data.current.addToCarts.toLocaleString()} add-to-carts · ${data.current.purchases.toLocaleString()} purchases`;
+
+  const prevMetricLabel = method === 'checkouts'
+    ? `${data.previous?.checkouts.toLocaleString()} checkouts`
+    : `${data.previous?.addToCarts.toLocaleString()} add-to-carts`;
+
+  const calcExplanation = method === 'checkouts'
+    ? '(Checkouts − purchases) ÷ checkouts × 100, sourced from GA4. Used because GA4\'s add_to_cart event isn\'t firing on pascalpress.com.au — this measures people who started checkout but didn\'t complete payment. The Baymard ~70% benchmark covers the full funnel, so a direct comparison slightly understates true abandonment, but this is still a reliable trend metric.'
+    : '(Add-to-cart events − purchases) ÷ add-to-cart events × 100, sourced from GA4. Captures everyone who added to cart and didn\'t buy. Same methodology as Baymard\'s ~70% industry benchmark.';
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Pascal Press</span>
-          <span className="text-sm font-semibold text-gray-700">Abandoned Cart Rate</span>
+          <span className="text-sm font-semibold text-gray-700">
+            {method === 'checkouts' ? 'Checkout Abandonment Rate' : 'Cart Abandonment Rate'}
+          </span>
+          {method === 'checkouts' && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">checkout-only · add_to_cart not tracked</span>
+          )}
         </div>
         <span className="text-xs text-gray-400">Last {data.days} days vs prior {data.days} days · GA4</span>
       </div>
@@ -512,9 +517,7 @@ function PPAbandonedCartCard() {
       <div className="flex items-end gap-8">
         <div>
           <p className="text-3xl font-bold text-gray-900">{rate.toFixed(1)}%</p>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {data.current.addToCarts.toLocaleString()} add-to-carts · {data.current.purchases.toLocaleString()} purchases
-          </p>
+          <p className="text-xs text-gray-400 mt-0.5">{metricLabel}</p>
         </div>
         {prevRate !== null && (
           <div className="flex flex-col gap-1 pb-0.5">
@@ -522,27 +525,26 @@ function PPAbandonedCartCard() {
               {deltaArrow} {Math.abs(delta).toFixed(1)}pp {deltaLabel} than prior period
             </span>
             <span className="text-xs text-gray-400">
-              Prior: {prevRate.toFixed(1)}% · {data.previous?.addToCarts.toLocaleString()} add-to-carts
+              Prior: {prevRate.toFixed(1)}% · {prevMetricLabel}
             </span>
           </div>
         )}
       </div>
 
-      {/* Checkout funnel */}
+      {/* Checkout funnel (always available since checkouts > 0) */}
       {data.current.checkouts > 0 && (
-        <div className="grid grid-cols-3 gap-2">
-          {[
-            { label: 'Add to cart',       value: data.current.addToCarts, pct: 100,         color: 'bg-blue-400' },
-            { label: 'Reached checkout',  value: data.current.checkouts,  pct: checkoutRate, color: 'bg-amber-400' },
-            { label: 'Completed purchase',value: data.current.purchases,  pct: purchaseRate, color: 'bg-emerald-400' },
-          ].map(step => (
-            <div key={step.label} className="bg-gray-50 rounded-lg p-2.5">
-              <div className={`w-2 h-2 rounded-full ${step.color} mb-1.5`} />
-              <p className="text-sm font-bold text-gray-900">{step.value.toLocaleString()}</p>
-              <p className="text-[10px] text-gray-500 leading-tight">{step.label}</p>
-              {step.pct < 100 && <p className="text-[10px] font-semibold text-gray-400">{step.pct}% of prev step</p>}
-            </div>
-          ))}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="bg-gray-50 rounded-lg p-2.5">
+            <div className="w-2 h-2 rounded-full bg-amber-400 mb-1.5" />
+            <p className="text-sm font-bold text-gray-900">{data.current.checkouts.toLocaleString()}</p>
+            <p className="text-[10px] text-gray-500 leading-tight">Reached checkout</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-2.5">
+            <div className="w-2 h-2 rounded-full bg-emerald-400 mb-1.5" />
+            <p className="text-sm font-bold text-gray-900">{data.current.purchases.toLocaleString()}</p>
+            <p className="text-[10px] text-gray-500 leading-tight">Completed purchase</p>
+            <p className="text-[10px] font-semibold text-gray-400">{purchaseRate}% of checkouts</p>
+          </div>
         </div>
       )}
 
@@ -564,7 +566,7 @@ function PPAbandonedCartCard() {
       {/* How it's calculated */}
       <div className="rounded-lg bg-gray-50 px-3 py-2.5 text-[11px] text-gray-500 leading-relaxed">
         <span className="font-semibold text-gray-600">How it's calculated: </span>
-        (Add-to-cart events − purchases) ÷ add-to-cart events × 100, sourced from GA4. This captures everyone who added something to their cart and didn't buy — including people who left before checkout. Lower is better. The Baymard Institute benchmark of ~70% uses the same methodology.
+        {calcExplanation}
       </div>
     </div>
   );
