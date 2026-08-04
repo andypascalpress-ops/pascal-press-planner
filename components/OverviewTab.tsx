@@ -464,9 +464,21 @@ function PPAbandonedCartCard() {
   const deltaArrow = direction === 'down' ? '↓' : direction === 'up' ? '↑' : '→';
   const deltaLabel = direction === 'down' ? 'lower' : direction === 'up' ? 'higher' : 'unchanged';
 
+  // Industry benchmark: Baymard Institute average is ~70%. Below 65% = good, 65-75% = average, above 75% = high.
+  const rate = data.currentRate;
+  const benchmark =
+    rate < 60  ? { label: 'Well below average', color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' } :
+    rate < 65  ? { label: 'Below average',       color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' } :
+    rate < 75  ? { label: 'Industry average',    color: 'text-amber-600',   bg: 'bg-amber-50 border-amber-200'   } :
+    rate < 82  ? { label: 'Above average',        color: 'text-orange-600',  bg: 'bg-orange-50 border-orange-200' } :
+               { label: 'High — action needed',  color: 'text-red-600',     bg: 'bg-red-50 border-red-200'       };
+
+  // Position marker on 0–100 scale for the benchmark bar
+  const markerPct = Math.min(rate, 100);
+
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5">
-      <div className="flex items-center justify-between mb-4">
+    <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Pascal Press</span>
           <span className="text-sm font-semibold text-gray-700">Abandoned Cart Rate</span>
@@ -477,13 +489,13 @@ function PPAbandonedCartCard() {
       <div className="flex items-end gap-8">
         {/* Current rate */}
         <div>
-          <p className="text-3xl font-bold text-gray-900">{data.currentRate.toFixed(1)}%</p>
+          <p className="text-3xl font-bold text-gray-900">{rate.toFixed(1)}%</p>
           <p className="text-xs text-gray-400 mt-0.5">
             {data.currentAbandoned} abandoned · {data.currentCompleted} completed
           </p>
         </div>
 
-        {/* Comparison */}
+        {/* Comparison delta */}
         <div className="flex flex-col gap-1 pb-0.5">
           <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${deltaColor}`}>
             {deltaArrow} {Math.abs(data.deltaRatePp).toFixed(1)}pp {deltaLabel} than prior period
@@ -492,6 +504,33 @@ function PPAbandonedCartCard() {
             Prior: {data.previousRate.toFixed(1)}% · {data.previousAbandoned} abandoned / {data.previousAbandoned + data.previousCompleted} initiated
           </span>
         </div>
+      </div>
+
+      {/* Industry benchmark bar */}
+      <div>
+        <div className="relative h-3 rounded-full overflow-hidden mb-1" style={{ background: 'linear-gradient(to right, #10b981 0%, #10b981 60%, #f59e0b 60%, #f59e0b 75%, #f97316 75%, #f97316 82%, #ef4444 82%, #ef4444 100%)' }}>
+          {/* Current position marker */}
+          <div
+            className="absolute top-0 bottom-0 w-0.5 bg-gray-900"
+            style={{ left: `${markerPct}%` }}
+          />
+        </div>
+        <div className="flex justify-between text-[10px] text-gray-400 mb-2">
+          <span>0%</span>
+          <span className="absolute" style={{ left: '60%', transform: 'translateX(-50%)', position: 'relative' }}>65%</span>
+          <span>75%</span>
+          <span>100%</span>
+        </div>
+        <div className={`flex items-center justify-between rounded-lg border px-3 py-2 ${benchmark.bg}`}>
+          <span className={`text-xs font-semibold ${benchmark.color}`}>{benchmark.label}</span>
+          <span className="text-[11px] text-gray-500">Industry avg: ~70% (Baymard Institute)</span>
+        </div>
+      </div>
+
+      {/* How it's calculated */}
+      <div className="rounded-lg bg-gray-50 px-3 py-2.5 text-[11px] text-gray-500 leading-relaxed">
+        <span className="font-semibold text-gray-600">How it's calculated: </span>
+        Incomplete orders ÷ (Incomplete + Completed orders) × 100. "Incomplete" means a checkout was started in BigCommerce but payment was never received. Lower is better — the industry average is around 70%, meaning roughly 7 in 10 people who reach checkout don't complete the purchase.
       </div>
     </div>
   );
