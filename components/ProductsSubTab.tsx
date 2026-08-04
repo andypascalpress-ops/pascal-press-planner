@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+interface AbandonedProduct { name: string; carts: number; units: number; value: number; }
+
 interface ProductMetrics { revenue: number; orders: number; units: number; aov: number; }
 interface ProductRow {
   name:          string;
@@ -104,11 +106,12 @@ function ProductTable({ rows, view, currentLabel, lyLabel }: {
 }
 
 export default function ProductsSubTab() {
-  const [data,    setData]    = useState<ProductYOYData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState<string | null>(null);
-  const [view,    setView]    = useState<'top' | 'bottom'>('bottom');
-  const [range,   setRange]   = useState<RangeKey>('30d');
+  const [data,      setData]      = useState<ProductYOYData | null>(null);
+  const [loading,   setLoading]   = useState(true);
+  const [error,     setError]     = useState<string | null>(null);
+  const [view,      setView]      = useState<'top' | 'bottom'>('bottom');
+  const [range,     setRange]     = useState<RangeKey>('30d');
+  const [abandoned, setAbandoned] = useState<AbandonedProduct[] | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -127,6 +130,13 @@ export default function ProductsSubTab() {
   }, [range]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    fetch('/api/bc-abandoned-carts?days=30')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setAbandoned(d?.topProducts ?? null))
+      .catch(() => {});
+  }, []);
 
   if (loading) {
     return (
@@ -229,6 +239,43 @@ export default function ProductsSubTab() {
       <p className="text-[10px] text-gray-400 text-center">
         Based on up to 40 orders per period · BigCommerce data
       </p>
+
+      {/* ── Most Abandoned Products ── */}
+      {abandoned && abandoned.length > 0 && (() => {
+        const maxCarts = abandoned[0]!.carts;
+        return (
+          <div className="mt-2 border-t border-gray-100 pt-5">
+            <div className="flex items-baseline justify-between mb-3">
+              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Most Abandoned Products</p>
+              <span className="text-xs text-gray-400">last 30 days · incomplete checkouts</span>
+            </div>
+            <div className="space-y-2">
+              {abandoned.slice(0, 15).map((p, i) => (
+                <div key={p.name} className="flex items-center gap-2">
+                  <span className="text-[11px] text-gray-300 w-4 shrink-0 text-right">{i + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] text-gray-700 truncate leading-tight" title={p.name}>{p.name}</p>
+                    <div className="mt-0.5 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-orange-300 rounded-full"
+                        style={{ width: `${(p.carts / maxCarts) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="text-[11px] font-semibold text-gray-700 tabular-nums">
+                      {p.carts} {p.carts === 1 ? 'cart' : 'carts'}
+                    </span>
+                    {p.value > 0 && (
+                      <p className="text-[10px] text-gray-400 tabular-nums">{AUD.format(p.value)} lost</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
