@@ -1046,6 +1046,80 @@ export async function fetchETZWebsiteConversion(
 }
 
 // ---------------------------------------------------------------------------
+// Cart abandonment rate — GA4 addToCarts vs ecommercePurchases
+// ---------------------------------------------------------------------------
+
+export interface CartAbandonmentPeriod {
+  addToCarts:  number;
+  checkouts:   number;
+  purchases:   number;
+  /** (addToCarts - purchases) / addToCarts * 100 — clamped 0–100 */
+  abandonRate: number;
+  startDate:   string;
+  endDate:     string;
+}
+
+export interface CartAbandonmentData {
+  connected:   boolean;
+  current:     CartAbandonmentPeriod | null;
+  previous:    CartAbandonmentPeriod | null;
+  deltaRatePp: number | null;
+  /** true when addToCarts === 0 — ecommerce events may not be configured in GA4 */
+  noEcommerceEvents: boolean;
+}
+
+export async function fetchCartAbandonment(
+  startDate: string,
+  endDate:   string,
+): Promise<CartAbandonmentData> {
+  const empty: CartAbandonmentData = {
+    connected: false, current: null, previous: null, deltaRatePp: null, noEcommerceEvents: false,
+  };
+  if (!isConnected()) return empty;
+
+  try {
+    const accessToken = await getAccessToken();
+
+    const n        = daysInclusive(startDate, endDate);
+    const prevEnd  = addDaysYmd(startDate, -1);
+    const prevStart = addDaysYmd(prevEnd, -(n - 1));
+
+    const fetchPeriod = async (start: string, end: string): Promise<CartAbandonmentPeriod> => {
+      const capped = capGaEndDate(start, end);
+      const data = await runReport(accessToken, {
+        dateRanges: [{ startDate: capped.startDate, endDate: capped.endDate }],
+        metrics: [
+          { name: 'addToCarts' },
+          { name: 'checkouts' },
+          { name: 'ecommercePurchases' },
+        ],
+      });
+      const row       = data.rows?.[0];
+      const addToCarts = Math.round(parseFloat(row?.metricValues?.[0]?.value ?? '0'));
+      const checkouts  = Math.round(parseFloat(row?.metricValues?.[1]?.value ?? '0'));
+      const purchases  = Math.round(parseFloat(row?.metricValues?.[2]?.value ?? '0'));
+      const abandonRate = addToCarts > 0
+        ? Math.round(Math.max(0, (addToCarts - purchases) / addToCarts * 100) * 10) / 10
+        : 0;
+      return { addToCarts, checkouts, purchases, abandonRate, startDate: start, endDate: end };
+    };
+
+    const [current, previous] = await Promise.all([
+      fetchPeriod(startDate, endDate),
+      fetchPeriod(prevStart, prevEnd),
+    ]);
+
+    const deltaRatePp       = Math.round((current.abandonRate - previous.abandonRate) * 10) / 10;
+    const noEcommerceEvents = current.addToCarts === 0;
+
+    return { connected: true, current, previous, deltaRatePp, noEcommerceEvents };
+  } catch (err) {
+    console.error('[google-analytics fetchCartAbandonment]', err);
+    return empty;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Match helper (used client-side in EmailTab)
 // ---------------------------------------------------------------------------
 

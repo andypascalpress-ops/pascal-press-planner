@@ -422,25 +422,31 @@ function BlakeExtraCard() {
   );
 }
 
-// ─── Pascal Press — Abandoned Cart Rate ──────────────────────────────────────
+// ─── Pascal Press — Abandoned Cart Rate (GA4) ────────────────────────────────
 
-interface PPAbandonedCartsData {
+interface CartPeriod {
+  addToCarts:  number;
+  checkouts:   number;
+  purchases:   number;
+  abandonRate: number;
+  startDate:   string;
+  endDate:     string;
+}
+
+interface CartAbandonmentData {
   connected:         boolean;
   days:              number;
-  currentRate:       number;
-  previousRate:      number;
-  deltaRatePp:       number;
-  currentAbandoned:  number;
-  currentCompleted:  number;
-  previousAbandoned: number;
-  previousCompleted: number;
+  current:           CartPeriod | null;
+  previous:          CartPeriod | null;
+  deltaRatePp:       number | null;
+  noEcommerceEvents: boolean;
 }
 
 function PPAbandonedCartCard() {
-  const [data, setData] = useState<PPAbandonedCartsData | null>(null);
+  const [data, setData] = useState<CartAbandonmentData | null>(null);
 
   useEffect(() => {
-    fetch('/api/bc-abandoned-carts?days=30')
+    fetch('/api/cart-abandonment?days=30')
       .then(r => r.ok ? r.json() : null)
       .then(setData)
       .catch(() => {});
@@ -455,26 +461,42 @@ function PPAbandonedCartCard() {
       </div>
     );
   }
-  if (!data.connected) return null;
+  if (!data.connected || !data.current) return null;
 
-  const direction  = data.deltaRatePp < -1 ? 'down' : data.deltaRatePp > 1 ? 'up' : 'flat';
+  if (data.noEcommerceEvents) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Pascal Press</span>
+          <span className="text-sm font-semibold text-gray-700">Abandoned Cart Rate</span>
+        </div>
+        <p className="text-sm text-amber-600">GA4 add_to_cart events returned 0 — enhanced ecommerce tracking may not be configured on pascalpress.com.au.</p>
+      </div>
+    );
+  }
+
+  const rate       = data.current.abandonRate;
+  const prevRate   = data.previous?.abandonRate ?? null;
+  const delta      = data.deltaRatePp ?? 0;
+  const direction  = delta < -1 ? 'down' : delta > 1 ? 'up' : 'flat';
   const deltaColor = direction === 'down' ? 'bg-emerald-100 text-emerald-700'
                    : direction === 'up'   ? 'bg-red-100 text-red-700'
                    : 'bg-gray-100 text-gray-600';
   const deltaArrow = direction === 'down' ? '↓' : direction === 'up' ? '↑' : '→';
   const deltaLabel = direction === 'down' ? 'lower' : direction === 'up' ? 'higher' : 'unchanged';
 
-  // Industry benchmark: Baymard Institute average is ~70%. Below 65% = good, 65-75% = average, above 75% = high.
-  const rate = data.currentRate;
   const benchmark =
-    rate < 60  ? { label: 'Well below average', color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' } :
-    rate < 65  ? { label: 'Below average',       color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' } :
-    rate < 75  ? { label: 'Industry average',    color: 'text-amber-600',   bg: 'bg-amber-50 border-amber-200'   } :
-    rate < 82  ? { label: 'Above average',        color: 'text-orange-600',  bg: 'bg-orange-50 border-orange-200' } :
-               { label: 'High — action needed',  color: 'text-red-600',     bg: 'bg-red-50 border-red-200'       };
+    rate < 60 ? { label: 'Well below average — great', color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' } :
+    rate < 65 ? { label: 'Below average — good',        color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' } :
+    rate < 75 ? { label: 'Industry average',             color: 'text-amber-600',   bg: 'bg-amber-50 border-amber-200'   } :
+    rate < 82 ? { label: 'Above average — room to improve', color: 'text-orange-600', bg: 'bg-orange-50 border-orange-200' } :
+              { label: 'High — action needed',            color: 'text-red-600',    bg: 'bg-red-50 border-red-200'       };
 
-  // Position marker on 0–100 scale for the benchmark bar
   const markerPct = Math.min(rate, 100);
+
+  // Funnel drop-off rates
+  const checkoutRate  = data.current.addToCarts > 0 ? Math.round(data.current.checkouts  / data.current.addToCarts  * 100) : 0;
+  const purchaseRate  = data.current.checkouts  > 0 ? Math.round(data.current.purchases  / data.current.checkouts   * 100) : 0;
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
@@ -483,54 +505,66 @@ function PPAbandonedCartCard() {
           <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Pascal Press</span>
           <span className="text-sm font-semibold text-gray-700">Abandoned Cart Rate</span>
         </div>
-        <span className="text-xs text-gray-400">Last {data.days} days vs prior {data.days} days</span>
+        <span className="text-xs text-gray-400">Last {data.days} days vs prior {data.days} days · GA4</span>
       </div>
 
+      {/* Rate + delta */}
       <div className="flex items-end gap-8">
-        {/* Current rate */}
         <div>
           <p className="text-3xl font-bold text-gray-900">{rate.toFixed(1)}%</p>
           <p className="text-xs text-gray-400 mt-0.5">
-            {data.currentAbandoned} abandoned · {data.currentCompleted} completed
+            {data.current.addToCarts.toLocaleString()} add-to-carts · {data.current.purchases.toLocaleString()} purchases
           </p>
         </div>
-
-        {/* Comparison delta */}
-        <div className="flex flex-col gap-1 pb-0.5">
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${deltaColor}`}>
-            {deltaArrow} {Math.abs(data.deltaRatePp).toFixed(1)}pp {deltaLabel} than prior period
-          </span>
-          <span className="text-xs text-gray-400">
-            Prior: {data.previousRate.toFixed(1)}% · {data.previousAbandoned} abandoned / {data.previousAbandoned + data.previousCompleted} initiated
-          </span>
-        </div>
+        {prevRate !== null && (
+          <div className="flex flex-col gap-1 pb-0.5">
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${deltaColor}`}>
+              {deltaArrow} {Math.abs(delta).toFixed(1)}pp {deltaLabel} than prior period
+            </span>
+            <span className="text-xs text-gray-400">
+              Prior: {prevRate.toFixed(1)}% · {data.previous?.addToCarts.toLocaleString()} add-to-carts
+            </span>
+          </div>
+        )}
       </div>
+
+      {/* Checkout funnel */}
+      {data.current.checkouts > 0 && (
+        <div className="grid grid-cols-3 gap-2">
+          {[
+            { label: 'Add to cart',       value: data.current.addToCarts, pct: 100,         color: 'bg-blue-400' },
+            { label: 'Reached checkout',  value: data.current.checkouts,  pct: checkoutRate, color: 'bg-amber-400' },
+            { label: 'Completed purchase',value: data.current.purchases,  pct: purchaseRate, color: 'bg-emerald-400' },
+          ].map(step => (
+            <div key={step.label} className="bg-gray-50 rounded-lg p-2.5">
+              <div className={`w-2 h-2 rounded-full ${step.color} mb-1.5`} />
+              <p className="text-sm font-bold text-gray-900">{step.value.toLocaleString()}</p>
+              <p className="text-[10px] text-gray-500 leading-tight">{step.label}</p>
+              {step.pct < 100 && <p className="text-[10px] font-semibold text-gray-400">{step.pct}% of prev step</p>}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Industry benchmark bar */}
       <div>
-        <div className="relative h-3 rounded-full overflow-hidden mb-1" style={{ background: 'linear-gradient(to right, #10b981 0%, #10b981 60%, #f59e0b 60%, #f59e0b 75%, #f97316 75%, #f97316 82%, #ef4444 82%, #ef4444 100%)' }}>
-          {/* Current position marker */}
-          <div
-            className="absolute top-0 bottom-0 w-0.5 bg-gray-900"
-            style={{ left: `${markerPct}%` }}
-          />
+        <div className="relative h-3 rounded-full overflow-hidden mb-1.5"
+          style={{ background: 'linear-gradient(to right, #10b981 0%, #10b981 60%, #f59e0b 60%, #f59e0b 75%, #f97316 75%, #f97316 82%, #ef4444 82%, #ef4444 100%)' }}>
+          <div className="absolute top-0 bottom-0 w-0.5 bg-gray-900" style={{ left: `${markerPct}%` }} />
         </div>
-        <div className="flex justify-between text-[10px] text-gray-400 mb-2">
-          <span>0%</span>
-          <span className="absolute" style={{ left: '60%', transform: 'translateX(-50%)', position: 'relative' }}>65%</span>
-          <span>75%</span>
-          <span>100%</span>
+        <div className="flex justify-between text-[10px] text-gray-400 mb-1.5">
+          <span>0%</span><span>65%</span><span>75%</span><span>100%</span>
         </div>
         <div className={`flex items-center justify-between rounded-lg border px-3 py-2 ${benchmark.bg}`}>
           <span className={`text-xs font-semibold ${benchmark.color}`}>{benchmark.label}</span>
-          <span className="text-[11px] text-gray-500">Industry avg: ~70% (Baymard Institute)</span>
+          <span className="text-[11px] text-gray-500">Industry avg ~70% (Baymard Institute)</span>
         </div>
       </div>
 
       {/* How it's calculated */}
       <div className="rounded-lg bg-gray-50 px-3 py-2.5 text-[11px] text-gray-500 leading-relaxed">
         <span className="font-semibold text-gray-600">How it's calculated: </span>
-        Incomplete orders ÷ (Incomplete + Completed orders) × 100. "Incomplete" means a checkout was started in BigCommerce but payment was never received. Lower is better — the industry average is around 70%, meaning roughly 7 in 10 people who reach checkout don't complete the purchase.
+        (Add-to-cart events − purchases) ÷ add-to-cart events × 100, sourced from GA4. This captures everyone who added something to their cart and didn't buy — including people who left before checkout. Lower is better. The Baymard Institute benchmark of ~70% uses the same methodology.
       </div>
     </div>
   );
