@@ -214,11 +214,11 @@ export default function SalesTrendCard() {
             <BarChart data={yearChartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }} barCategoryGap="20%">
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
               <XAxis dataKey="year" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-              <YAxis tickFormatter={v => AUDk(v)} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} width={46}
+              <YAxis tickFormatter={v => metric==='revenue' ? AUDk(v) : v>=1000?`${(v/1000).toFixed(0)}k`:String(v)} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} width={46}
                 domain={[0, Math.ceil(maxYearVal * 1.1 / 10000) * 10000]} />
               <Tooltip content={<YearTooltip />} cursor={{ fill: '#f8fafc' }} />
               <Bar dataKey="value" radius={[4,4,0,0]}
-                label={{ position: 'top', fontSize: 9, fill: '#94a3b8', formatter: (v: number) => AUDk(v) }}
+                label={{ position: 'top', fontSize: 9, fill: '#94a3b8', formatter: (v: number) => metric==='revenue' ? AUDk(v) : v>=1000?`${(v/1000).toFixed(0)}k`:String(v) }}
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 fill="#3b82f6" shape={(props: any) => {
                   const { x, y, width, height, year } = props;
