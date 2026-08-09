@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import SalesTrendCard from './SalesTrendCard';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1026,6 +1027,9 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
           )}
           {blake && <BlakeExtraCard />}
         </div>
+
+        {/* ── Pascal Press — All-Time Sales Trend ── */}
+        <SalesTrendCard />
 
         {/* ── Pascal Press — Abandoned Cart Rate ── */}
         <PPAbandonedCartCard />
