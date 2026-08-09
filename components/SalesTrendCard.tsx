@@ -100,6 +100,10 @@ export default function SalesTrendCard() {
   const allTimeMonthAvg = completed.length > 0 ? totalRev / completed.length : 0;
   const allTimeDayAvg   = totalDays > 0 ? totalRev / totalDays : 0;
 
+  const last24        = completed.slice(-24);
+  const last24Rev     = last24.reduce((s, m) => s + m.revenue, 0);
+  const last24DayAvg  = last24.length > 0 ? last24Rev / (last24.length * 30.44) : 0;
+
   // ── Monthly chart data with 12-month rolling average ──────────────────────
   const monthChartData = months.map((m, i) => {
     const window = completed.slice(Math.max(0, i - 11), i + 1);
@@ -167,7 +171,7 @@ export default function SalesTrendCard() {
       </div>
 
       {/* KPI row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
         <div className="bg-gray-50 rounded-lg p-3">
           <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Last 12 months</p>
           <p className="text-base font-bold text-gray-900 mt-0.5">{AUD.format(last12Rev)}</p>
@@ -186,6 +190,11 @@ export default function SalesTrendCard() {
           <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">All-time daily avg</p>
           <p className="text-base font-bold text-gray-900 mt-0.5">{AUD.format(Math.round(allTimeDayAvg))}</p>
           <p className="text-[11px] text-gray-400 mt-0.5">per calendar day</p>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-3">
+          <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Daily avg (24 months)</p>
+          <p className="text-base font-bold text-gray-900 mt-0.5">{AUD.format(Math.round(last24DayAvg))}</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">last {last24.length} months</p>
         </div>
         <div className="bg-gray-50 rounded-lg p-3">
           <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Best month ever</p>
