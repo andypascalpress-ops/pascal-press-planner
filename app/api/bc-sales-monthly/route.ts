@@ -5,7 +5,7 @@
  */
 import { NextResponse } from 'next/server';
 
-export const dynamic     = 'force-dynamic';
+export const revalidate  = 21600; // cache result for 6 hours; re-fetch from BC in background
 export const maxDuration = 60;
 
 const STORE_HASH   = process.env.BIGCOMMERCE_STORE_HASH   ?? '';
