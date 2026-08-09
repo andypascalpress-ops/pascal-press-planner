@@ -58,11 +58,14 @@ function YearTooltip({ active, payload, label }: any) {
 type ViewMode = 'monthly' | 'yearly';
 type Metric   = 'revenue' | 'orders';
 
+type YearType = 'calendar' | 'financial';
+
 export default function SalesTrendCard() {
-  const [data,    setData]    = useState<SalesData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [view,    setView]    = useState<ViewMode>('yearly');
-  const [metric,  setMetric]  = useState<Metric>('revenue');
+  const [data,     setData]     = useState<SalesData | null>(null);
+  const [loading,  setLoading]  = useState(true);
+  const [view,     setView]     = useState<ViewMode>('yearly');
+  const [metric,   setMetric]   = useState<Metric>('revenue');
+  const [yearType, setYearType] = useState<YearType>('financial');
 
   useEffect(() => {
     fetch('/api/bc-sales-monthly')
@@ -121,18 +124,30 @@ export default function SalesTrendCard() {
     .filter(m => m.month.endsWith('-01') && m.month !== months[0]?.month)
     .map(m => m.month);
 
-  // ── Yearly chart data ──────────────────────────────────────────────────────
-  const yearMap = new Map<string, { revenue: number; orders: number; count: number; partial: boolean }>();
+  // ── Yearly chart data (calendar or AU financial year) ─────────────────────
   const curYear = currentMonth.slice(0, 4);
+  // AU FY: July–June. A month in YYYY-MM belongs to FY ending the NEXT calendar year if MM >= 07.
+  // e.g. Jul 2025 → FY2026, Jan 2026 → FY2026
+  function getFYLabel(ym: string): string {
+    const [y, m] = ym.split('-');
+    const fy = parseInt(m!, 10) >= 7 ? parseInt(y!, 10) + 1 : parseInt(y!, 10);
+    return `FY${fy}`;
+  }
+  // Current partial FY label
+  const curFY = getFYLabel(currentMonth);
+
+  const yearMap = new Map<string, { revenue: number; orders: number; count: number; partial: boolean }>();
   for (const m of months) {
-    const yr = m.month.slice(0, 4);
-    const entry = yearMap.get(yr);
-    if (!entry) yearMap.set(yr, { revenue: m.revenue, orders: m.orders, count: 1, partial: yr === curYear });
+    const label = yearType === 'financial' ? getFYLabel(m.month) : m.month.slice(0, 4);
+    const isPartial = yearType === 'financial' ? label === curFY : label === curYear;
+    const entry = yearMap.get(label);
+    if (!entry) yearMap.set(label, { revenue: m.revenue, orders: m.orders, count: 1, partial: isPartial });
     else { entry.revenue += m.revenue; entry.orders += m.orders; entry.count++; }
   }
   const yearChartData = [...yearMap.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([year, d]) => ({ year, ...d, value: metric === 'revenue' ? d.revenue : d.orders }));
+  const partialLabel = yearType === 'financial' ? curFY : curYear;
 
   const maxMonthVal = Math.max(...monthChartData.map(d => d.value), 1);
   const maxYearVal  = Math.max(...yearChartData.map(d => d.value), 1);
@@ -158,6 +173,17 @@ export default function SalesTrendCard() {
               </button>
             ))}
           </div>
+          {/* FY / CY toggle — only relevant for yearly view */}
+          {view === 'yearly' && (
+            <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-medium">
+              {(['financial','calendar'] as YearType[]).map(v => (
+                <button key={v} onClick={() => setYearType(v)}
+                  className={`px-3 py-1.5 transition-colors ${yearType===v?'bg-emerald-600 text-white':'bg-white text-gray-500 hover:bg-gray-50'}`}>
+                  {v === 'financial' ? 'AU Fin. Year' : 'Calendar Year'}
+                </button>
+              ))}
+            </div>
+          )}
           {/* Metric toggle */}
           <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-medium">
             {(['revenue','orders'] as Metric[]).map(v => (
@@ -222,7 +248,7 @@ export default function SalesTrendCard() {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 fill="#3b82f6" shape={(props: any) => {
                   const { x, y, width, height, year } = props;
-                  const isPartial = year === curYear;
+                  const isPartial = year === partialLabel;
                   return <rect x={x} y={y} width={width} height={height} rx={4} ry={4}
                     fill={isPartial ? '#93c5fd' : '#3b82f6'} opacity={isPartial ? 0.7 : 1} />;
                 }}
@@ -274,7 +300,10 @@ export default function SalesTrendCard() {
         {view === 'yearly' && (
           <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
             <div className="w-3 h-3 rounded-sm bg-blue-300 opacity-70" />
-            {curYear} = Jan–{new Date().toLocaleString('en-AU',{month:'short'})} only (year in progress)
+            {yearType === 'financial'
+              ? `${partialLabel} = Jul 2025–${new Date().toLocaleString('en-AU',{month:'short'})} ${new Date().getFullYear()} (in progress)`
+              : `${partialLabel} = Jan–${new Date().toLocaleString('en-AU',{month:'short'})} only (year in progress)`
+            }
           </div>
         )}
         <p className="text-[10px] text-gray-400">AEST · completed orders only</p>
