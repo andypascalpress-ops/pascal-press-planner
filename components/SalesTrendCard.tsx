@@ -126,22 +126,34 @@ export default function SalesTrendCard() {
 
   // ── Yearly chart data (calendar or AU financial year) ─────────────────────
   const curYear = currentMonth.slice(0, 4);
-  // AU FY: July–June. A month in YYYY-MM belongs to FY ending the NEXT calendar year if MM >= 07.
+  const [cyStr, cmStr] = currentMonth.split('-');
+  const curCM = parseInt(cmStr!, 10);
+  const curCY = parseInt(cyStr!, 10);
+  // FY start year: if we're in Jul–Dec, FY started this calendar year; if Jan–Jun, FY started last year
+  const curFYStartYear = curCM >= 7 ? curCY : curCY - 1;
+
+  // AU FY: July–June. A month YYYY-MM belongs to FY ending NEXT cal year if MM >= 07.
   // e.g. Jul 2025 → FY2026, Jan 2026 → FY2026
   function getFYLabel(ym: string): string {
     const [y, m] = ym.split('-');
     const fy = parseInt(m!, 10) >= 7 ? parseInt(y!, 10) + 1 : parseInt(y!, 10);
     return `FY${fy}`;
   }
-  // Current partial FY label
   const curFY = getFYLabel(currentMonth);
+
+  // Determine the first FY in our data — may be partial if data doesn't start in July
+  const firstMonth = months[0]?.month ?? currentMonth;
+  const firstFY    = getFYLabel(firstMonth);
+  const firstFYStartsAt = `${parseInt(firstFY.slice(2)) - 1}-07`; // e.g. FY2019 starts 2018-07
+  const firstFYIsPartial = firstMonth > firstFYStartsAt; // data starts after FY began
 
   const yearMap = new Map<string, { revenue: number; orders: number; count: number; partial: boolean }>();
   for (const m of months) {
     const label = yearType === 'financial' ? getFYLabel(m.month) : m.month.slice(0, 4);
-    const isPartial = yearType === 'financial' ? label === curFY : label === curYear;
+    const isCurrentPartial = yearType === 'financial' ? label === curFY : label === curYear;
+    const isFirstPartial   = yearType === 'financial' ? (label === firstFY && firstFYIsPartial) : (label === months[0]?.month.slice(0,4) && months[0]?.month.slice(5) !== '01');
     const entry = yearMap.get(label);
-    if (!entry) yearMap.set(label, { revenue: m.revenue, orders: m.orders, count: 1, partial: isPartial });
+    if (!entry) yearMap.set(label, { revenue: m.revenue, orders: m.orders, count: 1, partial: isCurrentPartial || isFirstPartial });
     else { entry.revenue += m.revenue; entry.orders += m.orders; entry.count++; }
   }
   const yearChartData = [...yearMap.entries()]
@@ -247,10 +259,9 @@ export default function SalesTrendCard() {
                 label={{ position: 'top', fontSize: 9, fill: '#94a3b8', formatter: (v: number) => metric==='revenue' ? AUDk(v) : v>=1000?`${(v/1000).toFixed(0)}k`:String(v) }}
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 fill="#3b82f6" shape={(props: any) => {
-                  const { x, y, width, height, year } = props;
-                  const isPartial = year === partialLabel;
+                  const { x, y, width, height, partial } = props;
                   return <rect x={x} y={y} width={width} height={height} rx={4} ry={4}
-                    fill={isPartial ? '#93c5fd' : '#3b82f6'} opacity={isPartial ? 0.7 : 1} />;
+                    fill={partial ? '#93c5fd' : '#3b82f6'} opacity={partial ? 0.7 : 1} />;
                 }}
               />
             </BarChart>
@@ -298,12 +309,20 @@ export default function SalesTrendCard() {
           </>
         )}
         {view === 'yearly' && (
-          <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
-            <div className="w-3 h-3 rounded-sm bg-blue-300 opacity-70" />
-            {yearType === 'financial'
-              ? `${partialLabel} = Jul 2025–${new Date().toLocaleString('en-AU',{month:'short'})} ${new Date().getFullYear()} (in progress)`
-              : `${partialLabel} = Jan–${new Date().toLocaleString('en-AU',{month:'short'})} only (year in progress)`
-            }
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+              <div className="w-3 h-3 rounded-sm bg-blue-300 opacity-70" />
+              {yearType === 'financial'
+                ? `${partialLabel} = Jul ${curFYStartYear}–${new Date().toLocaleString('en-AU',{month:'short'})} ${curCY} (in progress)`
+                : `${partialLabel} = Jan–${new Date().toLocaleString('en-AU',{month:'short'})} only (in progress)`
+              }
+            </div>
+            {yearType === 'financial' && firstFYIsPartial && (
+              <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                <div className="w-3 h-3 rounded-sm bg-blue-300 opacity-70" />
+                {firstFY} starts from {fmtMonth(firstMonth)} (data begins Jan 2019)
+              </div>
+            )}
           </div>
         )}
         <p className="text-[10px] text-gray-400">AEST · completed orders only</p>
