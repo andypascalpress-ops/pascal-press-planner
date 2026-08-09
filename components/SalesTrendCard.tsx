@@ -13,8 +13,8 @@ const AUD  = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD'
 const AUDk = (n: number) => n >= 1000 ? `$${(n / 1000).toFixed(0)}k` : `$${n}`;
 const MON  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-const fmtMonth = (ym: string) => { const [y,m]=ym.split('-'); return `${MON[+m!-1]} ${y}`; };
-const shortMon = (ym: string) => { const [y,m]=ym.split('-'); return +m!===1?`Jan ${y}`:MON[+m!-1]!; };
+const fmtMonth = (ym: string) => { const [y,m]=ym.split('-'); const mi=parseInt(m!,10)-1; return `${MON[mi]} ${y}`; };
+const shortMon = (ym: string) => { const [y,m]=ym.split('-'); const mi=parseInt(m!,10); return mi===1?`Jan ${y}`:MON[mi-1]!; };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function MonthTooltip({ active, payload, label, currentMonth }: any) {
