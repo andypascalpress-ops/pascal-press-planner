@@ -45,7 +45,7 @@ async function fetchOrdersForYear(year: number): Promise<BCOrder[]> {
   const results: BCOrder[] = [];
   let page = 1;
   while (true) {
-    const url = `${BC_BASE}/orders?min_date_created=${bcDateParam(start)}&max_date_created=${bcDateParam(end, true)}&limit=250&page=${page}&status_id=10`;
+    const url = `${BC_BASE}/orders?min_date_created=${bcDateParam(start)}&max_date_created=${bcDateParam(end, true)}&limit=250&page=${page}`;
     const res = await fetch(url, { headers: bcHeaders(), cache: 'no-store' });
     if (res.status === 204 || res.status === 404) break;
     if (!res.ok) throw new Error(`BC orders ${year} p${page} -> ${res.status}`);
