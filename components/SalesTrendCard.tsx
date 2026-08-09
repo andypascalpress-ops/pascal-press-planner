@@ -218,9 +218,14 @@ export default function SalesTrendCard() {
                 domain={[0, Math.ceil(maxYearVal * 1.1 / 10000) * 10000]} />
               <Tooltip content={<YearTooltip />} cursor={{ fill: '#f8fafc' }} />
               <Bar dataKey="value" radius={[4,4,0,0]}
-                fill="#3b82f6"
-                // Partial year gets lighter colour
-                label={false}
+                label={{ position: 'top', fontSize: 9, fill: '#94a3b8', formatter: (v: number) => AUDk(v) }}
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                fill="#3b82f6" shape={(props: any) => {
+                  const { x, y, width, height, year } = props;
+                  const isPartial = year === curYear;
+                  return <rect x={x} y={y} width={width} height={height} rx={4} ry={4}
+                    fill={isPartial ? '#93c5fd' : '#3b82f6'} opacity={isPartial ? 0.7 : 1} />;
+                }}
               />
             </BarChart>
           </ResponsiveContainer>
@@ -267,9 +272,10 @@ export default function SalesTrendCard() {
           </>
         )}
         {view === 'yearly' && (
-          <p className="text-[10px] text-gray-400">
-            {curYear} bar is partial (year in progress)
-          </p>
+          <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+            <div className="w-3 h-3 rounded-sm bg-blue-300 opacity-70" />
+            {curYear} = Jan–{new Date().toLocaleString('en-AU',{month:'short'})} only (year in progress)
+          </div>
         )}
         <p className="text-[10px] text-gray-400">AEST · completed orders only</p>
       </div>
