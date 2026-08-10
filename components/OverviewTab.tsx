@@ -627,7 +627,7 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
               )}
             </div>
           )}
-          {/* Sales target bar — Pascal Press only */}
+          {/* Sales target bar */}
           {data.revConnected && data.revenueTarget && data.revenueTarget > 0 && (() => {
             const pct     = Math.min(data.revenue / data.revenueTarget, 1.05);
             const over    = data.revenue > data.revenueTarget;
@@ -657,25 +657,40 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
               {data.roas > 0 ? `${data.roas}x` : <span className="text-gray-400 text-sm">—</span>}
             </p>
             {data.spend > 0 && (
-              <p className="text-xs text-gray-400">{AUD.format(data.spend)} spend</p>
-            )}
-            {/* Multi-channel spend breakdown */}
-            {((data.metaSpend ?? 0) > 0 || (data.chatgptSpend ?? 0) > 0) && (
-              <div className="mt-1.5 space-y-0.5">
-                {(data.metaSpend ?? 0) > 0 && (
-                  <p className="text-xs text-gray-400">+ {AUD.format(data.metaSpend!)} Meta</p>
-                )}
-                {(data.chatgptSpend ?? 0) > 0 && (
-                  <p className="text-xs text-gray-400">+ {AUD.format(data.chatgptSpend!)} ChatGPT</p>
-                )}
-                <p className="text-xs font-semibold text-gray-600 border-t border-gray-100 pt-0.5 mt-0.5">
-                  = {AUD.format(data.totalSpend ?? data.spend)} total
-                </p>
-              </div>
+              <p className="text-xs text-gray-400">{AUD.format(data.spend)} Google</p>
             )}
           </div>
         )}
       </div>
+
+      {/* Ad spend channel breakdown — shown whenever any non-Google spend exists */}
+      {((data.metaSpend ?? 0) > 0 || (data.chatgptSpend ?? 0) > 0) && (
+        <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2.5 space-y-1.5">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Ad Spend</p>
+          {data.spend > 0 && (
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-500">Google Ads</span>
+              <span className="font-medium text-gray-700">{AUD.format(data.spend)}</span>
+            </div>
+          )}
+          {(data.metaSpend ?? 0) > 0 && (
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-500">Meta (Facebook)</span>
+              <span className="font-medium text-gray-700">{AUD.format(data.metaSpend!)}</span>
+            </div>
+          )}
+          {(data.chatgptSpend ?? 0) > 0 && (
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-500">ChatGPT</span>
+              <span className="font-medium text-gray-700">{AUD.format(data.chatgptSpend!)}</span>
+            </div>
+          )}
+          <div className="flex justify-between text-xs border-t border-gray-200 pt-1.5 mt-1">
+            <span className="font-semibold text-gray-700">Total spend</span>
+            <span className="font-bold text-gray-900">{AUD.format(data.totalSpend ?? data.spend)}</span>
+          </div>
+        </div>
+      )}
 
       {/* Site conversion — PP: BC orders/visits; ETZ: GA purchases/sessions */}
       {data.conversion?.rate != null && (
