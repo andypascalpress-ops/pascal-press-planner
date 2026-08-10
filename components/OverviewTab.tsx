@@ -233,8 +233,9 @@ function KpiCard({ label, value, sub, valueClass = '', target }: {
   );
 }
 
-function BudgetBar({ spend, budget, dayPct, isMonthly = true }: {
+function BudgetBar({ spend, budget, dayPct, isMonthly = true, spendLabel, budgetLabel }: {
   spend: number; budget: number; dayPct: number; isMonthly?: boolean;
+  spendLabel?: string; budgetLabel?: string;
 }) {
   const spendPct = budget > 0 ? Math.min(spend / budget, 1.05) : 0;
   const barColor = budgetBarColor(spend / (budget || 1));
@@ -256,8 +257,8 @@ function BudgetBar({ spend, budget, dayPct, isMonthly = true }: {
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-xs text-gray-500">
-        <span>{AUD.format(spend)} spent</span>
-        <span>{AUD.format(budget)} monthly budget</span>
+        <span>{spendLabel ?? `${AUD.format(spend)} spent`}</span>
+        <span>{budgetLabel ?? `${AUD.format(budget)} monthly budget`}</span>
       </div>
       <div className="relative h-2 bg-gray-100 rounded-full overflow-hidden">
         {/* Ghost bar — projected month-end spend (monthly view only) */}
@@ -707,17 +708,27 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
         </div>
       )}
 
-      {/* Total marketing budget note (shown when set, e.g. EHC) */}
-      {data.totalMarketingBudget && data.totalMarketingBudget > 0 && (
-        <div className="flex items-center justify-between text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
-          <span>Total marketing budget</span>
-          <span className="font-semibold text-gray-700">{AUD.format(data.totalMarketingBudget)}<span className="font-normal text-gray-400">/mo</span></span>
-        </div>
-      )}
-
-      {/* Budget bar only when ads are connected */}
+      {/* Budget bar(s) — only when ads are connected */}
       {data.adsConnected && (
-        <BudgetBar spend={data.spend} budget={data.budget} dayPct={dayPct} isMonthly={isMonthly} />
+        data.totalMarketingBudget && data.totalMarketingBudget > 0 ? (
+          <>
+            {/* Primary bar: Google Ads spend vs total marketing budget */}
+            <BudgetBar
+              spend={data.spend}
+              budget={data.totalMarketingBudget}
+              dayPct={dayPct}
+              isMonthly={isMonthly}
+              spendLabel={`${AUD.format(data.spend)} Google Ads spend`}
+              budgetLabel={`${AUD.format(data.totalMarketingBudget)} total mktg budget`}
+            />
+            {/* Secondary note: Google Ads sub-budget */}
+            <p className="text-[11px] text-gray-400">
+              Google Ads budget: {AUD.format(data.budget)}/mo · other channels not yet tracked
+            </p>
+          </>
+        ) : (
+          <BudgetBar spend={data.spend} budget={data.budget} dayPct={dayPct} isMonthly={isMonthly} />
+        )
       )}
     </div>
   );
