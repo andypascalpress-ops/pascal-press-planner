@@ -12,7 +12,7 @@ import { fetchPPRevenue, fetchBlakeRevenue } from '@/lib/bigcommerce-revenue';
 import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-revenue';
 import { fetchEmailCampaigns } from '@/lib/hubspot-email';
 import { fetchPPWebsiteConversion, fetchETZWebsiteConversion } from '@/lib/google-analytics';
-import { MONTHLY_GOOGLE_BUDGETS, PP_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_REVENUE_TARGETS, BLAKE_MONTHLY_REVENUE_TARGETS } from '@/lib/constants';
+import { MONTHLY_GOOGLE_BUDGETS, PP_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_REVENUE_TARGETS, BLAKE_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_MARKETING_BUDGET } from '@/lib/constants';
 import { OverviewAlert } from '@/lib/types';
 
 // Previous-month PP revenue never changes once the month closes — cache it for 24 h.
@@ -191,10 +191,12 @@ export async function GET(request: Request) {
   const ppMonthNum         = parseInt(month.slice(5, 7), 10);
   const ppMonthlyTarget    = PP_MONTHLY_REVENUE_TARGETS[ppMonthNum]    ?? 0;
   const etzMonthlyTarget   = ETZ_MONTHLY_REVENUE_TARGETS[ppMonthNum]   ?? 0;
+  const hscMonthlyTarget   = HSC_MONTHLY_REVENUE_TARGETS[ppMonthNum]   ?? 0;
   const blakeMonthlyTarget = BLAKE_MONTHLY_REVENUE_TARGETS[ppMonthNum] ?? 0;
   const rangeDays          = Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86_400_000) + 1;
   const ppRevenueTarget    = isMonthly ? ppMonthlyTarget    : Math.round((ppMonthlyTarget    / daysInMonth) * rangeDays);
   const etzRevenueTarget   = isMonthly ? etzMonthlyTarget   : Math.round((etzMonthlyTarget   / daysInMonth) * rangeDays);
+  const hscRevenueTarget   = isMonthly ? hscMonthlyTarget   : Math.round((hscMonthlyTarget   / daysInMonth) * rangeDays);
   const blakeRevenueTarget = isMonthly ? blakeMonthlyTarget : Math.round((blakeMonthlyTarget / daysInMonth) * rangeDays);
 
   const ppBudget    = MONTHLY_GOOGLE_BUDGETS['Pascal Press']      ?? 0;
@@ -357,15 +359,17 @@ export async function GET(request: Request) {
       } : null,
     },
     hsc: {
-      spend:        Math.round(hscSpend * 100) / 100,
-      budget:       hscBudget,
-      revenue:      Math.round(hscRevenue * 100) / 100,
-      roas:         hscRoas,
-      orders:       hscRev?.totalOrders ?? 0,
-      revConnected: hscRev?.connected   ?? false,
-      adsConnected: hscAdsResult.status === 'fulfilled',
-      adsError:     hscAdsError,
-      conversion:   null,
+      spend:               Math.round(hscSpend * 100) / 100,
+      budget:              hscBudget,
+      revenue:             Math.round(hscRevenue * 100) / 100,
+      revenueTarget:       hscRevenueTarget,
+      totalMarketingBudget: HSC_MONTHLY_MARKETING_BUDGET,
+      roas:                hscRoas,
+      orders:              hscRev?.totalOrders ?? 0,
+      revConnected:        hscRev?.connected   ?? false,
+      adsConnected:        hscAdsResult.status === 'fulfilled',
+      adsError:            hscAdsError,
+      conversion:          null,
     },
     blake: {
       spend:         Math.round(blakeSpend * 100) / 100,
@@ -383,7 +387,7 @@ export async function GET(request: Request) {
       spend:         Math.round(totalSpend   * 100) / 100,
       revenue:       Math.round(totalRevenue * 100) / 100,
       roas:          combinedRoas,
-      revenueTarget: ppRevenueTarget + etzRevenueTarget + blakeRevenueTarget,
+      revenueTarget: ppRevenueTarget + etzRevenueTarget + hscRevenueTarget + blakeRevenueTarget,
     },
     email: email ? {
       connected:     email.connected,

@@ -110,6 +110,27 @@ export const ETZ_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
   12: 61600, // December
 };
 
+// Excel HSC Copilot monthly revenue targets, FY27 (keyed by calendar month 1=Jan…12=Dec)
+// To update: edit the values below — do not paste figures into Claude chat.
+export const HSC_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
+  1:   7956, // January
+  2:  20050, // February
+  3:  21503, // March
+  4:  27003, // April
+  5:   3630, // May
+  6:   8748, // June
+  7:  14771, // July
+  8:   9943, // August
+  9:   4033, // September
+  10:  6646, // October
+  11:  6981, // November
+  12: 18736, // December
+};
+
+// Excel HSC Copilot total monthly marketing budget (all channels, incl. Google Ads)
+// Google Ads portion ($1,800) is tracked separately in MONTHLY_GOOGLE_BUDGETS.
+export const HSC_MONTHLY_MARKETING_BUDGET = 5500;
+
 // Blake Education monthly revenue targets (inc. GST = ex-GST × 1.1), FY27
 export const BLAKE_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
   1:   8800, // January

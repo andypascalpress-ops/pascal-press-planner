@@ -16,18 +16,19 @@ interface ConversionSnapshot {
 }
 
 interface BrandData {
-  spend:          number;
-  budget:         number;
-  revenue:        number;
-  revenueTarget?: number;
-  aov?:           number | null;
-  aovPrev?:       number | null;
-  roas:           number;
-  orders:         number;
-  revConnected:   boolean;
-  adsConnected:   boolean;
-  adsError?:      string | null;
-  conversion?:    ConversionSnapshot | null;
+  spend:               number;
+  budget:              number;
+  revenue:             number;
+  revenueTarget?:      number;
+  totalMarketingBudget?: number;
+  aov?:                number | null;
+  aovPrev?:            number | null;
+  roas:                number;
+  orders:              number;
+  revConnected:        boolean;
+  adsConnected:        boolean;
+  adsError?:           string | null;
+  conversion?:         ConversionSnapshot | null;
 }
 
 interface OverviewData {
@@ -703,6 +704,14 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
               ? 'Refresh token expired (Google resets it every 7 days for unpublished apps). Run scripts/get-google-refresh-token.mjs and update GOOGLE_ADS_REFRESH_TOKEN in Vercel — or publish the OAuth app in Google Cloud Console for a permanent token.'
               : 'Could not connect to Google Ads. Check GOOGLE_ADS_* env vars in Vercel.'}
           </p>
+        </div>
+      )}
+
+      {/* Total marketing budget note (shown when set, e.g. EHC) */}
+      {data.totalMarketingBudget && data.totalMarketingBudget > 0 && (
+        <div className="flex items-center justify-between text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+          <span>Total marketing budget</span>
+          <span className="font-semibold text-gray-700">{AUD.format(data.totalMarketingBudget)}<span className="font-normal text-gray-400">/mo</span></span>
         </div>
       )}
 
