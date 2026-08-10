@@ -16,7 +16,10 @@ interface ConversionSnapshot {
 }
 
 interface BrandData {
-  spend:               number;
+  spend:               number;   // Google Ads only
+  metaSpend?:          number;   // Meta / Facebook Ads
+  chatgptSpend?:       number;   // ChatGPT Ads (manual)
+  totalSpend?:         number;   // sum of all tracked channels
   budget:              number;
   revenue:             number;
   revenueTarget?:      number;
@@ -656,6 +659,20 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
             {data.spend > 0 && (
               <p className="text-xs text-gray-400">{AUD.format(data.spend)} spend</p>
             )}
+            {/* Multi-channel spend breakdown */}
+            {((data.metaSpend ?? 0) > 0 || (data.chatgptSpend ?? 0) > 0) && (
+              <div className="mt-1.5 space-y-0.5">
+                {(data.metaSpend ?? 0) > 0 && (
+                  <p className="text-xs text-gray-400">+ {AUD.format(data.metaSpend!)} Meta</p>
+                )}
+                {(data.chatgptSpend ?? 0) > 0 && (
+                  <p className="text-xs text-gray-400">+ {AUD.format(data.chatgptSpend!)} ChatGPT</p>
+                )}
+                <p className="text-xs font-semibold text-gray-600 border-t border-gray-100 pt-0.5 mt-0.5">
+                  = {AUD.format(data.totalSpend ?? data.spend)} total
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -712,13 +729,13 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
       {data.adsConnected && (
         data.totalMarketingBudget && data.totalMarketingBudget > 0 ? (
           <>
-            {/* Primary bar: Google Ads spend vs total marketing budget */}
+            {/* Primary bar: total tracked spend vs total marketing budget */}
             <BudgetBar
-              spend={data.spend}
+              spend={data.totalSpend ?? data.spend}
               budget={data.totalMarketingBudget}
               dayPct={dayPct}
               isMonthly={isMonthly}
-              spendLabel={`${AUD.format(data.spend)} spent`}
+              spendLabel={`${AUD.format(data.totalSpend ?? data.spend)} spent`}
               budgetLabel={`${AUD.format(data.totalMarketingBudget)} monthly budget`}
             />
           </>

@@ -12,7 +12,8 @@ import { fetchPPRevenue, fetchBlakeRevenue } from '@/lib/bigcommerce-revenue';
 import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-revenue';
 import { fetchEmailCampaigns } from '@/lib/hubspot-email';
 import { fetchPPWebsiteConversion, fetchETZWebsiteConversion } from '@/lib/google-analytics';
-import { MONTHLY_GOOGLE_BUDGETS, PP_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_REVENUE_TARGETS, BLAKE_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_MARKETING_BUDGET } from '@/lib/constants';
+import { MONTHLY_GOOGLE_BUDGETS, PP_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_REVENUE_TARGETS, BLAKE_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_MARKETING_BUDGET, PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
+import { fetchMetaSpend, META_PP_ACCOUNT_ID, META_ETZ_ACCOUNT_ID } from '@/lib/meta-ads';
 import { OverviewAlert } from '@/lib/types';
 
 // Previous-month PP revenue never changes once the month closes — cache it for 24 h.
@@ -135,7 +136,7 @@ export async function GET(request: Request) {
   const prevStart    = `${prevMonth}-01`;
   const prevEnd      = `${prevMonth}-${String(prevDays).padStart(2, '0')}`;
 
-  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult, ppConvResult, etzConvResult, ppPrevRevResult] =
+  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult, ppConvResult, etzConvResult, ppPrevRevResult, ppMetaResult, etzMetaResult] =
     await Promise.allSettled([
       ppCfg
         ? fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' })
@@ -153,11 +154,12 @@ export async function GET(request: Request) {
       fetchHSCStripeRevenue(month, { dateRange: { start: startDate, end: endDate } }),
       fetchBlakeRevenue(month, { start: startDate, end: endDate }),
       fetchEmailCampaigns(month, { dateRange: { start: startDate, end: endDate } }),
-      // Conversion follows the selected Overview range (Today / Last 7 / MTD / …).
-      // Monthly ranges compare same calendar days last month; short ranges use equal prior days.
       fetchPPWebsiteConversion(startDate, endDate, isMonthly ? 'alignMonth' : 'priorEqual'),
       fetchETZWebsiteConversion(startDate, endDate, isMonthly ? 'alignMonth' : 'priorEqual'),
       fetchPPRevenueCached(prevMonth, prevStart, prevEnd),
+      // Meta (Facebook) Ads — PP and ETZ only
+      fetchMetaSpend(META_PP_ACCOUNT_ID,  startDate, endDate),
+      fetchMetaSpend(META_ETZ_ACCOUNT_ID, startDate, endDate),
     ]);
 
   const ppSpend  = ppAdsResult.status  === 'fulfilled'
@@ -166,6 +168,22 @@ export async function GET(request: Request) {
     ? etzAdsResult.value.reduce((s, r) => s + r.actualSpend, 0) : 0;
   const hscSpend = hscAdsResult.status === 'fulfilled'
     ? hscAdsResult.value.reduce((s, r) => s + r.actualSpend, 0) : 0;
+
+  // Meta (Facebook) Ads spend
+  const ppMetaSpend  = ppMetaResult.status  === 'fulfilled' ? ppMetaResult.value  : 0;
+  const etzMetaSpend = etzMetaResult.status === 'fulfilled' ? etzMetaResult.value : 0;
+  const ppMetaError  = ppMetaResult.status  === 'rejected'  ? String(ppMetaResult.reason)  : null;
+  const etzMetaError = etzMetaResult.status === 'rejected'  ? String(etzMetaResult.reason) : null;
+  if (ppMetaError)  console.error('[overview] PP Meta Ads error:',  ppMetaError);
+  if (etzMetaError) console.error('[overview] ETZ Meta Ads error:', etzMetaError);
+
+  // ChatGPT Ads spend (manual — updated in lib/constants.ts each month)
+  const ppChatgptSpend  = PP_CHATGPT_SPEND[month]  ?? 0;
+  const etzChatgptSpend = ETZ_CHATGPT_SPEND[month] ?? 0;
+
+  // Combined spend per brand (all tracked channels)
+  const ppTotalSpend  = ppSpend  + ppMetaSpend  + ppChatgptSpend;
+  const etzTotalSpend = etzSpend + etzMetaSpend + etzChatgptSpend;
 
   const ppPrevRev = ppPrevRevResult.status === 'fulfilled' ? ppPrevRevResult.value : null;
   const ppRev    = ppRevResult.status    === 'fulfilled' ? ppRevResult.value    : null;
@@ -208,7 +226,7 @@ export async function GET(request: Request) {
   const etzRoas   = etzSpend   > 0 ? Math.round((etzRevenue   / etzSpend)   * 10) / 10 : 0;
   const hscRoas   = hscSpend   > 0 ? Math.round((hscRevenue   / hscSpend)   * 10) / 10 : 0;
   const blakeRoas = blakeSpend > 0 ? Math.round((blakeRevenue / blakeSpend) * 10) / 10 : 0;
-  const totalSpend   = ppSpend + etzSpend + hscSpend + blakeSpend;
+  const totalSpend   = ppTotalSpend + etzTotalSpend + hscSpend + blakeSpend;
   const totalRevenue = ppRevenue + etzRevenue + hscRevenue + blakeRevenue;
   const combinedRoas = totalSpend > 0
     ? Math.round((totalRevenue / totalSpend) * 10) / 10
@@ -317,7 +335,10 @@ export async function GET(request: Request) {
     rangeLabel,
     isMonthly,
     pp: {
-      spend:         Math.round(ppSpend  * 100) / 100,
+      spend:         Math.round(ppSpend      * 100) / 100,
+      metaSpend:     Math.round(ppMetaSpend  * 100) / 100,
+      chatgptSpend:  Math.round(ppChatgptSpend * 100) / 100,
+      totalSpend:    Math.round(ppTotalSpend  * 100) / 100,
       budget:        ppBudget,
       revenue:       Math.round(ppRevenue  * 100) / 100,
       revenueTarget: ppRevenueTarget,
@@ -339,7 +360,10 @@ export async function GET(request: Request) {
       } : null,
     },
     etz: {
-      spend:         Math.round(etzSpend * 100) / 100,
+      spend:        Math.round(etzSpend       * 100) / 100,
+      metaSpend:    Math.round(etzMetaSpend   * 100) / 100,
+      chatgptSpend: Math.round(etzChatgptSpend * 100) / 100,
+      totalSpend:   Math.round(etzTotalSpend  * 100) / 100,
       budget:        etzBudget,
       revenue:       Math.round(etzRevenue * 100) / 100,
       revenueTarget: etzRevenueTarget,

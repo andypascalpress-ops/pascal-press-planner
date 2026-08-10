@@ -146,6 +146,16 @@ export const BLAKE_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
   12:  5500, // December
 };
 
+// ── ChatGPT Ads manual monthly spend ─────────────────────────────────────────
+// Update these each month after reconciling your OpenAI billing.
+// Key = 'YYYY-MM' (AEST). Omit a month to treat it as $0.
+export const PP_CHATGPT_SPEND: Record<string, number> = {
+  // '2026-08': 0,
+};
+export const ETZ_CHATGPT_SPEND: Record<string, number> = {
+  // '2026-08': 0,
+};
+
 export const SPEND_COLUMNS_TO_CREATE = [
   { title: 'Brand',               type: 'text'      },
   { title: 'Channel',             type: 'text'      },
