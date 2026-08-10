@@ -718,13 +718,9 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
               budget={data.totalMarketingBudget}
               dayPct={dayPct}
               isMonthly={isMonthly}
-              spendLabel={`${AUD.format(data.spend)} Google Ads spend`}
-              budgetLabel={`${AUD.format(data.totalMarketingBudget)} total mktg budget`}
+              spendLabel={`${AUD.format(data.spend)} spent`}
+              budgetLabel={`${AUD.format(data.totalMarketingBudget)} monthly budget`}
             />
-            {/* Secondary note: Google Ads sub-budget */}
-            <p className="text-[11px] text-gray-400">
-              Google Ads budget: {AUD.format(data.budget)}/mo · other channels not yet tracked
-            </p>
           </>
         ) : (
           <BudgetBar spend={data.spend} budget={data.budget} dayPct={dayPct} isMonthly={isMonthly} />
