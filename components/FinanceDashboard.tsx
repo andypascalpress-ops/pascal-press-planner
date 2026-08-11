@@ -1081,9 +1081,7 @@ interface EtzTrialMonth {
 interface EtzTrialAllTime {
   total:          number;
   onTrial:        number;
-  active:         number;
-  trialExpired:   number;
-  expired:        number;
+  converted:      number;
   conversionRate: number | null;
 }
 interface EtzTrialFunnelResponse {
@@ -1134,7 +1132,7 @@ function EtzTrialFunnelPanel({
             <p className="text-xs text-emerald-700 mt-0.5">HubSpot · signups → active subscribers</p>
           </div>
           <span className="text-xs font-medium text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full">
-            {allTime.active.toLocaleString()} total active
+            {allTime.converted.toLocaleString()} total converted
           </span>
         </div>
 
@@ -1171,7 +1169,7 @@ function EtzTrialFunnelPanel({
           {/* All-time */}
           <div className="md:pl-6 md:border-l border-gray-100">
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">All Time</div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+            <div className="grid grid-cols-3 gap-2 mb-3">
               <div className="bg-gray-50 rounded-lg p-2.5 text-center">
                 <div className="text-lg font-bold text-gray-900">{allTime.total.toLocaleString()}</div>
                 <div className="text-[11px] text-gray-500 mt-0.5">Total</div>
@@ -1181,12 +1179,8 @@ function EtzTrialFunnelPanel({
                 <div className="text-[11px] text-blue-600 mt-0.5">On trial</div>
               </div>
               <div className="bg-emerald-50 rounded-lg p-2.5 text-center">
-                <div className="text-lg font-bold text-emerald-700">{allTime.active.toLocaleString()}</div>
-                <div className="text-[11px] text-emerald-600 mt-0.5">Active</div>
-              </div>
-              <div className="bg-red-50 rounded-lg p-2.5 text-center">
-                <div className="text-lg font-bold text-red-500">{allTime.trialExpired.toLocaleString()}</div>
-                <div className="text-[11px] text-red-400 mt-0.5">Trial expired</div>
+                <div className="text-lg font-bold text-emerald-700">{allTime.converted.toLocaleString()}</div>
+                <div className="text-[11px] text-emerald-600 mt-0.5">Converted</div>
               </div>
             </div>
             {allTime.total > 0 && (
