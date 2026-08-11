@@ -15,7 +15,7 @@
  */
 import { NextResponse } from 'next/server';
 
-export const dynamic = 'force-dynamic';
+export const revalidate = 300; // cache for 5 minutes — avoids hammering HubSpot search rate limit
 
 const HS_BASE = 'https://api.hubapi.com';
 
@@ -89,18 +89,15 @@ export async function GET(request: Request) {
       { propertyName: 'createdate', operator: 'LT',  value: String(endMs)   },
     ];
 
-    // ── 3. Counts (run in parallel) ───────────────────────────────────────────
-    const [
-      trialsThisMonth,      // signed up this month, still on trial
-      convertedThisMonth,   // signed up this month, already active
-      totalTrialAllTime,    // all contacts ever with trial status (still on trial)
-      totalActiveAllTime,   // all contacts ever who converted
-    ] = await Promise.all([
-      hsSearchCount([...createdThisMonth, { propertyName: 'hs_lead_status', operator: 'EQ', value: TRIAL_VALUE  }]),
-      hsSearchCount([...createdThisMonth, { propertyName: 'hs_lead_status', operator: 'EQ', value: ACTIVE_VALUE }]),
-      hsSearchCount([{ propertyName: 'hs_lead_status', operator: 'EQ', value: TRIAL_VALUE  }]),
-      hsSearchCount([{ propertyName: 'hs_lead_status', operator: 'EQ', value: ACTIVE_VALUE }]),
-    ]);
+    // ── 3. Counts — sequential to stay within HubSpot's search rate limit ────
+    const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+    const trialsThisMonth    = await hsSearchCount([...createdThisMonth, { propertyName: 'hs_lead_status', operator: 'EQ', value: TRIAL_VALUE  }]);
+    await delay(300);
+    const convertedThisMonth = await hsSearchCount([...createdThisMonth, { propertyName: 'hs_lead_status', operator: 'EQ', value: ACTIVE_VALUE }]);
+    await delay(300);
+    const totalTrialAllTime  = await hsSearchCount([{ propertyName: 'hs_lead_status', operator: 'EQ', value: TRIAL_VALUE  }]);
+    await delay(300);
+    const totalActiveAllTime = await hsSearchCount([{ propertyName: 'hs_lead_status', operator: 'EQ', value: ACTIVE_VALUE }]);
 
     // ── 4. Derived metrics ────────────────────────────────────────────────────
     const signupsThisMonth   = trialsThisMonth + convertedThisMonth;  // all new signups (trial + already-converted)
