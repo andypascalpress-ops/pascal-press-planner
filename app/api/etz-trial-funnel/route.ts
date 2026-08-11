@@ -78,30 +78,9 @@ export async function GET(request: Request) {
     ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
   try {
-    // ── 1. Status values (Andy confirmed: lead status = "trial" / "active") ───
-    // We try common casing variants in parallel and use whichever returns results.
-    const CANDIDATES = {
-      trial:  ['TRIAL',  'trial',  'Trial',  'free_trial', 'FREE_TRIAL'],
-      active: ['ACTIVE', 'active', 'Active', 'subscriber', 'SUBSCRIBER'],
-    };
-
-    // Quick probe: find the casing that actually returns contacts
-    async function findValue(candidates: string[]): Promise<string> {
-      const counts = await Promise.all(
-        candidates.map(v =>
-          hsSearchCount([{ propertyName: 'hs_lead_status', operator: 'EQ', value: v }])
-            .then(n => ({ v, n }))
-            .catch(() => ({ v, n: 0 }))
-        )
-      );
-      const match = counts.find(c => c.n > 0);
-      return match?.v ?? candidates[0]!; // fall back to first candidate
-    }
-
-    const [TRIAL_VALUE, ACTIVE_VALUE] = await Promise.all([
-      findValue(CANDIDATES.trial),
-      findValue(CANDIDATES.active),
-    ]);
+    // ── 1. Status values confirmed by Andy ────────────────────────────────────
+    const TRIAL_VALUE  = 'TRIAL';
+    const ACTIVE_VALUE = 'ACTIVE';
 
     // ── 2. Date range for selected month ──────────────────────────────────────
     const { startMs, endMs } = monthToEpochRange(month);
