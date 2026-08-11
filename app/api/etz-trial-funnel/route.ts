@@ -15,7 +15,7 @@
  */
 import { NextResponse } from 'next/server';
 
-export const revalidate = 300; // cache for 5 minutes — avoids hammering HubSpot search rate limit
+export const dynamic = 'force-dynamic';
 
 const HS_BASE = 'https://api.hubapi.com';
 
