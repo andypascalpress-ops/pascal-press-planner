@@ -52,6 +52,10 @@ export async function GET() {
   const adAcctRes  = await fetch(`${META_GRAPH_API}/${ACCOUNT_ID}?fields=name,account_status,owner&access_token=${ACCESS_TOKEN}`, { cache: 'no-store' });
   const adAcctJson = await adAcctRes.json();
 
+  // 5. List all ad accounts this system user can access
+  const myAcctsRes  = await fetch(`${META_GRAPH_API}/me/adaccounts?fields=name,account_id&access_token=${ACCESS_TOKEN}`, { cache: 'no-store' });
+  const myAcctsJson = await myAcctsRes.json();
+
   return NextResponse.json({
     tokenOk:        !meJson.error,
     tokenUser:      meJson.name ?? meJson.error?.message,
@@ -59,6 +63,7 @@ export async function GET() {
     permissions:    permJson?.data ?? permJson,
     accountId:      ACCOUNT_ID,
     adAccountInfo:  adAcctJson,
+    accessibleAdAccounts: myAcctsJson,
     range:          { start, end },
     accountLevel:   acctJson,
     campaignLevel:  campJson,
