@@ -1506,10 +1506,15 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
     ? etzLiveSpend
     : etzRecords.filter(r => r.channel === 'Google Ads').reduce((s, r) => s + (r.actualSpend ?? 0), 0);
 
+  const ppMetaSpend  = metaCampaigns?.pp?.totals?.spend  ?? 0;
+  const etzMetaSpend = metaCampaigns?.etz?.totals?.spend ?? 0;
+  const ppTotalSpend  = ppSpend        + ppMetaSpend;
+  const etzTotalSpend = etzGoogleSpend + etzMetaSpend;
+
   const ppRevenue  = revenue?.pp?.totalRevenue  ?? 0;
   const etzRevenue = revenue?.etz?.totalRevenue ?? 0;
-  const ppRoas     = ppSpend        > 0 && ppRevenue  > 0 ? ppRevenue  / ppSpend        : null;
-  const etzRoas    = etzGoogleSpend > 0 && etzRevenue > 0 ? etzRevenue / etzGoogleSpend : null;
+  const ppRoas     = ppTotalSpend  > 0 && ppRevenue  > 0 ? ppRevenue  / ppTotalSpend  : null;
+  const etzRoas    = etzTotalSpend > 0 && etzRevenue > 0 ? etzRevenue / etzTotalSpend : null;
 
   // Chart data: prefer live Google Ads history, fall back to Monday.com records
   const ppChartData: ChartPoint[] = CHART_YMS.map((ym, i) => ({
@@ -1654,9 +1659,9 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
               <div className="flex items-center gap-4">
                 <div className="flex-1">
-                  <div className="text-xs text-gray-500 mb-0.5">Pascal Press &middot; Total Spend</div>
+                  <div className="text-xs text-gray-500 mb-0.5">Pascal Press &middot; Ad Spend</div>
                   <div className="text-lg font-bold text-gray-900">
-                    {ppSpend > 0 ? AUD.format(ppSpend) : '—'}
+                    {ppTotalSpend > 0 ? AUD.format(ppTotalSpend) : '—'}
                   </div>
                 </div>
                 <div className="text-gray-300 text-xl">&rarr;</div>
@@ -1675,9 +1680,9 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
               </div>
               <div className="flex items-center gap-4 sm:pl-6 sm:border-l border-gray-100">
                 <div className="flex-1">
-                  <div className="text-xs text-gray-500 mb-0.5">Excel Test Zone &middot; Google Ads</div>
+                  <div className="text-xs text-gray-500 mb-0.5">Excel Test Zone &middot; Ad Spend</div>
                   <div className="text-lg font-bold text-gray-900">
-                    {etzGoogleSpend > 0 ? AUD.format(etzGoogleSpend) : '—'}
+                    {etzTotalSpend > 0 ? AUD.format(etzTotalSpend) : '—'}
                   </div>
                 </div>
                 <div className="text-gray-300 text-xl">&rarr;</div>
