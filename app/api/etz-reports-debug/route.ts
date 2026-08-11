@@ -14,34 +14,30 @@ function headers() {
 }
 
 export async function GET() {
-  const results: unknown[] = [];
-  const errors: string[] = [];
-
-  // Try v2 reports endpoint
-  try {
-    const res = await fetch(`${HS_BASE}/reporting/v2/reports?limit=300`, {
-      headers: headers(), cache: 'no-store',
-    });
-    const json = await res.json();
-    const reports = (json.results ?? json.objects ?? []) as Array<{ id: string; name: string; reportType?: string }>;
-    const etzReports = reports.filter((r) =>
-      r.name?.toLowerCase().includes('etz') || r.name?.toLowerCase().includes('trial')
-    );
-    results.push({ endpoint: 'v2', total: json.total ?? reports.length, etzMatches: etzReports });
-  } catch (e) {
-    errors.push(`v2: ${e instanceof Error ? e.message : String(e)}`);
+  // Fetch all contact properties and filter to ETZ/trial-related custom ones
+  const res = await fetch(`${HS_BASE}/crm/v3/properties/contacts?limit=1000`, {
+    headers: headers(), cache: 'no-store',
+  });
+  if (!res.ok) {
+    return NextResponse.json({ error: `${res.status}` }, { status: res.status });
   }
+  const json = await res.json();
+  const all = (json.results ?? []) as Array<{ name: string; label: string; type: string; groupName: string; description?: string }>;
 
-  // Try v3 analytics reports
-  try {
-    const res = await fetch(`${HS_BASE}/analytics/v2/reports?limit=50`, {
-      headers: headers(), cache: 'no-store',
-    });
-    const json = await res.json();
-    results.push({ endpoint: 'analytics/v2', status: res.status, body: JSON.stringify(json).slice(0, 300) });
-  } catch (e) {
-    errors.push(`analytics/v2: ${e instanceof Error ? e.message : String(e)}`);
-  }
+  // Filter to ETZ/trial-related properties
+  const relevant = all.filter((p) => {
+    const s = `${p.name} ${p.label} ${p.groupName} ${p.description ?? ''}`.toLowerCase();
+    return s.includes('etz') || s.includes('trial') || s.includes('pack') || s.includes('convert') || s.includes('subscri') || s.includes('active');
+  });
 
-  return NextResponse.json({ results, errors });
+  return NextResponse.json({
+    total: all.length,
+    relevantCount: relevant.length,
+    properties: relevant.map((p) => ({
+      name: p.name,
+      label: p.label,
+      type: p.type,
+      group: p.groupName,
+    })),
+  });
 }
