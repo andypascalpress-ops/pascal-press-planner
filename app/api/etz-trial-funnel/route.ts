@@ -95,9 +95,11 @@ export async function GET(request: Request) {
   }
 
   try {
-    // ── 1. Status values confirmed by Andy ────────────────────────────────────
-    const TRIAL_VALUE  = 'TRIAL';
-    const ACTIVE_VALUE = 'ACTIVE';
+    // ── 1. HubSpot lead status values (confirmed via debug endpoint) ──────────
+    // "Active"       = converted to paying subscriber
+    // "Trial Expired"= trialled but never converted
+    // "Expired"      = was paying, subscription has since lapsed
+    // (no status)    = currently on free trial
 
     // ── 2. Date range for selected month ──────────────────────────────────────
     const { startMs, endMs } = monthToEpochRange(month);
@@ -106,41 +108,49 @@ export async function GET(request: Request) {
       { propertyName: 'createdate', operator: 'LT',  value: String(endMs)   },
     ];
 
-    // ── 3. Counts — sequential to stay within HubSpot's search rate limit ────
+    // ── 3. Counts — sequential to respect HubSpot's search rate limit ─────────
     const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
-    const trialsThisMonth    = await hsSearchCount([...createdThisMonth, { propertyName: 'hs_lead_status', operator: 'EQ', value: TRIAL_VALUE  }]);
+
+    // This month: all new signups (any status = started a trial this month)
+    const signupsThisMonth   = await hsSearchCount(createdThisMonth);
     await delay(300);
-    const convertedThisMonth = await hsSearchCount([...createdThisMonth, { propertyName: 'hs_lead_status', operator: 'EQ', value: ACTIVE_VALUE }]);
+    // This month: already converted within the same month
+    const convertedThisMonth = await hsSearchCount([...createdThisMonth, { propertyName: 'hs_lead_status', operator: 'EQ', value: 'Active' }]);
     await delay(300);
-    const totalTrialAllTime  = await hsSearchCount([{ propertyName: 'hs_lead_status', operator: 'EQ', value: TRIAL_VALUE  }]);
+
+    // All time
+    const totalActive        = await hsSearchCount([{ propertyName: 'hs_lead_status', operator: 'EQ', value: 'Active'       }]);
     await delay(300);
-    const totalActiveAllTime = await hsSearchCount([{ propertyName: 'hs_lead_status', operator: 'EQ', value: ACTIVE_VALUE }]);
+    const totalTrialExpired  = await hsSearchCount([{ propertyName: 'hs_lead_status', operator: 'EQ', value: 'Trial Expired' }]);
+    await delay(300);
+    const totalExpired       = await hsSearchCount([{ propertyName: 'hs_lead_status', operator: 'EQ', value: 'Expired'      }]);
 
     // ── 4. Derived metrics ────────────────────────────────────────────────────
-    const signupsThisMonth   = trialsThisMonth + convertedThisMonth;  // all new signups (trial + already-converted)
-    const convRateThisMonth  = signupsThisMonth  > 0 ? convertedThisMonth  / signupsThisMonth  : null;
-    const totalSignupsAllTime = totalTrialAllTime + totalActiveAllTime;
-    const convRateAllTime     = totalSignupsAllTime > 0 ? totalActiveAllTime / totalSignupsAllTime : null;
+    // Currently on trial = no status set yet (total - all known statuses)
+    const totalAll       = await (async () => { await delay(300); return hsSearchCount([]); })();
+    const currentlyOnTrial = Math.max(0, totalAll - totalActive - totalTrialExpired - totalExpired);
+
+    // Conversion rate = Active / (Active + Trial Expired)  — excludes still-trialling
+    const concluded      = totalActive + totalTrialExpired;
+    const convRateAllTime = concluded > 0 ? totalActive / concluded : null;
+    const convRateMonth   = signupsThisMonth > 0 ? convertedThisMonth / signupsThisMonth : null;
 
     return NextResponse.json({
       month,
-      // Internal: so the UI knows which values were matched
-      _statusValues: { trial: TRIAL_VALUE, active: ACTIVE_VALUE },
 
-      // This month
       thisMonth: {
-        signups:         signupsThisMonth,
-        trialsRemaining: trialsThisMonth,
-        converted:       convertedThisMonth,
-        conversionRate:  convRateThisMonth,   // 0–1
+        signups:        signupsThisMonth,
+        converted:      convertedThisMonth,
+        conversionRate: convRateMonth,        // 0–1
       },
 
-      // All-time
       allTime: {
-        signups:   totalSignupsAllTime,
-        onTrial:   totalTrialAllTime,
-        converted: totalActiveAllTime,
-        conversionRate: convRateAllTime,     // 0–1
+        total:          totalAll,
+        onTrial:        currentlyOnTrial,
+        active:         totalActive,
+        trialExpired:   totalTrialExpired,
+        expired:        totalExpired,
+        conversionRate: convRateAllTime,      // Active ÷ (Active + Trial Expired)
       },
     });
 

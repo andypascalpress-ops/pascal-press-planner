@@ -1074,22 +1074,23 @@ interface MetaCampaignsResponse {
 }
 
 interface EtzTrialMonth {
-  signups:         number;
-  trialsRemaining: number;
-  converted:       number;
-  conversionRate:  number | null;
-}
-interface EtzTrialAllTime {
   signups:        number;
-  onTrial:        number;
   converted:      number;
   conversionRate: number | null;
 }
+interface EtzTrialAllTime {
+  total:          number;
+  onTrial:        number;
+  active:         number;
+  trialExpired:   number;
+  expired:        number;
+  conversionRate: number | null;
+}
 interface EtzTrialFunnelResponse {
-  month:    string;
+  month:     string;
   thisMonth: EtzTrialMonth;
   allTime:   EtzTrialAllTime;
-  error?:   string;
+  error?:    string;
 }
 
 // ─── ETZ Trial Funnel Panel ───────────────────────────────────────────────────
@@ -1117,14 +1118,11 @@ function EtzTrialFunnelPanel({
   }
 
   const { thisMonth, allTime } = data;
-  const convPctMonth   = thisMonth.conversionRate  != null ? Math.round(thisMonth.conversionRate  * 100) : null;
-  const convPctAllTime = allTime.conversionRate    != null ? Math.round(allTime.conversionRate    * 100) : null;
+  const convPctMonth   = thisMonth.conversionRate != null ? Math.round(thisMonth.conversionRate * 100) : null;
+  const convPctAllTime = allTime.conversionRate   != null ? Math.round(allTime.conversionRate   * 100) : null;
 
   const rateColor = (pct: number | null) =>
-    pct == null ? 'text-gray-400'
-    : pct >= 30  ? 'text-emerald-700'
-    : pct >= 15  ? 'text-amber-600'
-    : 'text-red-500';
+    pct == null ? 'text-gray-400' : pct >= 30 ? 'text-emerald-700' : pct >= 15 ? 'text-amber-600' : 'text-red-500';
 
   return (
     <div className="px-4 md:px-6 pb-0">
@@ -1133,12 +1131,10 @@ function EtzTrialFunnelPanel({
         <div className="px-5 py-3 bg-emerald-50 border-b border-emerald-200 flex items-center justify-between">
           <div>
             <h3 className="text-sm font-bold text-emerald-900">Excel Test Zone · Free Trial Funnel</h3>
-            <p className="text-xs text-emerald-700 mt-0.5">
-              HubSpot · signups → active subscribers
-            </p>
+            <p className="text-xs text-emerald-700 mt-0.5">HubSpot · signups → active subscribers</p>
           </div>
           <span className="text-xs font-medium text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full">
-            {allTime.converted.toLocaleString()} total converted
+            {allTime.active.toLocaleString()} total active
           </span>
         </div>
 
@@ -1147,97 +1143,61 @@ function EtzTrialFunnelPanel({
           {/* This month */}
           <div>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">This Month</div>
-            <div className="grid grid-cols-3 gap-3 mb-3">
+            <div className="grid grid-cols-2 gap-3 mb-3">
               <div className="bg-gray-50 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-gray-900">{thisMonth.signups}</div>
-                <div className="text-xs text-gray-500 mt-0.5">Signups</div>
-              </div>
-              <div className="bg-amber-50 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-amber-700">{thisMonth.trialsRemaining}</div>
-                <div className="text-xs text-amber-600 mt-0.5">On trial</div>
+                <div className="text-2xl font-bold text-gray-900">{thisMonth.signups.toLocaleString()}</div>
+                <div className="text-xs text-gray-500 mt-0.5">New signups</div>
               </div>
               <div className="bg-emerald-50 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-emerald-700">{thisMonth.converted}</div>
+                <div className="text-2xl font-bold text-emerald-700">{thisMonth.converted.toLocaleString()}</div>
                 <div className="text-xs text-emerald-600 mt-0.5">Converted</div>
               </div>
             </div>
-            {/* Funnel bar */}
-            {thisMonth.signups > 0 && (
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <span className="w-20 shrink-0">Trial</span>
-                  <div className="flex-1 h-3 bg-amber-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-amber-400 rounded-full"
-                      style={{ width: `${Math.round((thisMonth.trialsRemaining / thisMonth.signups) * 100)}%` }}
-                    />
-                  </div>
-                  <span className="w-8 text-right tabular-nums font-medium text-amber-600">
-                    {Math.round((thisMonth.trialsRemaining / thisMonth.signups) * 100)}%
-                  </span>
+            {thisMonth.signups > 0 ? (
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <span className="w-24 shrink-0">Conversion rate</span>
+                <div className="flex-1 h-3 bg-emerald-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${convPctMonth ?? 0}%` }} />
                 </div>
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <span className="w-20 shrink-0">Converted</span>
-                  <div className="flex-1 h-3 bg-emerald-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-emerald-500 rounded-full"
-                      style={{ width: convPctMonth != null ? `${convPctMonth}%` : '0%' }}
-                    />
-                  </div>
-                  <span className={`w-8 text-right tabular-nums font-bold ${rateColor(convPctMonth)}`}>
-                    {convPctMonth != null ? `${convPctMonth}%` : '—'}
-                  </span>
-                </div>
+                <span className={`w-8 text-right tabular-nums font-bold ${rateColor(convPctMonth)}`}>
+                  {convPctMonth != null ? `${convPctMonth}%` : '—'}
+                </span>
               </div>
-            )}
-            {thisMonth.signups === 0 && (
-              <p className="text-xs text-gray-400 italic">No new trial signups this month</p>
+            ) : (
+              <p className="text-xs text-gray-400 italic">No new signups this month yet</p>
             )}
           </div>
 
           {/* All-time */}
           <div className="md:pl-6 md:border-l border-gray-100">
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">All Time</div>
-            <div className="grid grid-cols-3 gap-3 mb-3">
-              <div className="bg-gray-50 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-gray-900">{allTime.signups.toLocaleString()}</div>
-                <div className="text-xs text-gray-500 mt-0.5">Total trials</div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+              <div className="bg-gray-50 rounded-lg p-2.5 text-center">
+                <div className="text-lg font-bold text-gray-900">{allTime.total.toLocaleString()}</div>
+                <div className="text-[11px] text-gray-500 mt-0.5">Total</div>
               </div>
-              <div className="bg-amber-50 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-amber-700">{allTime.onTrial.toLocaleString()}</div>
-                <div className="text-xs text-amber-600 mt-0.5">Still trialling</div>
+              <div className="bg-blue-50 rounded-lg p-2.5 text-center">
+                <div className="text-lg font-bold text-blue-700">{allTime.onTrial.toLocaleString()}</div>
+                <div className="text-[11px] text-blue-600 mt-0.5">On trial</div>
               </div>
-              <div className="bg-emerald-50 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-emerald-700">{allTime.converted.toLocaleString()}</div>
-                <div className="text-xs text-emerald-600 mt-0.5">Converted</div>
+              <div className="bg-emerald-50 rounded-lg p-2.5 text-center">
+                <div className="text-lg font-bold text-emerald-700">{allTime.active.toLocaleString()}</div>
+                <div className="text-[11px] text-emerald-600 mt-0.5">Active</div>
+              </div>
+              <div className="bg-red-50 rounded-lg p-2.5 text-center">
+                <div className="text-lg font-bold text-red-500">{allTime.trialExpired.toLocaleString()}</div>
+                <div className="text-[11px] text-red-400 mt-0.5">Trial expired</div>
               </div>
             </div>
-            {allTime.signups > 0 && (
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <span className="w-20 shrink-0">Still trialling</span>
-                  <div className="flex-1 h-3 bg-amber-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-amber-400 rounded-full"
-                      style={{ width: `${Math.round((allTime.onTrial / allTime.signups) * 100)}%` }}
-                    />
-                  </div>
-                  <span className="w-8 text-right tabular-nums font-medium text-amber-600">
-                    {Math.round((allTime.onTrial / allTime.signups) * 100)}%
-                  </span>
+            {allTime.total > 0 && (
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <span className="w-24 shrink-0">Conversion rate</span>
+                <div className="flex-1 h-3 bg-emerald-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${convPctAllTime ?? 0}%` }} />
                 </div>
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <span className="w-20 shrink-0">Converted</span>
-                  <div className="flex-1 h-3 bg-emerald-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-emerald-500 rounded-full"
-                      style={{ width: convPctAllTime != null ? `${convPctAllTime}%` : '0%' }}
-                    />
-                  </div>
-                  <span className={`w-8 text-right tabular-nums font-bold ${rateColor(convPctAllTime)}`}>
-                    {convPctAllTime != null ? `${convPctAllTime}%` : '—'}
-                  </span>
-                </div>
+                <span className={`w-8 text-right tabular-nums font-bold ${rateColor(convPctAllTime)}`}>
+                  {convPctAllTime != null ? `${convPctAllTime}%` : '—'}
+                </span>
               </div>
             )}
           </div>
