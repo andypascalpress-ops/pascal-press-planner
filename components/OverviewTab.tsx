@@ -652,7 +652,7 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
         </div>
         {data.adsConnected && (
           <div>
-            <p className="text-xs text-gray-500 mb-0.5">Google Ads ROAS</p>
+            <p className="text-xs text-gray-500 mb-0.5">Paid ROAS</p>
             <p className={`text-lg font-bold ${roasColor(data.roas)}`}>
               {data.roas > 0 ? `${data.roas}x` : <span className="text-gray-400 text-sm">—</span>}
             </p>
