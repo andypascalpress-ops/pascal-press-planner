@@ -627,12 +627,25 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
               )}
             </div>
           )}
-          {/* Sales target bar */}
+          {/* Sales target bar + projection */}
           {data.revConnected && data.revenueTarget && data.revenueTarget > 0 && (() => {
-            const pct     = Math.min(data.revenue / data.revenueTarget, 1.05);
-            const over    = data.revenue > data.revenueTarget;
+            const pct      = Math.min(data.revenue / data.revenueTarget, 1.05);
+            const over     = data.revenue > data.revenueTarget;
             const barColor = over ? 'bg-emerald-500' : pct >= 0.75 ? 'bg-blue-500' : pct >= 0.5 ? 'bg-amber-500' : 'bg-red-400';
             const textColor = over ? 'text-emerald-600 font-medium' : pct >= 0.75 ? 'text-blue-600' : pct >= 0.5 ? 'text-amber-600' : 'text-red-600 font-medium';
+
+            // Projection: extrapolate current run-rate to end of month
+            const projected    = isMonthly && dayPct > 0.02 ? data.revenue / dayPct : null;
+            const onTrack      = projected !== null ? projected >= data.revenueTarget : null;
+            const projDiff     = projected !== null ? Math.abs(projected - data.revenueTarget) : null;
+            const projLabel    = projected !== null
+              ? onTrack
+                ? `On track · ${AUD.format(projected)} projected`
+                : `${AUD.format(projDiff!)} short at this rate`
+              : null;
+            const projColor    = onTrack === true ? 'text-emerald-600' : onTrack === false ? 'text-red-500' : 'text-gray-400';
+            const projIcon     = onTrack === true ? '↗' : onTrack === false ? '↘' : null;
+
             return (
               <div className="mt-2 space-y-1">
                 <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
@@ -646,6 +659,11 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
                     <span className="text-gray-400">{AUD.format(data.revenueTarget - data.revenue)} to go</span>
                   )}
                 </div>
+                {projLabel && !over && (
+                  <div className={`text-xs font-medium ${projColor}`}>
+                    {projIcon} {projLabel}
+                  </div>
+                )}
               </div>
             );
           })()}
