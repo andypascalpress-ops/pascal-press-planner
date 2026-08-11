@@ -1089,9 +1089,191 @@ interface EtzTrialFunnelResponse {
   thisMonth: EtzTrialMonth;
   allTime:   EtzTrialAllTime;
   error?:    string;
+  _meta?:    { pipeline: string; trialStage: string; paidStage: string };
 }
 
-// ─── ETZ Trial Funnel Panel ───────────────────────────────────────────────────
+// ─── ETZ Trials — full dedicated view ────────────────────────────────────────
+
+function EtzTrialsFullView({
+  data,
+  loading,
+  month,
+}: {
+  data:    EtzTrialFunnelResponse | null;
+  loading: boolean;
+  month:   string;
+}) {
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center py-24 text-sm text-gray-400">
+        <svg className="animate-spin h-5 w-5 mr-2 text-emerald-500" viewBox="0 0 24 24" fill="none">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+        </svg>
+        Loading trial data from HubSpot…
+      </div>
+    );
+  }
+
+  if (!data || data.error) {
+    return (
+      <div className="flex-1 flex items-center justify-center py-24 text-sm text-gray-400">
+        {data?.error ?? 'No trial data available'}
+      </div>
+    );
+  }
+
+  const { thisMonth, allTime } = data;
+  const convPctMonth   = thisMonth.conversionRate != null ? (thisMonth.conversionRate * 100) : null;
+  const convPctAllTime = allTime.conversionRate   != null ? (allTime.conversionRate   * 100) : null;
+
+  const rateColor = (pct: number | null) =>
+    pct == null ? 'text-gray-400' : pct >= 15 ? 'text-emerald-600' : pct >= 8 ? 'text-amber-500' : 'text-red-500';
+
+  const rateBg = (pct: number | null) =>
+    pct == null ? 'bg-gray-200' : pct >= 15 ? 'bg-emerald-500' : pct >= 8 ? 'bg-amber-500' : 'bg-red-500';
+
+  return (
+    <div className="px-4 md:px-8 py-6 space-y-6 max-w-4xl">
+
+      {/* Header */}
+      <div>
+        <h2 className="text-lg font-bold text-gray-900">Excel Test Zone · Free Trial Funnel</h2>
+        <p className="text-sm text-gray-500 mt-0.5">
+          HubSpot Deals · ETZ Pipeline &mdash; {data._meta?.trialStage ?? 'Active Trial'} → {data._meta?.paidStage ?? 'Active Paid'}
+        </p>
+      </div>
+
+      {/* This Month ────────────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-gray-700">This Month</h3>
+          <span className="text-xs text-gray-400">{monthLabel(month)}</span>
+        </div>
+
+        <div className="px-6 py-5">
+          {/* Stat row */}
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="text-center">
+              <div className="text-4xl font-extrabold text-gray-900 tabular-nums">
+                {thisMonth.signups.toLocaleString()}
+              </div>
+              <div className="text-xs text-gray-500 mt-1.5 font-medium">New trials</div>
+            </div>
+            <div className="text-center">
+              <div className={`text-4xl font-extrabold tabular-nums ${rateColor(convPctMonth)}`}>
+                {convPctMonth != null ? `${convPctMonth.toFixed(1)}%` : '—'}
+              </div>
+              <div className="text-xs text-gray-500 mt-1.5 font-medium">Conversion rate</div>
+            </div>
+            <div className="text-center">
+              <div className="text-4xl font-extrabold text-emerald-600 tabular-nums">
+                {thisMonth.converted.toLocaleString()}
+              </div>
+              <div className="text-xs text-gray-500 mt-1.5 font-medium">Converted to paid</div>
+            </div>
+          </div>
+
+          {/* Funnel bar */}
+          {thisMonth.signups > 0 && (
+            <div className="space-y-2">
+              <div className="flex justify-between text-xs text-gray-400 font-medium">
+                <span>Trial started</span>
+                <span>Converted</span>
+              </div>
+              <div className="relative h-8 bg-gray-100 rounded-full overflow-hidden">
+                {/* Full bar = all signups */}
+                <div className="absolute inset-0 bg-blue-100 rounded-full" />
+                {/* Converted portion */}
+                <div
+                  className="absolute inset-y-0 left-0 bg-emerald-500 rounded-full transition-all duration-700"
+                  style={{ width: `${Math.max(convPctMonth ?? 0, 0)}%` }}
+                />
+                {/* Labels */}
+                <div className="absolute inset-0 flex items-center justify-between px-3">
+                  <span className="text-xs font-bold text-blue-700">{thisMonth.signups.toLocaleString()} trials</span>
+                  <span className="text-xs font-bold text-emerald-700">{thisMonth.converted.toLocaleString()} paid</span>
+                </div>
+              </div>
+              {convPctMonth != null && (
+                <p className="text-xs text-gray-400 text-center">
+                  {convPctMonth < 10
+                    ? `${convPctMonth.toFixed(1)}% conversion — ${thisMonth.signups - thisMonth.converted} trials haven't converted yet this month`
+                    : `${convPctMonth.toFixed(1)}% of this month's trials have converted to paid`}
+                </p>
+              )}
+            </div>
+          )}
+
+          {thisMonth.signups === 0 && (
+            <p className="text-sm text-gray-400 italic text-center py-2">No new trials recorded yet this month</p>
+          )}
+        </div>
+      </div>
+
+      {/* All Time ──────────────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100">
+          <h3 className="text-sm font-semibold text-gray-700">All Time</h3>
+        </div>
+
+        <div className="px-6 py-5">
+          {/* Stat row */}
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="bg-gray-50 rounded-xl p-4 text-center">
+              <div className="text-3xl font-extrabold text-gray-900 tabular-nums">
+                {allTime.total.toLocaleString()}
+              </div>
+              <div className="text-xs text-gray-500 mt-1.5 font-medium">Total deals</div>
+            </div>
+            <div className="bg-blue-50 rounded-xl p-4 text-center">
+              <div className="text-3xl font-extrabold text-blue-700 tabular-nums">
+                {allTime.onTrial.toLocaleString()}
+              </div>
+              <div className="text-xs text-blue-600 mt-1.5 font-medium">Currently trialling</div>
+            </div>
+            <div className="bg-emerald-50 rounded-xl p-4 text-center">
+              <div className="text-3xl font-extrabold text-emerald-700 tabular-nums">
+                {allTime.converted.toLocaleString()}
+              </div>
+              <div className="text-xs text-emerald-600 mt-1.5 font-medium">Converted to paid</div>
+            </div>
+          </div>
+
+          {/* All-time conversion bar */}
+          {allTime.total > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                <span className="font-medium">Overall conversion rate</span>
+                <span className={`font-bold text-sm ${rateColor(convPctAllTime)}`}>
+                  {convPctAllTime != null ? `${convPctAllTime.toFixed(1)}%` : '—'}
+                </span>
+              </div>
+              <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ${rateBg(convPctAllTime)}`}
+                  style={{ width: `${Math.min(convPctAllTime ?? 0, 100)}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-400 text-center">
+                {allTime.converted.toLocaleString()} converted out of {allTime.total.toLocaleString()} total deals
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Data note */}
+      <p className="text-xs text-gray-400 pb-4">
+        Data from HubSpot · {data._meta?.pipeline ?? 'ETZ'} pipeline ·
+        refreshes on each page load
+      </p>
+
+    </div>
+  );
+}
+
+// ─── ETZ Trial Funnel Panel (kept for legacy reference) ──────────────────────
 
 function EtzTrialFunnelPanel({
   data,
@@ -1515,6 +1697,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [loadingMetaCampaigns, setLoadingMetaCampaigns] = useState(false);
   const [etzTrialFunnel,       setEtzTrialFunnel      ] = useState<EtzTrialFunnelResponse | null>(null);
   const [loadingEtzTrial,      setLoadingEtzTrial     ] = useState(false);
+  const [financeView,          setFinanceView         ] = useState<'overview' | 'etz-trials'>('overview');
   const [siteConversion,   setSiteConversion  ] = useState<WebsiteConversionResponse | null>(null);
   const [channelRevenue,   setChannelRevenue  ] = useState<ChannelRevenueResponse | null>(null);
 
@@ -1742,6 +1925,22 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
       {/* Controls bar */}
       <div className="flex flex-wrap items-center justify-between px-4 md:px-6 py-3 gap-y-2 bg-white border-b border-gray-200 shrink-0">
         <div className="flex items-center gap-3">
+          {/* Sub-tab switcher */}
+          <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-1 mr-1">
+            {(['overview', 'etz-trials'] as const).map(v => (
+              <button
+                key={v}
+                onClick={() => setFinanceView(v)}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
+                  financeView === v
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {v === 'overview' ? 'Overview' : '🧪 ETZ Trials'}
+              </button>
+            ))}
+          </div>
           <label className="text-sm font-medium text-gray-600">Month</label>
           <select
             value={selectedMonth}
@@ -1795,6 +1994,18 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
 
       {/* Scrollable body */}
       <div className="flex-1 overflow-auto">
+
+        {/* ── ETZ Trials view ─────────────────────────────────────────────── */}
+        {financeView === 'etz-trials' && (
+          <EtzTrialsFullView
+            data={etzTrialFunnel}
+            loading={loadingEtzTrial}
+            month={selectedMonth}
+          />
+        )}
+
+        {/* ── Overview view ────────────────────────────────────────────────── */}
+        {financeView === 'overview' && <>
 
         {/* Summary strip */}
         <div className="px-4 md:px-6 pt-4 pb-0">
@@ -1884,9 +2095,6 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             channelRevenue={channelRevenue?.etz ?? null}
           />
         </div>
-
-        {/* ETZ Trial Funnel */}
-        <EtzTrialFunnelPanel data={etzTrialFunnel} loading={loadingEtzTrial} />
 
         {/* Campaign-level Ads spend + GA4 revenue */}
         <CampaignBreakdownTable
@@ -2035,6 +2243,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             />
           </div>
         </div>
+
+        </> /* end overview */}
 
       </div>
     </div>
