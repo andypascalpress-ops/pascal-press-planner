@@ -1074,15 +1074,14 @@ interface MetaCampaignsResponse {
 }
 
 interface EtzTrialMonth {
-  signups:        number;
-  converted:      number;
+  trialsStarted:  number;       // deals that entered Active Trial stage this month (event-based)
+  converted:      number;       // deals that entered Active Paid stage this month
   conversionRate: number | null;
+  revenue:        number;       // AUD sum of converted deal amounts this month
 }
 interface EtzTrialAllTime {
-  total:          number;
-  onTrial:        number;
-  converted:      number;
-  conversionRate: number | null;
+  onTrial:   number;   // deals currently in Active Trial stage
+  converted: number;   // deals currently in Active Paid stage
 }
 interface EtzTrialFunnelResponse {
   month:     string;
@@ -1124,126 +1123,109 @@ function EtzTrialsFullView({
   }
 
   const { thisMonth, allTime } = data;
-  const totalThisMonth = thisMonth.signups + thisMonth.converted;
+  const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', minimumFractionDigits: 2 });
+  const convPct = thisMonth.conversionRate != null ? thisMonth.conversionRate * 100 : null;
+  const rateColor = convPct == null ? 'text-gray-400'
+    : convPct >= 15 ? 'text-emerald-600'
+    : convPct >= 8  ? 'text-amber-500'
+    : 'text-red-500';
 
   return (
-    <div className="px-4 md:px-8 py-6 space-y-6 max-w-4xl">
+    <div className="px-4 md:px-8 py-6 space-y-5 max-w-4xl">
 
       {/* Header */}
       <div>
         <h2 className="text-lg font-bold text-gray-900">Excel Test Zone · Free Trial Funnel</h2>
         <p className="text-sm text-gray-500 mt-0.5">
-          HubSpot Deals · {data._meta?.pipeline ?? 'ETZ Pipeline'}
+          HubSpot Deals · {data._meta?.pipeline ?? 'ETZ Pipeline'} · event-based stage tracking
         </p>
       </div>
 
       {/* This Month ────────────────────────────────────────────────────────── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-700">This Month</h3>
-            <p className="text-xs text-gray-400 mt-0.5">Deals created in {monthLabel(month)} by current stage</p>
-          </div>
+          <h3 className="text-sm font-semibold text-gray-700">This Month</h3>
           <span className="text-xs text-gray-400">{monthLabel(month)}</span>
         </div>
 
         <div className="px-6 py-5">
-          <div className="grid grid-cols-2 gap-4 mb-5">
-            {/* Still on trial */}
-            <div className="bg-blue-50 rounded-xl p-5 text-center">
-              <div className="text-4xl font-extrabold text-blue-700 tabular-nums mb-1">
-                {thisMonth.signups.toLocaleString()}
+          {/* Key metrics row */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+            <div className="text-center">
+              <div className="text-4xl font-extrabold text-gray-900 tabular-nums mb-1">
+                {thisMonth.trialsStarted.toLocaleString()}
               </div>
-              <div className="text-xs font-semibold text-blue-600">Still on trial</div>
-              <div className="text-[11px] text-blue-400 mt-1">Active Trial stage</div>
+              <div className="text-xs font-medium text-gray-500">Trials started</div>
             </div>
-            {/* Converted */}
-            <div className="bg-emerald-50 rounded-xl p-5 text-center">
-              <div className="text-4xl font-extrabold text-emerald-700 tabular-nums mb-1">
+            <div className="text-center">
+              <div className="text-4xl font-extrabold text-emerald-600 tabular-nums mb-1">
                 {thisMonth.converted.toLocaleString()}
               </div>
-              <div className="text-xs font-semibold text-emerald-600">Converted to paid</div>
-              <div className="text-[11px] text-emerald-400 mt-1">Active Paid stage</div>
+              <div className="text-xs font-medium text-gray-500">Converted to paid</div>
+            </div>
+            <div className="text-center">
+              <div className={`text-4xl font-extrabold tabular-nums mb-1 ${rateColor}`}>
+                {convPct != null ? `${convPct.toFixed(1)}%` : '—'}
+              </div>
+              <div className="text-xs font-medium text-gray-500">Conversion rate</div>
+            </div>
+            <div className="text-center">
+              <div className="text-4xl font-extrabold text-gray-900 tabular-nums mb-1">
+                {thisMonth.revenue > 0 ? AUD.format(thisMonth.revenue) : '—'}
+              </div>
+              <div className="text-xs font-medium text-gray-500">Deal revenue</div>
             </div>
           </div>
 
-          {/* Proportion bar */}
-          {totalThisMonth > 0 && (
-            <>
-              <div className="flex h-6 rounded-full overflow-hidden gap-0.5 mb-2">
-                {thisMonth.signups > 0 && (
-                  <div
-                    className="bg-blue-200 flex items-center justify-center"
-                    style={{ width: `${(thisMonth.signups / totalThisMonth) * 100}%` }}
-                  >
-                    <span className="text-[10px] font-bold text-blue-700 px-1 truncate">
-                      {thisMonth.signups}
-                    </span>
-                  </div>
-                )}
-                {thisMonth.converted > 0 && (
-                  <div
-                    className="bg-emerald-500 flex items-center justify-center"
-                    style={{ width: `${(thisMonth.converted / totalThisMonth) * 100}%` }}
-                  >
-                    <span className="text-[10px] font-bold text-white px-1 truncate">
-                      {thisMonth.converted}
-                    </span>
-                  </div>
-                )}
+          {/* Funnel bar */}
+          {thisMonth.trialsStarted > 0 && (
+            <div className="space-y-1.5">
+              <div className="flex h-5 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className="bg-emerald-500 rounded-full transition-all duration-700"
+                  style={{ width: `${Math.max(convPct ?? 0, 0)}%` }}
+                />
               </div>
               <p className="text-xs text-gray-400 text-center">
-                {totalThisMonth.toLocaleString()} new deals in {monthLabel(month)} ·{' '}
-                {totalThisMonth > 0
-                  ? `${Math.round((thisMonth.converted / totalThisMonth) * 100)}% already paid`
-                  : ''}
+                {thisMonth.converted} converted out of {thisMonth.trialsStarted} trials started
+                {convPct != null && ` · ${convPct.toFixed(1)}% rate`}
               </p>
-            </>
+            </div>
           )}
-
-          {totalThisMonth === 0 && (
-            <p className="text-sm text-gray-400 italic text-center py-2">No new deals this month yet</p>
+          {thisMonth.trialsStarted === 0 && thisMonth.converted === 0 && (
+            <p className="text-sm text-gray-400 italic text-center py-2">No activity recorded yet this month</p>
           )}
-
-          {/* Caveat */}
-          <div className="mt-4 bg-amber-50 border border-amber-100 rounded-lg px-4 py-2.5 text-xs text-amber-700">
-            <strong>Note:</strong> These counts reflect current deal stage, not when the trial started.
-            Trials from earlier in the month that have already converted appear in "Converted", not "Still on trial".
-            For the event-based funnel rate, see HubSpot&apos;s ETZ_Trial Conversion report.
-          </div>
         </div>
       </div>
 
-      {/* All Time ──────────────────────────────────────────────────────────── */}
+      {/* Right Now snapshot ─────────────────────────────────────────────────── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100">
-          <h3 className="text-sm font-semibold text-gray-700">Right Now · All Deals</h3>
-          <p className="text-xs text-gray-400 mt-0.5">Current snapshot across all time</p>
+          <h3 className="text-sm font-semibold text-gray-700">Right Now</h3>
+          <p className="text-xs text-gray-400 mt-0.5">Current deal stage snapshot — all time</p>
         </div>
-
-        <div className="px-6 py-5">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-blue-50 rounded-xl p-5 text-center">
-              <div className="text-3xl font-extrabold text-blue-700 tabular-nums mb-1">
-                {allTime.onTrial.toLocaleString()}
-              </div>
-              <div className="text-xs font-semibold text-blue-600">Currently on trial</div>
-              <div className="text-[11px] text-blue-400 mt-1">Active Trial stage today</div>
+        <div className="px-6 py-5 grid grid-cols-2 gap-4">
+          <div className="bg-blue-50 rounded-xl p-5 text-center">
+            <div className="text-3xl font-extrabold text-blue-700 tabular-nums mb-1">
+              {allTime.onTrial.toLocaleString()}
             </div>
-            <div className="bg-emerald-50 rounded-xl p-5 text-center">
-              <div className="text-3xl font-extrabold text-emerald-700 tabular-nums mb-1">
-                {allTime.converted.toLocaleString()}
-              </div>
-              <div className="text-xs font-semibold text-emerald-600">Total converted to paid</div>
-              <div className="text-[11px] text-emerald-400 mt-1">Active Paid stage</div>
+            <div className="text-xs font-semibold text-blue-600">Currently trialling</div>
+            <div className="text-[11px] text-blue-400 mt-1">Active Trial stage</div>
+          </div>
+          <div className="bg-emerald-50 rounded-xl p-5 text-center">
+            <div className="text-3xl font-extrabold text-emerald-700 tabular-nums mb-1">
+              {allTime.converted.toLocaleString()}
             </div>
+            <div className="text-xs font-semibold text-emerald-600">Total converted to paid</div>
+            <div className="text-[11px] text-emerald-400 mt-1">Active Paid stage</div>
           </div>
         </div>
       </div>
 
       {/* Data note */}
       <p className="text-xs text-gray-400 pb-4">
-        Source: HubSpot · {data._meta?.pipeline ?? 'ETZ'} pipeline · refreshes on each page load
+        Source: HubSpot · {data._meta?.pipeline ?? 'ETZ'} pipeline · stage-entry event timestamps ·
+        matches ETZ_Trial Conversion report · refreshes on each page load
       </p>
 
     </div>

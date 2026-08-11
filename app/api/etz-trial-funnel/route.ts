@@ -1,17 +1,19 @@
 /**
  * GET /api/etz-trial-funnel?month=YYYY-MM
  *
- * Returns ETZ free-trial funnel data from HubSpot Deals:
- *  - Trials started this month  (deals created in the ETZ pipeline this month)
- *  - Converted this month       (deals in "Active Paid" stage created this month)
- *  - All-time: currently on trial, converted, total
+ * Returns ETZ free-trial funnel data from HubSpot Deals using event-based
+ * stage-entry timestamps — matching HubSpot's own ETZ_Trial Conversion report.
  *
- * The ETZ pipeline tracks test-pack trials. Deal stages:
- *   "Active Trial (ETZ Pipeline Status)" → currently trialling
+ * Key insight: HubSpot stores hs_date_entered_[stageId] on every deal.
+ * Filtering on THAT property (not createdate + current dealstage) gives us
+ * "how many deals entered stage X during month Y" — exactly what the HubSpot
+ * funnel reports track.
+ *
+ * Deal stages in the ETZ pipeline:
+ *   "Active Trial (ETZ Pipeline Status)" → trial started
  *   "Active Paid (ETZ Pipeline Status)"  → converted to paid
  *
  * Required env var:  HUBSPOT_CRM_TOKEN  (ExcelTestZoneSync legacy app token)
- *                    Must have crm.objects.deals.read scope.
  */
 import { NextResponse } from 'next/server';
 
@@ -38,7 +40,8 @@ async function hsGet(path: string) {
   return res.json();
 }
 
-async function hsSearchDeals(filters: object[]): Promise<number> {
+/** Count deals matching filters. Returns total count only. */
+async function hsSearchCount(filters: object[]): Promise<number> {
   const res = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
     method: 'POST',
     headers: hsHeaders(),
@@ -55,6 +58,24 @@ async function hsSearchDeals(filters: object[]): Promise<number> {
   }
   const json = await res.json();
   return (json.total as number) ?? 0;
+}
+
+/** Sum the `amount` property of matching deals (paginates up to 200). */
+async function hsSearchSumAmount(filters: object[]): Promise<number> {
+  const res = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
+    method: 'POST',
+    headers: hsHeaders(),
+    body: JSON.stringify({
+      filterGroups: [{ filters }],
+      limit: 200,
+      properties: ['amount'],
+    }),
+    cache: 'no-store',
+  });
+  if (!res.ok) return 0;
+  const json = await res.json();
+  const deals = (json.results ?? []) as Array<{ properties: { amount?: string } }>;
+  return deals.reduce((sum, d) => sum + parseFloat(d.properties.amount ?? '0'), 0);
 }
 
 function monthToEpochRange(month: string): { startMs: number; endMs: number } {
@@ -115,69 +136,70 @@ export async function GET(request: Request) {
 
     // ── 2. Date range ─────────────────────────────────────────────────────
     const { startMs, endMs } = monthToEpochRange(month);
-    const createdThisMonth = [
-      { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
-      { propertyName: 'createdate', operator: 'LT',  value: String(endMs)   },
+
+    // HubSpot stores hs_date_entered_[stageId] per deal — this is the
+    // event-based timestamp HubSpot's funnel reports filter on.
+    const enteredTrialThisMonth = [
+      { propertyName: `hs_date_entered_${trialStage.id}`, operator: 'GTE', value: String(startMs) },
+      { propertyName: `hs_date_entered_${trialStage.id}`, operator: 'LT',  value: String(endMs)   },
     ];
-    const inEtzPipeline = { propertyName: 'pipeline', operator: 'EQ', value: etzPipeline.id };
+    const enteredPaidThisMonth = [
+      { propertyName: `hs_date_entered_${paidStage.id}`, operator: 'GTE', value: String(startMs) },
+      { propertyName: `hs_date_entered_${paidStage.id}`, operator: 'LT',  value: String(endMs)   },
+    ];
 
     // ── 3. Counts — sequential to respect HubSpot rate limits ─────────────
-    // This month: new deals that started in Active Trial stage
-    // (matches HubSpot's ETZ_Trial Conversion report which counts entries into that stage)
-    const signupsThisMonth = await hsSearchDeals([
-      ...createdThisMonth,
+
+    // This month: deals that ENTERED Active Trial stage (event-based — matches HubSpot)
+    const trialsEnteredThisMonth = await hsSearchCount(enteredTrialThisMonth);
+    await delay(300);
+
+    // This month: deals that ENTERED Active Paid stage (converted this month)
+    const convertedThisMonth = await hsSearchCount(enteredPaidThisMonth);
+    await delay(300);
+
+    // This month: deal revenue from conversions (sum of amount on paid deals)
+    const revenueThisMonth = await hsSearchSumAmount(enteredPaidThisMonth);
+    await delay(300);
+
+    // All time: currently in Active Trial stage right now
+    const totalOnTrial = await hsSearchCount([
       { propertyName: 'dealstage', operator: 'EQ', value: trialStage.id },
     ]);
     await delay(300);
 
-    // This month: new Active Paid deals (includes direct purchases + trial conversions)
-    const paidThisMonth = await hsSearchDeals([
-      ...createdThisMonth,
+    // All time: currently in Active Paid stage
+    const totalConverted = await hsSearchCount([
       { propertyName: 'dealstage', operator: 'EQ', value: paidStage.id },
     ]);
-    await delay(300);
-
-    // All time: currently on trial (Active Trial stage)
-    const totalOnTrial = await hsSearchDeals([
-      { propertyName: 'dealstage', operator: 'EQ', value: trialStage.id },
-    ]);
-    await delay(300);
-
-    // All time: converted to paid (Active Paid stage)
-    const totalConverted = await hsSearchDeals([
-      { propertyName: 'dealstage', operator: 'EQ', value: paidStage.id },
-    ]);
-
-    // All-time total = known stages only (avoids unreliable full-pipeline count)
-    const totalAll = totalOnTrial + totalConverted;
 
     // ── 4. Derived metrics ────────────────────────────────────────────────
-    // This month conversion: paidThisMonth / (signupsThisMonth + paidThisMonth)
-    // paidThisMonth may include direct purchases, but it's the closest proxy available
-    const totalNewThisMonth = signupsThisMonth + paidThisMonth;
-    const convRateMonth     = totalNewThisMonth > 0 ? paidThisMonth / totalNewThisMonth : null;
-    const convRateAllTime   = totalAll > 0 ? totalConverted / totalAll : null;
+    // Conversion rate: of deals that entered trial this month, how many converted?
+    // Note: some conversions may have entered trial in a prior month, so this is
+    // an approximation — but it matches what HubSpot's funnel report shows.
+    const convRateMonth = trialsEnteredThisMonth > 0
+      ? convertedThisMonth / trialsEnteredThisMonth
+      : null;
 
     return NextResponse.json({
       month,
       _meta: {
-        pipeline:        etzPipeline.label,
-        pipelineId:      etzPipeline.id,
-        trialStage:      trialStage.label,
-        trialStageId:    trialStage.id,
-        paidStage:       paidStage.label,
-        paidStageId:     paidStage.id,
+        pipeline:      etzPipeline.label,
+        pipelineId:    etzPipeline.id,
+        trialStage:    trialStage.label,
+        trialStageId:  trialStage.id,
+        paidStage:     paidStage.label,
+        paidStageId:   paidStage.id,
       },
       thisMonth: {
-        signups:        signupsThisMonth,   // new Active Trial deals created this month
-        converted:      paidThisMonth,      // new Active Paid deals created this month
-        conversionRate: convRateMonth,      // 0–1
+        trialsStarted:  trialsEnteredThisMonth,  // deals that entered Active Trial this month
+        converted:      convertedThisMonth,       // deals that entered Active Paid this month
+        conversionRate: convRateMonth,            // 0–1, approx (matches HubSpot funnel report)
+        revenue:        revenueThisMonth,         // AUD sum of converted deal amounts
       },
       allTime: {
-        total:          totalAll,           // onTrial + converted (known stages only)
-        onTrial:        totalOnTrial,
-        converted:      totalConverted,
-        conversionRate: convRateAllTime,    // converted ÷ (onTrial + converted)
+        onTrial:   totalOnTrial,    // deals currently in Active Trial
+        converted: totalConverted,  // deals currently in Active Paid
       },
     });
 
