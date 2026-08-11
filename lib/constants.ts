@@ -52,7 +52,7 @@ export type SpendBrand = typeof SPEND_BRANDS[number];
 export const ANNUAL_BUDGETS: Record<string, number> = {
   'Pascal Press':      103400,  // Online Adv $22k + Google $42k + Facebook $28k + Mktg/PR $3.6k + Promo-Prizes $3k + Brochures $4.8k
   'Excel Test Zone':    36000,  // Google $24k + Facebook $12k
-  'Excel HSC Copilot':  21600,  // Google $1,800/mo × 12
+  'Excel HSC Copilot':  66000,  // $5,500/mo × 12
   'Blake Education':     8400,  // Google $700/mo × 12 (ads not connected yet)
 };
 
@@ -128,7 +128,7 @@ export const HSC_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
 };
 
 // Excel HSC Copilot total monthly marketing budget
-export const HSC_MONTHLY_MARKETING_BUDGET = 3500;
+export const HSC_MONTHLY_MARKETING_BUDGET = 5500;
 
 // Blake Education monthly revenue targets (inc. GST = ex-GST × 1.1), FY27
 export const BLAKE_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
