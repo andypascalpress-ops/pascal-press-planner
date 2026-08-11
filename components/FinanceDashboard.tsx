@@ -1073,22 +1073,12 @@ interface MetaCampaignsResponse {
   etz:       MetaCampaignBrandBlock;
 }
 
-interface EtzTrialMonth {
-  trialsStarted:  number;       // deals that entered Active Trial stage this month (event-based)
-  converted:      number;       // deals that entered Active Paid stage this month
-  conversionRate: number | null;
-  revenue:        number;       // AUD sum of converted deal amounts this month
-}
-interface EtzTrialAllTime {
-  onTrial:   number;   // deals currently in Active Trial stage
-  converted: number;   // deals currently in Active Paid stage
-}
 interface EtzTrialFunnelResponse {
-  month:     string;
-  thisMonth: EtzTrialMonth;
-  allTime:   EtzTrialAllTime;
-  error?:    string;
-  _meta?:    { pipeline: string; trialStage: string; paidStage: string };
+  month:            string;
+  trialsStarted:    number;   // deals that entered Active Trial this month (HubSpot, event-based)
+  currentlyOnTrial: number;   // deals in Active Trial right now (all-time snapshot)
+  error?:           string;
+  _meta?:           { pipeline: string; trialStage: string; trialStageId: string };
 }
 
 // ─── ETZ Trials — full dedicated view ────────────────────────────────────────
@@ -1097,10 +1087,16 @@ function EtzTrialsFullView({
   data,
   loading,
   month,
+  stripeOrders,
+  stripeRevenue,
+  stripeConnected,
 }: {
-  data:    EtzTrialFunnelResponse | null;
-  loading: boolean;
-  month:   string;
+  data:            EtzTrialFunnelResponse | null;
+  loading:         boolean;
+  month:           string;
+  stripeOrders:    number;
+  stripeRevenue:   number;
+  stripeConnected: boolean;
 }) {
   if (loading) {
     return (
@@ -1122,9 +1118,11 @@ function EtzTrialsFullView({
     );
   }
 
-  const { thisMonth, allTime } = data;
-  const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', minimumFractionDigits: 2 });
-  const convPct = thisMonth.conversionRate != null ? thisMonth.conversionRate * 100 : null;
+  const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
+  const trials = data.trialsStarted;
+  const orders = stripeOrders;
+  const convRate = trials > 0 && stripeConnected ? orders / trials : null;
+  const convPct  = convRate != null ? convRate * 100 : null;
   const rateColor = convPct == null ? 'text-gray-400'
     : convPct >= 15 ? 'text-emerald-600'
     : convPct >= 8  ? 'text-amber-500'
@@ -1137,11 +1135,11 @@ function EtzTrialsFullView({
       <div>
         <h2 className="text-lg font-bold text-gray-900">Excel Test Zone · Free Trial Funnel</h2>
         <p className="text-sm text-gray-500 mt-0.5">
-          HubSpot Deals · {data._meta?.pipeline ?? 'ETZ Pipeline'} · event-based stage tracking
+          {monthLabel(month)} · HubSpot trials → Stripe orders
         </p>
       </div>
 
-      {/* This Month ────────────────────────────────────────────────────────── */}
+      {/* This Month ─────────────────────────────────────────────────────────── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-gray-700">This Month</h3>
@@ -1149,83 +1147,84 @@ function EtzTrialsFullView({
         </div>
 
         <div className="px-6 py-5">
-          {/* Key metrics row */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+          {/* Three core metrics */}
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            {/* Trials — HubSpot */}
             <div className="text-center">
               <div className="text-4xl font-extrabold text-gray-900 tabular-nums mb-1">
-                {thisMonth.trialsStarted.toLocaleString()}
+                {trials.toLocaleString()}
               </div>
-              <div className="text-xs font-medium text-gray-500">Trials started</div>
+              <div className="text-xs font-semibold text-gray-600">Free trials</div>
+              <div className="text-[11px] text-gray-400 mt-0.5">HubSpot · Active Trial entries</div>
             </div>
+
+            {/* Orders — Stripe */}
             <div className="text-center">
-              <div className="text-4xl font-extrabold text-emerald-600 tabular-nums mb-1">
-                {thisMonth.converted.toLocaleString()}
+              <div className={`text-4xl font-extrabold tabular-nums mb-1 ${stripeConnected ? 'text-emerald-600' : 'text-gray-300'}`}>
+                {stripeConnected ? orders.toLocaleString() : '—'}
               </div>
-              <div className="text-xs font-medium text-gray-500">Converted to paid</div>
+              <div className="text-xs font-semibold text-gray-600">Paid orders</div>
+              <div className="text-[11px] text-gray-400 mt-0.5">Stripe · {stripeConnected ? AUD.format(stripeRevenue) + ' revenue' : 'not connected'}</div>
             </div>
+
+            {/* Conversion rate */}
             <div className="text-center">
               <div className={`text-4xl font-extrabold tabular-nums mb-1 ${rateColor}`}>
                 {convPct != null ? `${convPct.toFixed(1)}%` : '—'}
               </div>
-              <div className="text-xs font-medium text-gray-500">Conversion rate</div>
-            </div>
-            <div className="text-center">
-              <div className="text-4xl font-extrabold text-gray-900 tabular-nums mb-1">
-                {thisMonth.revenue > 0 ? AUD.format(thisMonth.revenue) : '—'}
-              </div>
-              <div className="text-xs font-medium text-gray-500">Deal revenue</div>
+              <div className="text-xs font-semibold text-gray-600">Conversion rate</div>
+              <div className="text-[11px] text-gray-400 mt-0.5">Stripe orders ÷ HubSpot trials</div>
             </div>
           </div>
 
-          {/* Funnel bar */}
-          {thisMonth.trialsStarted > 0 && (
+          {/* Funnel progress bar */}
+          {trials > 0 && stripeConnected && (
             <div className="space-y-1.5">
-              <div className="flex h-5 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-5 bg-gray-100 rounded-full overflow-hidden">
                 <div
-                  className="bg-emerald-500 rounded-full transition-all duration-700"
-                  style={{ width: `${Math.max(convPct ?? 0, 0)}%` }}
+                  className="h-full bg-emerald-500 rounded-full transition-all duration-700"
+                  style={{ width: `${Math.min(convPct ?? 0, 100)}%` }}
                 />
               </div>
               <p className="text-xs text-gray-400 text-center">
-                {thisMonth.converted} converted out of {thisMonth.trialsStarted} trials started
-                {convPct != null && ` · ${convPct.toFixed(1)}% rate`}
+                {orders.toLocaleString()} orders from {trials.toLocaleString()} trials
+                {convPct != null && ` · ${convPct.toFixed(1)}% converted`}
               </p>
             </div>
           )}
-          {thisMonth.trialsStarted === 0 && thisMonth.converted === 0 && (
-            <p className="text-sm text-gray-400 italic text-center py-2">No activity recorded yet this month</p>
+          {trials === 0 && (
+            <p className="text-sm text-gray-400 italic text-center py-2">No trials started yet this month</p>
           )}
         </div>
       </div>
 
-      {/* Right Now snapshot ─────────────────────────────────────────────────── */}
+      {/* Right Now — HubSpot snapshot ───────────────────────────────────────── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100">
           <h3 className="text-sm font-semibold text-gray-700">Right Now</h3>
-          <p className="text-xs text-gray-400 mt-0.5">Current deal stage snapshot — all time</p>
+          <p className="text-xs text-gray-400 mt-0.5">Active trials in HubSpot at this moment</p>
         </div>
-        <div className="px-6 py-5 grid grid-cols-2 gap-4">
-          <div className="bg-blue-50 rounded-xl p-5 text-center">
-            <div className="text-3xl font-extrabold text-blue-700 tabular-nums mb-1">
-              {allTime.onTrial.toLocaleString()}
+        <div className="px-6 py-5">
+          <div className="flex items-center gap-4">
+            <div className="bg-blue-50 rounded-xl px-8 py-5 text-center">
+              <div className="text-3xl font-extrabold text-blue-700 tabular-nums mb-1">
+                {data.currentlyOnTrial.toLocaleString()}
+              </div>
+              <div className="text-xs font-semibold text-blue-600">Currently trialling</div>
+              <div className="text-[11px] text-blue-400 mt-0.5">Active Trial stage · all time</div>
             </div>
-            <div className="text-xs font-semibold text-blue-600">Currently trialling</div>
-            <div className="text-[11px] text-blue-400 mt-1">Active Trial stage</div>
-          </div>
-          <div className="bg-emerald-50 rounded-xl p-5 text-center">
-            <div className="text-3xl font-extrabold text-emerald-700 tabular-nums mb-1">
-              {allTime.converted.toLocaleString()}
-            </div>
-            <div className="text-xs font-semibold text-emerald-600">Total converted to paid</div>
-            <div className="text-[11px] text-emerald-400 mt-1">Active Paid stage</div>
+            <p className="text-xs text-gray-400 flex-1">
+              These users have an open trial deal in HubSpot right now — they haven&apos;t converted
+              or expired yet. This is your live pipeline of potential conversions.
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Data note */}
+      {/* Source note */}
       <p className="text-xs text-gray-400 pb-4">
-        Source: HubSpot · {data._meta?.pipeline ?? 'ETZ'} pipeline · stage-entry event timestamps ·
-        matches ETZ_Trial Conversion report · refreshes on each page load
+        Trials: HubSpot · {data._meta?.pipeline ?? 'ETZ'} pipeline · stage-entry timestamps ·
+        Orders &amp; revenue: Stripe · refreshes on each page load
       </p>
 
     </div>
@@ -1960,6 +1959,9 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             data={etzTrialFunnel}
             loading={loadingEtzTrial}
             month={selectedMonth}
+            stripeOrders={revenue?.etz?.totalOrders ?? 0}
+            stripeRevenue={revenue?.etz?.totalRevenue ?? 0}
+            stripeConnected={revenue?.etz?.connected === true}
           />
         )}
 
