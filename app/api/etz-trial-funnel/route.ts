@@ -67,15 +67,32 @@ function monthToEpochRange(month: string): { startMs: number; endMs: number } {
 }
 
 export async function GET(request: Request) {
-  if (!process.env.HUBSPOT_API_KEY) {
-    return NextResponse.json({ error: 'HUBSPOT_API_KEY not configured' }, { status: 500 });
+  const token = process.env.HUBSPOT_CRM_TOKEN ?? process.env.HUBSPOT_API_KEY;
+  if (!token) {
+    return NextResponse.json({ error: 'No HubSpot token configured' }, { status: 500 });
   }
 
   const { searchParams } = new URL(request.url);
-  // Default to current month
   const now   = new Date();
   const month = searchParams.get('month')
     ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+  // ?debug=1 — returns distinct hs_lead_status values to identify the correct casing
+  if (searchParams.get('debug') === '1') {
+    const res = await fetch(`${HS_BASE}/crm/v3/objects/contacts/search`, {
+      method: 'POST',
+      headers: hsHeaders(),
+      body: JSON.stringify({
+        filterGroups: [{ filters: [{ propertyName: 'hs_lead_status', operator: 'HAS_PROPERTY' }] }],
+        limit: 100,
+        properties: ['hs_lead_status'],
+      }),
+      cache: 'no-store',
+    });
+    const json = await res.json();
+    const values = [...new Set((json.results ?? []).map((c: { properties: { hs_lead_status: string } }) => c.properties?.hs_lead_status))].filter(Boolean);
+    return NextResponse.json({ total: json.total, distinctValues: values });
+  }
 
   try {
     // ── 1. Status values confirmed by Andy ────────────────────────────────────
