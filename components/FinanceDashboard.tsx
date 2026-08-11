@@ -1047,37 +1047,108 @@ interface CampaignsResponse {
   hsc: CampaignBrandBlock;
 }
 
-function CampaignBreakdownTable({ data, loading }: { data: CampaignsResponse | null; loading: boolean }) {
-  const [tab, setTab] = useState<'pp' | 'etz' | 'hsc'>('pp');
-  const brand = data?.[tab];
-  const tabs: { key: 'pp' | 'etz' | 'hsc'; label: string }[] = [
+interface MetaCampaignRow {
+  id:          string;
+  name:        string;
+  spend:       number;
+  impressions: number;
+  clicks:      number;
+  ctr:         number;
+  cpm:         number;
+  reach:       number;
+  frequency:   number;
+}
+
+interface MetaCampaignBrandBlock {
+  campaigns: MetaCampaignRow[];
+  totals:    { spend: number; impressions: number; clicks: number; reach: number };
+  connected: boolean;
+  error:     string | null;
+}
+
+interface MetaCampaignsResponse {
+  month:     string;
+  dateRange: { start: string; end: string };
+  pp:        MetaCampaignBrandBlock;
+  etz:       MetaCampaignBrandBlock;
+}
+
+function CampaignBreakdownTable({
+  googleData, loadingGoogle,
+  metaData,   loadingMeta,
+}: {
+  googleData:    CampaignsResponse | null; loadingGoogle: boolean;
+  metaData:      MetaCampaignsResponse | null; loadingMeta:  boolean;
+}) {
+  const [source, setSource] = useState<'google' | 'meta'>('google');
+  const [tab,    setTab   ] = useState<'pp' | 'etz' | 'hsc'>('pp');
+
+  // Meta doesn't have HSC — fall back to PP when switching
+  const activeBrandTab = source === 'meta' && tab === 'hsc' ? 'pp' : tab;
+
+  const googleBrand = googleData?.[tab];
+  const metaBrand   = metaData?.[activeBrandTab as 'pp' | 'etz'];
+
+  const googleTabs: { key: 'pp' | 'etz' | 'hsc'; label: string }[] = [
     { key: 'pp',  label: 'Pascal Press' },
     { key: 'etz', label: 'Excel Test Zone' },
     { key: 'hsc', label: 'Excel HSC Copilot' },
   ];
+  const metaTabs: { key: 'pp' | 'etz'; label: string }[] = [
+    { key: 'pp',  label: 'Pascal Press' },
+    { key: 'etz', label: 'Excel Test Zone' },
+  ];
+
+  const loading = source === 'google' ? loadingGoogle : loadingMeta;
 
   return (
     <div className="px-4 md:px-6 pb-4">
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+
+        {/* Header */}
         <div className="px-4 md:px-5 py-3 border-b border-gray-200 flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h3 className="text-sm font-bold text-gray-900">Google Ads Campaigns</h3>
+            <h3 className="text-sm font-bold text-gray-900">Ad Campaigns</h3>
             <p className="text-xs text-gray-400 mt-0.5">
-              Spend from Google Ads · Revenue from Google Analytics (paid sessions)
+              {source === 'google'
+                ? 'Spend from Google Ads · Revenue from Google Analytics (paid sessions)'
+                : 'Spend & reach from Meta (Facebook) Ads'}
             </p>
           </div>
-          <div className="flex rounded-lg border border-gray-300 overflow-hidden">
-            {tabs.map(t => (
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Source toggle */}
+            <div className="flex rounded-lg border border-gray-300 overflow-hidden text-xs font-medium">
               <button
-                key={t.key}
-                onClick={() => setTab(t.key)}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  tab === t.key ? 'bg-gray-800 text-white' : 'text-gray-600 hover:bg-gray-50'
+                onClick={() => setSource('google')}
+                className={`px-3 py-1.5 transition-colors ${
+                  source === 'google' ? 'bg-gray-800 text-white' : 'text-gray-600 hover:bg-gray-50'
                 }`}
               >
-                {t.label}
+                Google Ads
               </button>
-            ))}
+              <button
+                onClick={() => setSource('meta')}
+                className={`px-3 py-1.5 transition-colors border-l border-gray-300 ${
+                  source === 'meta' ? 'bg-[#1877F2] text-white' : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                Meta
+              </button>
+            </div>
+            {/* Brand tabs */}
+            <div className="flex rounded-lg border border-gray-300 overflow-hidden text-xs font-medium">
+              {(source === 'google' ? googleTabs : metaTabs).map((t, i) => (
+                <button
+                  key={t.key}
+                  onClick={() => setTab(t.key as 'pp' | 'etz' | 'hsc')}
+                  className={`px-3 py-1.5 transition-colors ${i > 0 ? 'border-l border-gray-300' : ''} ${
+                    activeBrandTab === t.key ? 'bg-gray-800 text-white' : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -1085,49 +1156,49 @@ function CampaignBreakdownTable({ data, loading }: { data: CampaignsResponse | n
           <div className="px-5 py-8 text-center text-sm text-gray-400">Loading campaigns…</div>
         )}
 
-        {!loading && brand && (
+        {/* ── Google Ads view ── */}
+        {!loading && source === 'google' && googleBrand && (
           <>
-            {/* Totals strip */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-4 md:px-5 py-3 bg-gray-50 border-b border-gray-100">
               <div>
                 <div className="text-xs text-gray-500">Total spend</div>
                 <div className="text-base font-bold text-gray-900">
-                  {brand.totals.spend > 0 ? AUD.format(brand.totals.spend) : '—'}
+                  {googleBrand.totals.spend > 0 ? AUD.format(googleBrand.totals.spend) : '—'}
                 </div>
               </div>
               <div>
                 <div className="text-xs text-gray-500">GA revenue (paid)</div>
                 <div className="text-base font-bold text-blue-700">
-                  {brand.gaConnected
-                    ? (brand.totals.gaRevenue > 0 ? AUD.format(brand.totals.gaRevenue) : '$0')
+                  {googleBrand.gaConnected
+                    ? (googleBrand.totals.gaRevenue > 0 ? AUD.format(googleBrand.totals.gaRevenue) : '$0')
                     : '—'}
                 </div>
               </div>
               <div>
                 <div className="text-xs text-gray-500">GA ROAS</div>
                 <div className={`text-base font-bold ${
-                  brand.totals.gaRoas >= 4 ? 'text-green-700'
-                  : brand.totals.gaRoas >= 2 ? 'text-yellow-600'
-                  : brand.totals.gaRoas > 0 ? 'text-red-600' : 'text-gray-400'
+                  googleBrand.totals.gaRoas >= 4 ? 'text-green-700'
+                  : googleBrand.totals.gaRoas >= 2 ? 'text-yellow-600'
+                  : googleBrand.totals.gaRoas > 0 ? 'text-red-600' : 'text-gray-400'
                 }`}>
-                  {brand.totals.gaRoas > 0 ? `${brand.totals.gaRoas.toFixed(1)}x` : '—'}
+                  {googleBrand.totals.gaRoas > 0 ? `${googleBrand.totals.gaRoas.toFixed(1)}x` : '—'}
                 </div>
               </div>
               <div>
                 <div className="text-xs text-gray-500">Clicks</div>
                 <div className="text-base font-bold text-gray-900">
-                  {brand.totals.clicks > 0 ? brand.totals.clicks.toLocaleString() : '—'}
+                  {googleBrand.totals.clicks > 0 ? googleBrand.totals.clicks.toLocaleString() : '—'}
                 </div>
               </div>
             </div>
 
-            {!brand.adsConnected && brand.campaigns.length === 0 && (
+            {!googleBrand.adsConnected && googleBrand.campaigns.length === 0 && (
               <div className="px-5 py-6 text-sm text-gray-400 italic">
-                {brand.error ? `Could not load Google Ads: ${brand.error}` : 'No Google Ads data for this brand/month'}
+                {googleBrand.error ? `Could not load Google Ads: ${googleBrand.error}` : 'No Google Ads data for this brand/month'}
               </div>
             )}
 
-            {brand.campaigns.length > 0 && (
+            {googleBrand.campaigns.length > 0 && (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -1142,7 +1213,7 @@ function CampaignBreakdownTable({ data, loading }: { data: CampaignsResponse | n
                     </tr>
                   </thead>
                   <tbody>
-                    {brand.campaigns.map((c) => (
+                    {googleBrand.campaigns.map((c) => (
                       <tr key={c.name} className="border-b border-gray-50 hover:bg-gray-50/80">
                         <td className="px-4 py-2.5">
                           <div className="font-medium text-gray-900 max-w-[280px] truncate" title={c.name}>
@@ -1158,7 +1229,7 @@ function CampaignBreakdownTable({ data, loading }: { data: CampaignsResponse | n
                             {c.status === 'GA_ONLY' && (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-medium">GA only</span>
                             )}
-                            {!c.gaMatched && c.spend > 0 && brand.gaConnected && (
+                            {!c.gaMatched && c.spend > 0 && googleBrand.gaConnected && (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 font-medium">No GA match</span>
                             )}
                           </div>
@@ -1173,7 +1244,7 @@ function CampaignBreakdownTable({ data, loading }: { data: CampaignsResponse | n
                           {c.impressions > 0 ? c.impressions.toLocaleString() : '—'}
                         </td>
                         <td className="text-right px-3 py-2.5 tabular-nums font-medium text-blue-700">
-                          {brand.gaConnected
+                          {googleBrand.gaConnected
                             ? (c.gaRevenue > 0 ? AUD.format(c.gaRevenue) : '$0')
                             : '—'}
                         </td>
@@ -1194,9 +1265,98 @@ function CampaignBreakdownTable({ data, loading }: { data: CampaignsResponse | n
               </div>
             )}
 
-            {tab === 'hsc' && !brand.gaConnected && brand.campaigns.length > 0 && (
+            {tab === 'hsc' && !googleBrand.gaConnected && googleBrand.campaigns.length > 0 && (
               <div className="px-4 py-2 text-xs text-gray-400 border-t border-gray-100">
                 HSC has no GA4 property connected yet — showing Google Ads spend only.
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ── Meta Ads view ── */}
+        {!loading && source === 'meta' && metaBrand && (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-4 md:px-5 py-3 border-b border-blue-100" style={{ background: '#f0f4ff' }}>
+              <div>
+                <div className="text-xs text-gray-500">Total spend</div>
+                <div className="text-base font-bold text-gray-900">
+                  {metaBrand.totals.spend > 0 ? AUD.format(metaBrand.totals.spend) : '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Reach</div>
+                <div className="text-base font-bold text-[#1877F2]">
+                  {metaBrand.totals.reach > 0 ? metaBrand.totals.reach.toLocaleString() : '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Impressions</div>
+                <div className="text-base font-bold text-gray-900">
+                  {metaBrand.totals.impressions > 0 ? metaBrand.totals.impressions.toLocaleString() : '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Clicks</div>
+                <div className="text-base font-bold text-gray-900">
+                  {metaBrand.totals.clicks > 0 ? metaBrand.totals.clicks.toLocaleString() : '—'}
+                </div>
+              </div>
+            </div>
+
+            {metaBrand.error && (
+              <div className="px-5 py-6 text-sm text-red-500 italic">
+                Could not load Meta Ads: {metaBrand.error}
+              </div>
+            )}
+
+            {!metaBrand.error && metaBrand.campaigns.length === 0 && (
+              <div className="px-5 py-6 text-sm text-gray-400 italic">
+                No Meta campaigns with spend found for this period.
+              </div>
+            )}
+
+            {metaBrand.campaigns.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-gray-500 border-b border-gray-100">
+                      <th className="text-left font-medium px-4 py-2.5">Campaign</th>
+                      <th className="text-right font-medium px-3 py-2.5">Spend</th>
+                      <th className="text-right font-medium px-3 py-2.5">Reach</th>
+                      <th className="text-right font-medium px-3 py-2.5">Impressions</th>
+                      <th className="text-right font-medium px-3 py-2.5">Clicks</th>
+                      <th className="text-right font-medium px-3 py-2.5">CTR</th>
+                      <th className="text-right font-medium px-4 py-2.5">CPM</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {metaBrand.campaigns.map((c) => (
+                      <tr key={c.id || c.name} className="border-b border-gray-50 hover:bg-gray-50/80">
+                        <td className="px-4 py-2.5 font-medium text-gray-900 max-w-[280px] truncate" title={c.name}>
+                          {c.name}
+                        </td>
+                        <td className="text-right px-3 py-2.5 tabular-nums text-gray-900 font-medium">
+                          {c.spend > 0 ? AUD.format(c.spend) : '—'}
+                        </td>
+                        <td className="text-right px-3 py-2.5 tabular-nums text-[#1877F2] font-medium">
+                          {c.reach > 0 ? c.reach.toLocaleString() : '—'}
+                        </td>
+                        <td className="text-right px-3 py-2.5 tabular-nums text-gray-600">
+                          {c.impressions > 0 ? c.impressions.toLocaleString() : '—'}
+                        </td>
+                        <td className="text-right px-3 py-2.5 tabular-nums text-gray-600">
+                          {c.clicks > 0 ? c.clicks.toLocaleString() : '—'}
+                        </td>
+                        <td className="text-right px-3 py-2.5 tabular-nums text-gray-600">
+                          {c.ctr > 0 ? `${c.ctr.toFixed(2)}%` : '—'}
+                        </td>
+                        <td className="text-right px-4 py-2.5 tabular-nums text-gray-600">
+                          {c.cpm > 0 ? AUD.format(c.cpm) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </>
@@ -1218,8 +1378,10 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [googleAdsHistory, setGoogleAdsHistory] = useState<GoogleAdsHistoryItem[] | null>(null);
   const [ga4Revenue,       setGa4Revenue      ] = useState<GA4RevenueResponse | null>(null);
   const [ga4History,       setGa4History      ] = useState<GA4HistoryItem[] | null>(null);
-  const [campaigns,        setCampaigns       ] = useState<CampaignsResponse | null>(null);
-  const [loadingCampaigns, setLoadingCampaigns] = useState(false);
+  const [campaigns,            setCampaigns           ] = useState<CampaignsResponse | null>(null);
+  const [loadingCampaigns,    setLoadingCampaigns    ] = useState(false);
+  const [metaCampaigns,        setMetaCampaigns       ] = useState<MetaCampaignsResponse | null>(null);
+  const [loadingMetaCampaigns, setLoadingMetaCampaigns] = useState(false);
   const [siteConversion,   setSiteConversion  ] = useState<WebsiteConversionResponse | null>(null);
   const [channelRevenue,   setChannelRevenue  ] = useState<ChannelRevenueResponse | null>(null);
 
@@ -1240,6 +1402,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
     setGoogleAdsSpend(null);
     setGa4Revenue(null);
     setCampaigns(null);
+    setMetaCampaigns(null);
     setSiteConversion(null);
     setChannelRevenue(null);
 
@@ -1280,6 +1443,18 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
         if (e?.name !== 'AbortError') setCampaigns(null);
       })
       .finally(() => { if (!signal.aborted) setLoadingCampaigns(false); });
+
+    setLoadingMetaCampaigns(true);
+    fetch('/api/meta-campaigns?month=' + month, { signal })
+      .then(r => r.json())
+      .then((data: MetaCampaignsResponse) => {
+        if (data?.month && data.month !== month) return;
+        setMetaCampaigns(data);
+      })
+      .catch((e) => {
+        if (e?.name !== 'AbortError') setMetaCampaigns(null);
+      })
+      .finally(() => { if (!signal.aborted) setLoadingMetaCampaigns(false); });
 
     fetch('/api/website-conversion?month=' + month, { signal })
       .then(r => r.json())
@@ -1560,7 +1735,10 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
         </div>
 
         {/* Campaign-level Ads spend + GA4 revenue */}
-        <CampaignBreakdownTable data={campaigns} loading={loadingCampaigns} />
+        <CampaignBreakdownTable
+          googleData={campaigns}        loadingGoogle={loadingCampaigns}
+          metaData={metaCampaigns}      loadingMeta={loadingMetaCampaigns}
+        />
 
         {/* Line charts — FY26 Jan–Jun */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-4 md:px-6 pb-6">
