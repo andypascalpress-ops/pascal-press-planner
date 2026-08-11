@@ -77,21 +77,34 @@ export async function GET(request: Request) {
   const month = searchParams.get('month')
     ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-  // ?debug=1 — returns distinct hs_lead_status values to identify the correct casing
-  if (searchParams.get('debug') === '1') {
+  // ?debug=sources — shows where contacts come from (hs_analytics_source + hs_object_source)
+  if (searchParams.get('debug') === 'sources') {
+    const { startMs, endMs } = monthToEpochRange(month);
     const res = await fetch(`${HS_BASE}/crm/v3/objects/contacts/search`, {
       method: 'POST',
       headers: hsHeaders(),
       body: JSON.stringify({
-        filterGroups: [{ filters: [{ propertyName: 'hs_lead_status', operator: 'HAS_PROPERTY' }] }],
+        filterGroups: [{ filters: [
+          { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
+          { propertyName: 'createdate', operator: 'LT',  value: String(endMs) },
+        ]}],
         limit: 100,
-        properties: ['hs_lead_status'],
+        properties: ['hs_lead_status', 'hs_analytics_source', 'hs_object_source', 'hs_object_source_label'],
       }),
       cache: 'no-store',
     });
     const json = await res.json();
-    const values = [...new Set((json.results ?? []).map((c: { properties: { hs_lead_status: string } }) => c.properties?.hs_lead_status))].filter(Boolean);
-    return NextResponse.json({ total: json.total, distinctValues: values });
+    const contacts = json.results ?? [];
+    // Count by source
+    const bySource: Record<string, number> = {};
+    const byObjectSource: Record<string, number> = {};
+    for (const c of contacts) {
+      const src = c.properties?.hs_analytics_source ?? '(none)';
+      const objSrc = c.properties?.hs_object_source_label ?? c.properties?.hs_object_source ?? '(none)';
+      bySource[src] = (bySource[src] ?? 0) + 1;
+      byObjectSource[objSrc] = (byObjectSource[objSrc] ?? 0) + 1;
+    }
+    return NextResponse.json({ month, totalThisMonth: json.total, sampleSize: contacts.length, byAnalyticsSource: bySource, byObjectSource });
   }
 
   try {
