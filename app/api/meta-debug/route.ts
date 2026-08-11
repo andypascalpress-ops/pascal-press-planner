@@ -42,14 +42,23 @@ export async function GET() {
   const campRes = await fetch(`${META_GRAPH_API}/${ACCOUNT_ID}/insights?${campParams}`, { cache: 'no-store' });
   const campJson = await campRes.json();
 
-  // 3. Token info
-  const meRes  = await fetch(`${META_GRAPH_API}/me?access_token=${ACCESS_TOKEN}`, { cache: 'no-store' });
-  const meJson = await meRes.json();
+  // 3. Token info + permissions
+  const meRes   = await fetch(`${META_GRAPH_API}/me?access_token=${ACCESS_TOKEN}`, { cache: 'no-store' });
+  const meJson  = await meRes.json();
+  const permRes = await fetch(`${META_GRAPH_API}/me/permissions?access_token=${ACCESS_TOKEN}`, { cache: 'no-store' });
+  const permJson = await permRes.json();
+
+  // 4. Ad account basic info (ownership check)
+  const adAcctRes  = await fetch(`${META_GRAPH_API}/${ACCOUNT_ID}?fields=name,account_status,owner&access_token=${ACCESS_TOKEN}`, { cache: 'no-store' });
+  const adAcctJson = await adAcctRes.json();
 
   return NextResponse.json({
     tokenOk:        !meJson.error,
     tokenUser:      meJson.name ?? meJson.error?.message,
+    tokenId:        meJson.id,
+    permissions:    permJson?.data ?? permJson,
     accountId:      ACCOUNT_ID,
+    adAccountInfo:  adAcctJson,
     range:          { start, end },
     accountLevel:   acctJson,
     campaignLevel:  campJson,
