@@ -1175,31 +1175,41 @@ function EtzTrialsFullView({
           </div>
 
           {/* Funnel bar */}
-          {thisMonth.signups > 0 && (
+          {(thisMonth.signups > 0 || thisMonth.converted > 0) && (
             <div className="space-y-2">
               <div className="flex justify-between text-xs text-gray-400 font-medium">
-                <span>Trial started</span>
-                <span>Converted</span>
+                <span>Active Trial deals</span>
+                <span>Active Paid deals</span>
               </div>
-              <div className="relative h-8 bg-gray-100 rounded-full overflow-hidden">
-                {/* Full bar = all signups */}
-                <div className="absolute inset-0 bg-blue-100 rounded-full" />
-                {/* Converted portion */}
-                <div
-                  className="absolute inset-y-0 left-0 bg-emerald-500 rounded-full transition-all duration-700"
-                  style={{ width: `${Math.max(convPctMonth ?? 0, 0)}%` }}
-                />
-                {/* Labels */}
-                <div className="absolute inset-0 flex items-center justify-between px-3">
-                  <span className="text-xs font-bold text-blue-700">{thisMonth.signups.toLocaleString()} trials</span>
-                  <span className="text-xs font-bold text-emerald-700">{thisMonth.converted.toLocaleString()} paid</span>
-                </div>
-              </div>
+              {/* Side-by-side proportional bar */}
+              {(() => {
+                const total = thisMonth.signups + thisMonth.converted;
+                const trialPct  = total > 0 ? (thisMonth.signups  / total) * 100 : 50;
+                const paidPct   = total > 0 ? (thisMonth.converted / total) * 100 : 50;
+                return (
+                  <div className="flex h-8 rounded-full overflow-hidden gap-0.5">
+                    <div
+                      className="bg-blue-100 flex items-center justify-center transition-all duration-700"
+                      style={{ width: `${trialPct}%` }}
+                    >
+                      <span className="text-xs font-bold text-blue-700 truncate px-2">
+                        {thisMonth.signups.toLocaleString()} trials
+                      </span>
+                    </div>
+                    <div
+                      className="bg-emerald-500 flex items-center justify-center transition-all duration-700"
+                      style={{ width: `${paidPct}%` }}
+                    >
+                      <span className="text-xs font-bold text-white truncate px-2">
+                        {thisMonth.converted.toLocaleString()} paid
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
               {convPctMonth != null && (
                 <p className="text-xs text-gray-400 text-center">
-                  {convPctMonth < 10
-                    ? `${convPctMonth.toFixed(1)}% conversion — ${thisMonth.signups - thisMonth.converted} trials haven't converted yet this month`
-                    : `${convPctMonth.toFixed(1)}% of this month's trials have converted to paid`}
+                  {convPctMonth.toFixed(1)}% of new deals this month converted to paid
                 </p>
               )}
             </div>

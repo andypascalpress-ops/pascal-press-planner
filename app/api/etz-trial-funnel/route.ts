@@ -122,57 +122,62 @@ export async function GET(request: Request) {
     const inEtzPipeline = { propertyName: 'pipeline', operator: 'EQ', value: etzPipeline.id };
 
     // ── 3. Counts — sequential to respect HubSpot rate limits ─────────────
-    // This month: all new deals in the ETZ pipeline = new trials started
-    const signupsThisMonth = await hsSearchDeals([...createdThisMonth, inEtzPipeline]);
+    // This month: new deals that started in Active Trial stage
+    // (matches HubSpot's ETZ_Trial Conversion report which counts entries into that stage)
+    const signupsThisMonth = await hsSearchDeals([
+      ...createdThisMonth,
+      { propertyName: 'dealstage', operator: 'EQ', value: trialStage.id },
+    ]);
     await delay(300);
 
-    // This month: moved to "Active Paid" = converted
-    const convertedThisMonth = await hsSearchDeals([
+    // This month: new Active Paid deals (includes direct purchases + trial conversions)
+    const paidThisMonth = await hsSearchDeals([
       ...createdThisMonth,
-      inEtzPipeline,
       { propertyName: 'dealstage', operator: 'EQ', value: paidStage.id },
     ]);
     await delay(300);
 
     // All time: currently on trial (Active Trial stage)
     const totalOnTrial = await hsSearchDeals([
-      inEtzPipeline,
       { propertyName: 'dealstage', operator: 'EQ', value: trialStage.id },
     ]);
     await delay(300);
 
     // All time: converted to paid (Active Paid stage)
     const totalConverted = await hsSearchDeals([
-      inEtzPipeline,
       { propertyName: 'dealstage', operator: 'EQ', value: paidStage.id },
     ]);
-    await delay(300);
 
-    // All time: total deals in pipeline
-    const totalAll = await hsSearchDeals([inEtzPipeline]);
+    // All-time total = known stages only (avoids unreliable full-pipeline count)
+    const totalAll = totalOnTrial + totalConverted;
 
     // ── 4. Derived metrics ────────────────────────────────────────────────
-    const convRateMonth   = signupsThisMonth > 0 ? convertedThisMonth / signupsThisMonth : null;
-    // All-time: converted / total (all deals ever in pipeline)
-    const convRateAllTime = totalAll > 0 ? totalConverted / totalAll : null;
+    // This month conversion: paidThisMonth / (signupsThisMonth + paidThisMonth)
+    // paidThisMonth may include direct purchases, but it's the closest proxy available
+    const totalNewThisMonth = signupsThisMonth + paidThisMonth;
+    const convRateMonth     = totalNewThisMonth > 0 ? paidThisMonth / totalNewThisMonth : null;
+    const convRateAllTime   = totalAll > 0 ? totalConverted / totalAll : null;
 
     return NextResponse.json({
       month,
       _meta: {
-        pipeline:   etzPipeline.label,
-        trialStage: trialStage.label,
-        paidStage:  paidStage.label,
+        pipeline:        etzPipeline.label,
+        pipelineId:      etzPipeline.id,
+        trialStage:      trialStage.label,
+        trialStageId:    trialStage.id,
+        paidStage:       paidStage.label,
+        paidStageId:     paidStage.id,
       },
       thisMonth: {
-        signups:        signupsThisMonth,
-        converted:      convertedThisMonth,
-        conversionRate: convRateMonth,        // 0–1
+        signups:        signupsThisMonth,   // new Active Trial deals created this month
+        converted:      paidThisMonth,      // new Active Paid deals created this month
+        conversionRate: convRateMonth,      // 0–1
       },
       allTime: {
-        total:          totalAll,
+        total:          totalAll,           // onTrial + converted (known stages only)
         onTrial:        totalOnTrial,
         converted:      totalConverted,
-        conversionRate: convRateAllTime,      // converted ÷ total
+        conversionRate: convRateAllTime,    // converted ÷ (onTrial + converted)
       },
     });
 
