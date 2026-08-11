@@ -21,7 +21,7 @@ const HS_BASE = 'https://api.hubapi.com';
 
 function hsHeaders() {
   return {
-    Authorization: `Bearer ${process.env.HUBSPOT_API_KEY ?? ''}`,
+    Authorization: `Bearer ${process.env.HUBSPOT_CRM_TOKEN ?? process.env.HUBSPOT_API_KEY ?? ''}`,
     'Content-Type': 'application/json',
   };
 }
