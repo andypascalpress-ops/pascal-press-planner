@@ -124,12 +124,12 @@ export async function GET() {
   const startDate = daysAgo(30);  // last 30 days
 
   try {
-    // 1. Overall metrics (no dimension = aggregate)
-    const overallRows = await fetchClarity({ startDate, endDate });
+    // 1. Overall metrics — use numOfDays (more widely supported than startDate/endDate)
+    const overallRows = await fetchClarity({ numOfDays: '30' });
     const overall = overallRows.length > 0 ? normRow(overallRows[0]!, 'All') : null;
 
     // 2. By source dimension
-    const sourceRows = await fetchClarity({ startDate, endDate, dimensionType: 'Source' });
+    const sourceRows = await fetchClarity({ numOfDays: '30', dimensionType: 'Source' });
     const bySource = sourceRows
       .map(r => normRow(r))
       .filter(r => r.dimensionValue && r.sessions > 0)
