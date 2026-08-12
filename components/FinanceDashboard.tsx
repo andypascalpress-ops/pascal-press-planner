@@ -1148,6 +1148,30 @@ interface EtzClarityResponse {
   error?:     string;
 }
 
+// ─── Coupon types ─────────────────────────────────────────────────────────────
+
+interface CouponRow {
+  code:              string;
+  name:              string;
+  type:              string;
+  discountFormatted: string;
+  numUses:           number;
+  totalSavings:      number | null;
+  enabled:           boolean;
+  expired:           boolean;
+  maxUses:           number;
+  minPurchase:       number;
+}
+
+interface PPCouponsResponse {
+  connected:            boolean;
+  coupons:              CouponRow[];
+  totalUses:            number;
+  totalComputedSavings: number;
+  hasPercentageCoupons: boolean;
+  error?:               string;
+}
+
 // ─── ETZ 12-month trend chart ─────────────────────────────────────────────────
 // Normalised/indexed chart: each metric shown as % of its own peak value.
 // This puts sessions, trials and orders on the same 0–100 % scale so all
@@ -2304,6 +2328,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [financeView,          setFinanceView         ] = useState<'overview' | 'etz-trials'>('overview');
   const [siteConversion,   setSiteConversion  ] = useState<WebsiteConversionResponse | null>(null);
   const [channelRevenue,   setChannelRevenue  ] = useState<ChannelRevenueResponse | null>(null);
+  const [coupons,          setCoupons         ] = useState<PPCouponsResponse | null>(null);
+  const [loadingCoupons,   setLoadingCoupons  ] = useState(false);
 
   // Persist month choice so remounts (tab switches) don't snap back to default
   useEffect(() => {
@@ -2462,6 +2488,13 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
       .then((data: EtzClarityResponse) => setEtzClarity(data))
       .catch(() => setEtzClarity(null))
       .finally(() => setLoadingClarity(false));
+
+    setLoadingCoupons(true);
+    fetch('/api/pp-coupons')
+      .then(r => r.json())
+      .then((data: PPCouponsResponse) => setCoupons(data))
+      .catch(() => setCoupons(null))
+      .finally(() => setLoadingCoupons(false));
   }, []);
 
   useEffect(() => {
@@ -2914,6 +2947,112 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
               accentBg="bg-emerald-50"
               accentText="text-emerald-800"
             />
+          </div>
+        </div>
+
+        {/* ── Coupon codes ─────────────────────────────────────────────────── */}
+        <div className="px-4 md:px-6 pb-6">
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                  Pascal Press &middot; Coupon Code Usage
+                </div>
+                <div className="text-xs text-gray-400 mt-0.5">BigCommerce · all-time · top 25 by uses</div>
+              </div>
+              {coupons?.connected && (
+                <div className="flex items-center gap-4 text-right">
+                  <div>
+                    <div className="text-xs text-gray-500">Total uses</div>
+                    <div className="text-base font-bold text-gray-900 tabular-nums">{coupons.totalUses.toLocaleString()}</div>
+                  </div>
+                  {coupons.totalComputedSavings > 0 && (
+                    <div>
+                      <div className="text-xs text-gray-500">
+                        Total savings given{coupons.hasPercentageCoupons ? ' *' : ''}
+                      </div>
+                      <div className="text-base font-bold text-red-600 tabular-nums">
+                        {AUD.format(coupons.totalComputedSavings)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {loadingCoupons ? (
+              <div className="h-24 flex items-center justify-center text-sm text-gray-400">Loading coupon data&hellip;</div>
+            ) : !coupons?.connected ? (
+              <div className="px-5 py-4 text-sm text-gray-400">
+                {coupons?.error ?? 'BigCommerce not connected'}
+              </div>
+            ) : coupons.coupons.length === 0 ? (
+              <div className="px-5 py-4 text-sm text-gray-400">No coupons have been used yet.</div>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                        <th className="text-left px-5 py-2.5 font-semibold">Code</th>
+                        <th className="text-left px-3 py-2.5 font-semibold">Name / Description</th>
+                        <th className="text-left px-3 py-2.5 font-semibold">Discount</th>
+                        <th className="text-right px-3 py-2.5 font-semibold">Uses</th>
+                        <th className="text-right px-3 py-2.5 font-semibold">Max</th>
+                        <th className="text-right px-3 py-2.5 font-semibold">Savings given</th>
+                        <th className="text-right px-5 py-2.5 font-semibold">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {coupons.coupons.map((c, i) => (
+                        <tr key={c.code} className={'border-t border-gray-50 hover:bg-gray-50/60 ' + (i === 0 ? 'border-gray-200' : '')}>
+                          <td className="px-5 py-2.5">
+                            <span className="font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded text-xs tracking-widest">
+                              {c.code}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-gray-700 max-w-[200px] truncate" title={c.name}>
+                            {c.name || '—'}
+                          </td>
+                          <td className="px-3 py-2.5 text-gray-600">{c.discountFormatted}</td>
+                          <td className="text-right px-3 py-2.5 tabular-nums font-semibold text-gray-900">
+                            {c.numUses.toLocaleString()}
+                            {c.maxUses > 0 && (
+                              <div className="text-xs text-gray-400 font-normal leading-tight">
+                                {Math.round((c.numUses / c.maxUses) * 100)}% of limit
+                              </div>
+                            )}
+                          </td>
+                          <td className="text-right px-3 py-2.5 tabular-nums text-gray-400 text-xs">
+                            {c.maxUses === 0 ? '∞' : c.maxUses.toLocaleString()}
+                          </td>
+                          <td className="text-right px-3 py-2.5 tabular-nums text-gray-700">
+                            {c.totalSavings !== null
+                              ? <span className="text-red-600 font-medium">{AUD.format(c.totalSavings)}</span>
+                              : <span className="text-gray-400 text-xs">varies *</span>
+                            }
+                          </td>
+                          <td className="text-right px-5 py-2.5">
+                            {c.expired ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">Expired</span>
+                            ) : c.enabled ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">Active</span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-50 text-yellow-700">Disabled</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {coupons.hasPercentageCoupons && (
+                  <div className="px-5 py-2.5 border-t border-gray-100 text-xs text-gray-400">
+                    * Percentage and per-item discount savings vary by order value and cannot be computed without order-level data.
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
 
