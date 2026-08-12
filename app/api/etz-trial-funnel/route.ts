@@ -118,21 +118,15 @@ export async function GET(request: Request) {
     ];
 
     // ── 3. Trials started this month ──────────────────────────────────────
-    // Count deals created this month in Active Trial OR Active Paid.
-    // A trial deal starts in Active Trial; converting moves it to Active Paid.
-    // Counting both by createdate captures every trial regardless of outcome.
+    // Deals created this month that are in (or started in) Active Trial.
+    // Matches HubSpot's ETZ_Trial Conversion report (125 for August 2026).
     //
-    // Uses filterGroups (OR between groups) rather than a single AND block.
-    const trialGroups: { filters: object[] }[] = [
+    // Small known undercount: the ~8 trials that already converted to Active Paid
+    // this month won't appear here — acceptable vs. overcounting by including
+    // direct purchases (which are created directly in Active Paid and are not trials).
+    const trialsStarted = await hsSearchCountOr([
       { filters: [...createdThisMonth, { propertyName: 'dealstage', operator: 'EQ', value: trialStage.id }] },
-    ];
-    if (paidStage) {
-      trialGroups.push(
-        { filters: [...createdThisMonth, { propertyName: 'dealstage', operator: 'EQ', value: paidStage.id }] },
-      );
-    }
-
-    const trialsStarted = await hsSearchCountOr(trialGroups);
+    ]);
     await delay(300);
 
     // ── 4. Currently on trial (all-time snapshot) ─────────────────────────
