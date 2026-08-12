@@ -125,17 +125,18 @@ export async function GET(request: Request) {
     }
   }
 
-  // ── 4. Stripe orders — parallel (Stripe is generous with rate limits) ─────
-  const stripeResults = await Promise.all(
-    months.map(month => fetchETZStripeRevenue(month).catch(() => null))
-  );
+  // ── 4. Stripe orders — sequential to avoid Vercel function timeouts ──────
   const ordersByMonth:   Record<string, number> = {};
   const revenueByMonth:  Record<string, number> = {};
-  for (let i = 0; i < months.length; i++) {
-    const m = months[i]!;
-    const r = stripeResults[i];
-    ordersByMonth[m]  = r?.totalOrders   ?? 0;
-    revenueByMonth[m] = r?.totalRevenue  ?? 0;
+  for (const month of months) {
+    try {
+      const r = await fetchETZStripeRevenue(month);
+      ordersByMonth[month]  = r?.totalOrders  ?? 0;
+      revenueByMonth[month] = r?.totalRevenue ?? 0;
+    } catch {
+      ordersByMonth[month]  = 0;
+      revenueByMonth[month] = 0;
+    }
   }
 
   // ── 5. Assemble response ──────────────────────────────────────────────────
