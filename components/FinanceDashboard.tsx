@@ -1119,6 +1119,7 @@ interface EtzSourceResponse {
   total:   number;
   rows:    EtzSourceRow[];
   _meta?:  { hasSourceData: boolean; note: string };
+  error?:  string;
 }
 
 interface ClarityMetricRow {
@@ -1511,8 +1512,10 @@ function EtzTrialsFullView({
         <div className="px-5 py-4">
           {loadingSources ? (
             <p className="text-sm text-gray-400">Loading sources…</p>
-          ) : !sources || sources.total === 0 ? (
-            <p className="text-sm text-gray-400 italic">No trial source data for {monthLabel(month)}</p>
+          ) : !sources || sources.error || !sources.rows || sources.total === 0 ? (
+            <p className="text-sm text-gray-400 italic">
+              {sources?.error ? 'Source data unavailable — will retry shortly' : `No trial source data for ${monthLabel(month)}`}
+            </p>
           ) : sources._meta?.hasSourceData === false ? (
             <div>
               <p className="text-sm text-gray-500 mb-2">
@@ -2245,9 +2248,10 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
       .catch((e) => { if (e?.name !== 'AbortError') setEtzTraffic(null); })
       .finally(() => { if (!signal.aborted) setLoadingEtzTraffic(false); });
 
-    // Delay 600 ms so etz-sources doesn't fire simultaneously with etz-trial-funnel
-    // and breach HubSpot's 4 req/sec search limit. ISR caches the response after
-    // first load so subsequent views are instant (no live HubSpot call at all).
+    // Delay 2 s so etz-sources fires after etz-trial-funnel (2 HubSpot search calls,
+    // ~400–800 ms total) has cleared HubSpot's 4 req/sec secondly limit.
+    // ISR caches the response after first successful load so subsequent views
+    // hit the cache and make no live HubSpot call at all.
     setLoadingEtzSources(true);
     const srcTimer = setTimeout(() => {
       if (signal.aborted) { setLoadingEtzSources(false); return; }
@@ -2259,7 +2263,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
         })
         .catch((e) => { if (e?.name !== 'AbortError') setEtzSources(null); })
         .finally(() => { if (!signal.aborted) setLoadingEtzSources(false); });
-    }, 600);
+    }, 2000);
     signal.addEventListener('abort', () => clearTimeout(srcTimer));
 
     fetch('/api/website-conversion?month=' + month, { signal })
