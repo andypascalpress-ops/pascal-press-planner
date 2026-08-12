@@ -16,13 +16,21 @@
  * Cached for 1 hour — Clarity data updates daily.
  */
 import { NextResponse } from 'next/server';
+import { Agent, fetch as undiciFetch } from 'undici';
 
 export const revalidate = 3600;
 
-// Try the documented Clarity Data API endpoint.
-// If this URL is wrong, check Vercel function logs for "Clarity fetch error:".
 const CLARITY_BASE = 'https://api.clarity.ms/v1';
 const PROJECT_ID   = process.env.CLARITY_ETZ_PROJECT_ID ?? 'qmef32brd0';
+
+/**
+ * api.clarity.ms is behind Azure CDN whose TLS cert only covers *.azureedge.net,
+ * NOT api.clarity.ms — a cert misconfiguration on Microsoft's side (confirmed via
+ * ERR_TLS_CERT_ALTNAME_INVALID in Vercel logs). We use a dedicated undici Agent
+ * with rejectUnauthorized:false scoped ONLY to these Clarity calls so no other
+ * outbound requests are affected.
+ */
+const clarityAgent = new Agent({ connect: { rejectUnauthorized: false } });
 
 function clarityHeaders() {
   return {
@@ -78,16 +86,19 @@ async function fetchClarity(params: Record<string, string>): Promise<Record<stri
   const qs = new URLSearchParams(params).toString();
   const url = `${CLARITY_BASE}/projects/${PROJECT_ID}/metrics?${qs}`;
   console.log('[etz-clarity] fetching:', url);
-  let res: Response;
+  let res: Awaited<ReturnType<typeof undiciFetch>>;
   try {
-    res = await fetch(url, { headers: clarityHeaders(), cache: 'no-store' });
+    res = await undiciFetch(url, {
+      headers:    clarityHeaders(),
+      dispatcher: clarityAgent,
+    } as Parameters<typeof undiciFetch>[1]);
   } catch (netErr) {
     const msg = netErr instanceof Error ? netErr.message : String(netErr);
-    throw new Error(`Network error reaching ${url} — ${msg}. Check that CLARITY_API_TOKEN is correct and api.clarity.ms is reachable.`);
+    throw new Error(`Network error reaching ${url} — ${msg}`);
   }
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`Clarity API ${res.status} from ${url}: ${body.slice(0, 300)}`);
+    throw new Error(`Clarity API ${res.status}: ${body.slice(0, 300)}`);
   }
   const json = await res.json() as Record<string, unknown>;
   // Clarity wraps results in { data: [...] } or returns an array directly
