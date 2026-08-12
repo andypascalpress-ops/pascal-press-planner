@@ -1134,7 +1134,7 @@ interface ClarityMetricRow {
 }
 interface EtzClarityResponse {
   connected:  boolean;
-  dateRange:  { start: string; end: string };
+  dateRange:  { numOfDays: number };
   overall:    ClarityMetricRow | null;
   bySource:   ClarityMetricRow[];
   error?:     string;

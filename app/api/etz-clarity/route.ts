@@ -3,169 +3,196 @@
  *
  * Fetches behavioral metrics from Microsoft Clarity for the ETZ project.
  *
- * Tries two known Clarity API base URLs in order:
- *   1. https://api.clarity.ms/v1   (documented, but has TLS cert mismatch → needs undici)
- *   2. https://clarity.microsoft.com/api/v1  (dashboard domain, proper cert)
+ * Uses the official Clarity Data Export API:
+ *   GET https://www.clarity.ms/export-data/api/v1/project-live-insights
+ *
+ * Docs: learn.microsoft.com/en-us/clarity/clarity-data-export-api
+ *
+ * Limitations (as of 2024):
+ *   - Data window: last 1, 2, or 3 days only (not longer)
+ *   - Rate limit:  10 requests per project per day
+ *   - Row limit:   1,000 rows per response
  *
  * Required env var: CLARITY_API_TOKEN
- *   Generate at: clarity.microsoft.com → Settings → API
+ *   Generate at: Clarity → Settings → Data Export → Generate new API token
+ *   (project admin only)
  *
- * Project ID: qmef32brd0 (from ETZ Clarity dashboard URL)
- * Optionally override with CLARITY_ETZ_PROJECT_ID env var.
+ * NOTE: The project is determined by the API token — no project ID in the URL.
  */
 import { NextResponse } from 'next/server';
-import { Agent, fetch as undiciFetch } from 'undici';
 
-export const revalidate = 3600;
+// Cache for 6 hours — Clarity allows only 10 API calls/project/day.
+// 24h / 6h = 4 calls/day max, safely under the limit.
+export const revalidate = 21600;
 
-const PROJECT_ID = process.env.CLARITY_ETZ_PROJECT_ID ?? 'qmef32brd0';
-
-/**
- * api.clarity.ms has an Azure CDN TLS cert mismatch (cert is *.azureedge.net).
- * Use undici Agent with rejectUnauthorized:false ONLY for this host.
- */
-const clarityAgent = new Agent({ connect: { rejectUnauthorized: false } });
+const CLARITY_BASE = 'https://www.clarity.ms/export-data/api/v1';
 
 function clarityHeaders() {
   return {
-    Authorization: `Bearer ${process.env.CLARITY_API_TOKEN ?? ''}`,
-    Accept: 'application/json',
-    // A browser-like User-Agent is required — Azure CDN WAF blocks generic Node.js agents
-    'User-Agent': 'Mozilla/5.0 (compatible; PascalPressPlanner/1.0)',
+    Authorization:    `Bearer ${process.env.CLARITY_API_TOKEN ?? ''}`,
+    'Content-Type':   'application/json',
+    Accept:           'application/json',
+    'User-Agent':     'Mozilla/5.0 (compatible; PascalPressPlanner/1.0)',
   };
 }
 
+// ─── Interfaces ──────────────────────────────────────────────────────────────
+
+/** One row of the by-source breakdown shown in the dashboard card */
 export interface ClarityMetricRow {
   dimensionValue:      string;
   sessions:            number;
-  bounceRate:          number;  // 0-100
-  activeTime:          number;  // seconds
-  deadClickRate:       number;  // 0-100
-  rageClickRate:       number;  // 0-100
-  excessiveScrollRate: number;  // 0-100
-  scrollDepth:         number;  // 0-100
+  bounceRate:          number;  // 0–100
+  activeTime:          number;  // seconds (engagement time)
+  deadClickRate:       number;  // 0–100
+  rageClickRate:       number;  // 0–100
+  excessiveScrollRate: number;  // 0–100
+  scrollDepth:         number;  // 0–100
 }
 
 export interface EtzClarityResponse {
   connected:  boolean;
-  dateRange:  { start: string; end: string };
+  dateRange:  { numOfDays: number };
   overall:    ClarityMetricRow | null;
   bySource:   ClarityMetricRow[];
   error?:     string;
 }
 
-function normRow(raw: Record<string, unknown>, label?: string): ClarityMetricRow {
-  const num = (k: string) => {
-    const v = raw[k];
-    return typeof v === 'number' ? v : parseFloat(String(v ?? '0')) || 0;
-  };
-  // Clarity returns rates as 0-1 fractions OR 0-100 percentages depending on version
-  const pct = (k: string) => {
-    const v = num(k);
-    return v <= 1 ? v * 100 : v;
-  };
-  return {
-    dimensionValue:      label ?? String(raw['dimensionValue'] ?? raw['name'] ?? ''),
-    sessions:            num('sessions'),
-    bounceRate:          pct('bounceRate'),
-    activeTime:          num('activeTime'),
-    deadClickRate:       pct('deadClickRate'),
-    rageClickRate:       pct('rageClickRate'),
-    excessiveScrollRate: pct('excessiveScrollingRate'),
-    scrollDepth:         pct('scrollDepth'),
-  };
+// ─── Response parsing ─────────────────────────────────────────────────────────
+
+/** One metric group returned by the export API */
+interface MetricGroup {
+  metricName:  string;
+  information: Record<string, unknown>[];
 }
+
+const num = (obj: Record<string, unknown>, k: string): number => {
+  const v = obj[k];
+  return typeof v === 'number' ? v : parseFloat(String(v ?? '0')) || 0;
+};
+const pct = (obj: Record<string, unknown>, k: string): number => {
+  const v = num(obj, k);
+  // Clarity returns rates as 0–1 fractions OR 0–100 depending on field/version
+  return v <= 1 ? v * 100 : v;
+};
 
 /**
- * Try calling the Clarity API at each base URL in turn.
- * Returns on the first successful (2xx) response.
+ * Merge information rows across metric groups, keyed by the dimension value.
+ * Each metric group has one dimension-value key per row (e.g. "Source": "Organic Search").
+ *
+ * This accumulates all fields from every metric group into one merged object per source.
  */
-async function fetchClarity(
-  params: Record<string, string>,
-): Promise<{ rows: Record<string, unknown>[]; baseUsed: string }> {
-  const candidates = [
-    { base: 'https://www.clarity.ms/export/api/v1',      useClarityAgent: false },
-    { base: 'https://api.clarity.ms/v1',                 useClarityAgent: true  },
-    { base: 'https://clarity.microsoft.com/api/v1',      useClarityAgent: false },
-  ];
+function buildPerSourceMap(
+  groups:    MetricGroup[],
+  dimension: string,
+): Map<string, Record<string, unknown>> {
+  const map = new Map<string, Record<string, unknown>>();
 
-  const qs = new URLSearchParams(params).toString();
-  const errors: string[] = [];
-
-  for (const { base, useClarityAgent } of candidates) {
-    const url = `${base}/projects/${PROJECT_ID}/metrics?${qs}`;
-    console.log('[etz-clarity] trying:', url);
-
-    let res: Response | Awaited<ReturnType<typeof undiciFetch>>;
-    try {
-      if (useClarityAgent) {
-        res = await undiciFetch(url, {
-          headers:    clarityHeaders(),
-          dispatcher: clarityAgent,
-        } as Parameters<typeof undiciFetch>[1]);
-      } else {
-        res = await fetch(url, { headers: clarityHeaders(), cache: 'no-store' });
-      }
-    } catch (netErr) {
-      const msg = netErr instanceof Error ? netErr.message : String(netErr);
-      console.log('[etz-clarity] network error on', url, '—', msg);
-      errors.push(`${base}: ${msg}`);
-      continue;
+  for (const group of groups) {
+    for (const info of group.information) {
+      const dimVal = String(info[dimension] ?? info['dimensionValue'] ?? 'Unknown');
+      const existing = map.get(dimVal) ?? {};
+      map.set(dimVal, { ...existing, ...info });
     }
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      console.log('[etz-clarity] HTTP', res.status, 'from', url, body.slice(0, 100));
-      errors.push(`${base}: HTTP ${res.status}`);
-      continue;
-    }
-
-    const json = await res.json() as Record<string, unknown>;
-    let rows: Record<string, unknown>[];
-    if (Array.isArray(json))               rows = json as Record<string, unknown>[];
-    else if (Array.isArray(json['data']))   rows = json['data'] as Record<string, unknown>[];
-    else if (Array.isArray(json['results']))rows = json['results'] as Record<string, unknown>[];
-    else                                    rows = [json];
-
-    console.log('[etz-clarity] success from', base, '—', rows.length, 'rows');
-    return { rows, baseUsed: base };
   }
-
-  throw new Error(`All Clarity endpoints failed: ${errors.join(' | ')}`);
+  return map;
 }
+
+function rowFromMerged(merged: Record<string, unknown>, label: string): ClarityMetricRow {
+  return {
+    dimensionValue:      label,
+    sessions:            num(merged, 'totalSessionCount'),
+    bounceRate:          pct(merged, 'bounceRate'),
+    // "Engagement Time" metric uses engagementTime (seconds)
+    activeTime:          num(merged, 'engagementTime') || num(merged, 'activeTime'),
+    deadClickRate:       pct(merged, 'deadClickRate'),
+    rageClickRate:       pct(merged, 'rageClickRate'),
+    excessiveScrollRate: pct(merged, 'excessiveScrollingRate') || pct(merged, 'excessiveScrollRate'),
+    scrollDepth:         pct(merged, 'scrollDepth'),
+  };
+}
+
+/** Aggregate all per-source rows into a single "All" overall row */
+function aggregateOverall(rows: ClarityMetricRow[]): ClarityMetricRow | null {
+  if (rows.length === 0) return null;
+  const totalSessions = rows.reduce((s, r) => s + r.sessions, 0);
+  if (totalSessions === 0) return null;
+  const w = (field: keyof ClarityMetricRow) =>
+    rows.reduce((s, r) => s + (r[field] as number) * r.sessions, 0) / totalSessions;
+  return {
+    dimensionValue:      'All',
+    sessions:            totalSessions,
+    bounceRate:          w('bounceRate'),
+    activeTime:          w('activeTime'),
+    deadClickRate:       w('deadClickRate'),
+    rageClickRate:       w('rageClickRate'),
+    excessiveScrollRate: w('excessiveScrollRate'),
+    scrollDepth:         w('scrollDepth'),
+  };
+}
+
+// ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function GET() {
   if (!process.env.CLARITY_API_TOKEN) {
     return NextResponse.json({
       connected: false,
-      dateRange: { start: '', end: '' },
+      dateRange: { numOfDays: 3 },
       overall:   null,
       bySource:  [],
-      error:     'CLARITY_API_TOKEN not configured. Generate at clarity.microsoft.com → Settings → API.',
+      error:     'CLARITY_API_TOKEN not configured. Generate at Clarity → Settings → Data Export.',
     } satisfies EtzClarityResponse);
   }
 
-  const endDate   = new Date(); endDate.setDate(endDate.getDate() - 1);
-  const startDate = new Date(); startDate.setDate(startDate.getDate() - 30);
-  const fmtDate   = (d: Date) => d.toISOString().slice(0, 10);
-
   try {
-    // 1. Overall metrics
-    const { rows: overallRows } = await fetchClarity({ numOfDays: '30' });
-    const overall = overallRows.length > 0 ? normRow(overallRows[0]!, 'All') : null;
+    // numOfDays accepts only 1, 2, or 3 (last 24/48/72 hours).
+    // Use 3 for the widest available window.
+    const params = new URLSearchParams({
+      numOfDays:  '3',
+      dimension1: 'Source',
+    });
+    const url = `${CLARITY_BASE}/project-live-insights?${params}`;
+    console.log('[etz-clarity] fetching:', url);
 
-    // 2. By source
-    const { rows: sourceRows, baseUsed } = await fetchClarity({ numOfDays: '30', dimensionType: 'Source' });
-    const bySource = sourceRows
-      .map(r => normRow(r))
-      .filter(r => r.dimensionValue && r.sessions > 0)
+    const res = await fetch(url, {
+      headers: clarityHeaders(),
+      cache:   'no-store',
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      const msg  = `Clarity API ${res.status}: ${body.slice(0, 200)}`;
+      console.error('[etz-clarity]', msg);
+      return NextResponse.json({
+        connected: false,
+        dateRange: { numOfDays: 3 },
+        overall:   null,
+        bySource:  [],
+        error:     msg,
+      } satisfies EtzClarityResponse);
+    }
+
+    const data = await res.json() as unknown;
+    console.log('[etz-clarity] raw response:', JSON.stringify(data).slice(0, 500));
+
+    // Response: array of { metricName: string, information: [...] }
+    const groups: MetricGroup[] = Array.isArray(data)
+      ? (data as MetricGroup[])
+      : [];
+
+    const sourceMap = buildPerSourceMap(groups, 'Source');
+    const bySource: ClarityMetricRow[] = Array.from(sourceMap.entries())
+      .map(([label, merged]) => rowFromMerged(merged, label))
+      .filter(r => r.sessions > 0)
       .sort((a, b) => b.sessions - a.sessions);
 
-    console.log('[etz-clarity] done, baseUsed:', baseUsed);
+    const overall = aggregateOverall(bySource);
+
+    console.log('[etz-clarity] parsed:', bySource.length, 'sources');
 
     return NextResponse.json({
       connected: true,
-      dateRange: { start: fmtDate(startDate), end: fmtDate(endDate) },
+      dateRange: { numOfDays: 3 },
       overall,
       bySource,
     } satisfies EtzClarityResponse);
@@ -174,7 +201,7 @@ export async function GET() {
     console.error('[etz-clarity]', e);
     return NextResponse.json({
       connected: false,
-      dateRange: { start: '', end: '' },
+      dateRange: { numOfDays: 3 },
       overall:   null,
       bySource:  [],
       error:     e instanceof Error ? e.message : 'Unknown error',
