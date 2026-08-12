@@ -1786,10 +1786,21 @@ function EtzTrialsFullView({
             <p className="text-sm text-gray-400">Loading Clarity data…</p>
           ) : !clarity?.connected ? (
             <div className="space-y-1">
-              <p className="text-sm text-gray-500 font-medium">Clarity not yet connected</p>
-              <p className="text-xs text-gray-400 max-w-sm">
-                {clarity?.error ?? 'Add CLARITY_API_TOKEN to environment variables. Generate at clarity.microsoft.com → Settings → Data Export.'}
-              </p>
+              {clarity?.error?.includes('429') || clarity?.error?.toLowerCase().includes('daily limit') ? (
+                <>
+                  <p className="text-sm text-gray-500 font-medium">Clarity data refreshing tomorrow</p>
+                  <p className="text-xs text-gray-400 max-w-sm">
+                    The Clarity API allows 10 requests per day — today&apos;s limit was reached during setup. Data will load automatically tomorrow and cache for 24 hours.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-gray-500 font-medium">Clarity not yet connected</p>
+                  <p className="text-xs text-gray-400 max-w-sm">
+                    {clarity?.error ?? 'Add CLARITY_API_TOKEN to environment variables. Generate at clarity.microsoft.com → Settings → Data Export.'}
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <div className="space-y-4">

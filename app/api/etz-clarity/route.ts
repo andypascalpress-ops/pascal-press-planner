@@ -21,9 +21,10 @@
  */
 import { NextResponse } from 'next/server';
 
-// Cache for 6 hours — Clarity allows only 10 API calls/project/day.
-// 24h / 6h = 4 calls/day max, safely under the limit.
-export const revalidate = 21600;
+// Cache for 24 hours — Clarity allows only 10 API calls/project/day.
+// 24-hour ISR means at most 1 revalidation per day, well within the limit.
+// The data itself only changes daily (last 3 days window), so staleness is fine.
+export const revalidate = 86400;
 
 const CLARITY_BASE = 'https://www.clarity.ms/export-data/api/v1';
 
