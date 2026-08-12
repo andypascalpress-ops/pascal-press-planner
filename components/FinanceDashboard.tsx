@@ -1109,6 +1109,36 @@ interface EtzTrendResponse {
   monthCount: number;
 }
 
+interface EtzSourceRow {
+  source:  string;
+  trials:  number;
+  pct:     number;
+}
+interface EtzSourceResponse {
+  month:   string;
+  total:   number;
+  rows:    EtzSourceRow[];
+  _meta?:  { hasSourceData: boolean; note: string };
+}
+
+interface ClarityMetricRow {
+  dimensionValue:      string;
+  sessions:            number;
+  bounceRate:          number;
+  activeTime:          number;
+  deadClickRate:       number;
+  rageClickRate:       number;
+  excessiveScrollRate: number;
+  scrollDepth:         number;
+}
+interface EtzClarityResponse {
+  connected:  boolean;
+  dateRange:  { start: string; end: string };
+  overall:    ClarityMetricRow | null;
+  bySource:   ClarityMetricRow[];
+  error?:     string;
+}
+
 // ─── ETZ 12-month trend chart ─────────────────────────────────────────────────
 // Normalised/indexed chart: each metric shown as % of its own peak value.
 // This puts sessions, trials and orders on the same 0–100 % scale so all
@@ -1307,6 +1337,10 @@ function EtzTrialsFullView({
   loadingTraffic,
   trend,
   loadingTrend,
+  sources,
+  loadingSources,
+  clarity,
+  loadingClarity,
 }: {
   data:            EtzTrialFunnelResponse | null;
   loading:         boolean;
@@ -1318,6 +1352,10 @@ function EtzTrialsFullView({
   loadingTraffic:  boolean;
   trend:           EtzTrendResponse | null;
   loadingTrend:    boolean;
+  sources:         EtzSourceResponse | null;
+  loadingSources:  boolean;
+  clarity:         EtzClarityResponse | null;
+  loadingClarity:  boolean;
 }) {
   if (loading) {
     return (
@@ -1461,6 +1499,71 @@ function EtzTrialsFullView({
         </div>
       </div>
 
+      {/* ── Source Attribution (trial origin) ────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
+            <span className="text-sm font-semibold text-gray-700">Trial Sources</span>
+          </div>
+          <span className="text-xs text-gray-400">HubSpot</span>
+        </div>
+        <div className="px-5 py-4">
+          {loadingSources ? (
+            <p className="text-sm text-gray-400">Loading sources…</p>
+          ) : !sources || sources.total === 0 ? (
+            <p className="text-sm text-gray-400 italic">No trial source data for {monthLabel(month)}</p>
+          ) : sources._meta?.hasSourceData === false ? (
+            <div>
+              <p className="text-sm text-gray-500 mb-2">
+                {sources.total.toLocaleString()} trials · source data not yet on deals
+              </p>
+              <p className="text-xs text-gray-400 italic max-w-sm">
+                {sources._meta.note}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {/* Stacked bar */}
+              {sources.rows.length > 0 && (
+                <div className="flex h-2.5 rounded-full overflow-hidden gap-px mb-3">
+                  {sources.rows.map((row, i) => {
+                    const BAR_COLORS = ['#7c3aed','#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#84cc16','#f97316'];
+                    return (
+                      <div
+                        key={row.source}
+                        style={{ width: `${row.pct}%`, background: BAR_COLORS[i % BAR_COLORS.length] }}
+                        title={`${row.source}: ${row.trials} trials (${row.pct}%)`}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+              {/* Source list */}
+              <div className="flex flex-col gap-1.5">
+                {sources.rows.map((row, i) => {
+                  const BAR_COLORS = ['#7c3aed','#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#84cc16','#f97316'];
+                  return (
+                    <div key={row.source} className="flex items-center gap-2">
+                      <span
+                        className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
+                        style={{ background: BAR_COLORS[i % BAR_COLORS.length] }}
+                      />
+                      <span className="text-sm text-gray-700 flex-1">{row.source}</span>
+                      <span className="text-sm font-semibold text-gray-900 tabular-nums">{row.trials}</span>
+                      <span className="text-xs text-gray-400 tabular-nums w-10 text-right">{row.pct}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-gray-400 pt-1">
+                {sources.total.toLocaleString()} total trials · first-touch source from HubSpot
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Drop arrow 2 */}
       {funnelReady && (
         <FunnelDropArrow from={trials} to={orders} label="trial → paid" />
@@ -1568,125 +1671,159 @@ function EtzTrialsFullView({
         </div>
       </div>
 
+      {/* ── Clarity Behavioral Insights ──────────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mt-2">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />
+            <span className="text-sm font-semibold text-gray-700">User Behaviour · Microsoft Clarity</span>
+          </div>
+          <span className="text-xs text-gray-400">Last 30 days</span>
+        </div>
+        <div className="px-5 py-4">
+          {loadingClarity ? (
+            <p className="text-sm text-gray-400">Loading Clarity data…</p>
+          ) : !clarity?.connected ? (
+            <div className="space-y-1">
+              <p className="text-sm text-gray-500 font-medium">Clarity not yet connected</p>
+              <p className="text-xs text-gray-400 max-w-sm">
+                {clarity?.error ?? 'Add CLARITY_API_TOKEN to environment variables. Generate at clarity.microsoft.com → Settings → API.'}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Overall metrics row */}
+              {clarity.overall && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  {[
+                    {
+                      label: 'Bounce rate',
+                      value: `${clarity.overall.bounceRate.toFixed(1)}%`,
+                      note:  clarity.overall.bounceRate > 60 ? '⚠ high' : clarity.overall.bounceRate < 35 ? '✓ good' : '',
+                      color: clarity.overall.bounceRate > 60 ? 'text-red-600' : clarity.overall.bounceRate < 35 ? 'text-emerald-600' : 'text-gray-900',
+                    },
+                    {
+                      label: 'Avg active time',
+                      value: `${Math.round(clarity.overall.activeTime)}s`,
+                      note:  clarity.overall.activeTime > 120 ? '✓ engaged' : clarity.overall.activeTime < 30 ? '⚠ low' : '',
+                      color: clarity.overall.activeTime > 120 ? 'text-emerald-600' : clarity.overall.activeTime < 30 ? 'text-red-600' : 'text-gray-900',
+                    },
+                    {
+                      label: 'Dead click rate',
+                      value: `${clarity.overall.deadClickRate.toFixed(1)}%`,
+                      note:  clarity.overall.deadClickRate > 8 ? '⚠ broken UI?' : '',
+                      color: clarity.overall.deadClickRate > 8 ? 'text-red-600' : 'text-gray-900',
+                    },
+                    {
+                      label: 'Rage click rate',
+                      value: `${clarity.overall.rageClickRate.toFixed(1)}%`,
+                      note:  clarity.overall.rageClickRate > 3 ? '⚠ frustration' : '',
+                      color: clarity.overall.rageClickRate > 3 ? 'text-red-600' : 'text-gray-900',
+                    },
+                  ].map(m => (
+                    <div key={m.label} className="bg-gray-50 rounded-xl px-4 py-3">
+                      <div className={`text-xl font-bold tabular-nums ${m.color}`}>{m.value}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">{m.label}</div>
+                      {m.note && <div className="text-xs text-gray-400 mt-0.5">{m.note}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Scroll depth bar */}
+              {clarity.overall && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs text-gray-500">Avg scroll depth</span>
+                    <span className="text-xs font-semibold text-gray-700">{clarity.overall.scrollDepth.toFixed(0)}%</span>
+                  </div>
+                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-indigo-400 rounded-full"
+                      style={{ width: `${Math.min(clarity.overall.scrollDepth, 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {clarity.overall.scrollDepth < 40
+                      ? '⚠ Most visitors leave before the fold — consider moving CTAs higher on the page'
+                      : clarity.overall.scrollDepth > 70
+                      ? '✓ Visitors are reading deep into the page'
+                      : 'Moderate scroll depth'}
+                  </p>
+                </div>
+              )}
+
+              {/* Source breakdown table */}
+              {clarity.bySource.length > 0 && (
+                <div>
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                    Engagement by source
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-gray-400 border-b border-gray-100">
+                          <th className="text-left py-1.5 font-medium">Source</th>
+                          <th className="text-right py-1.5 font-medium">Sessions</th>
+                          <th className="text-right py-1.5 font-medium">Bounce</th>
+                          <th className="text-right py-1.5 font-medium">Active time</th>
+                          <th className="text-right py-1.5 font-medium">Dead clicks</th>
+                          <th className="text-right py-1.5 font-medium">Rage clicks</th>
+                          <th className="text-right py-1.5 font-medium">Scroll</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {clarity.bySource.slice(0, 8).map(row => (
+                          <tr key={row.dimensionValue} className="border-b border-gray-50 hover:bg-gray-50">
+                            <td className="py-1.5 text-gray-700 font-medium">{row.dimensionValue}</td>
+                            <td className="py-1.5 text-right text-gray-600 tabular-nums">{row.sessions.toLocaleString()}</td>
+                            <td className={`py-1.5 text-right tabular-nums font-medium ${row.bounceRate > 65 ? 'text-red-600' : row.bounceRate < 35 ? 'text-emerald-600' : 'text-gray-600'}`}>
+                              {row.bounceRate.toFixed(1)}%
+                            </td>
+                            <td className="py-1.5 text-right text-gray-600 tabular-nums">{Math.round(row.activeTime)}s</td>
+                            <td className={`py-1.5 text-right tabular-nums ${row.deadClickRate > 8 ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
+                              {row.deadClickRate.toFixed(1)}%
+                            </td>
+                            <td className={`py-1.5 text-right tabular-nums ${row.rageClickRate > 3 ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
+                              {row.rageClickRate.toFixed(1)}%
+                            </td>
+                            <td className="py-1.5 text-right text-gray-600 tabular-nums">{row.scrollDepth.toFixed(0)}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-2">
+                    High dead/rage click rates indicate UI issues that cause drop-off ·{' '}
+                    <a
+                      href={`https://clarity.microsoft.com/projects/view/${process.env.NEXT_PUBLIC_CLARITY_PROJECT_ID ?? 'qmef32brd0'}/dashboard`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-indigo-500 hover:underline"
+                    >
+                      Open Clarity dashboard ↗
+                    </a>
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
       <p className="text-xs text-gray-400 pb-4 pt-1">
         Traffic: GA4 · Trials: HubSpot ({data?._meta?.pipeline ?? 'ETZ'} pipeline) ·
-        Orders: Stripe · refreshes on each page load
+        Orders: Stripe · Behaviour: Clarity · refreshes on each page load
       </p>
 
     </div>
   );
 }
 
-// ─── ETZ Trial Funnel Panel (kept for legacy reference) ──────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// EtzTrialFunnelPanel was removed — replaced by EtzTrialsFullView above.
+// ─────────────────────────────────────────────────────────────────────────────
 
-function EtzTrialFunnelPanel({
-  data,
-  loading,
-}: {
-  data:    EtzTrialFunnelResponse | null;
-  loading: boolean;
-}) {
-  if (loading) {
-    return (
-      <div className="px-4 md:px-6 pb-0">
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4 text-sm text-gray-400">
-          Loading trial funnel…
-        </div>
-      </div>
-    );
-  }
-
-  if (!data || data.error) {
-    // Silently skip if HubSpot isn't connected yet
-    return null;
-  }
-
-  const { thisMonth, allTime } = data;
-  const convPctMonth   = thisMonth.conversionRate != null ? Math.round(thisMonth.conversionRate * 100) : null;
-  const convPctAllTime = allTime.conversionRate   != null ? Math.round(allTime.conversionRate   * 100) : null;
-
-  const rateColor = (pct: number | null) =>
-    pct == null ? 'text-gray-400' : pct >= 30 ? 'text-emerald-700' : pct >= 15 ? 'text-amber-600' : 'text-red-500';
-
-  return (
-    <div className="px-4 md:px-6 pb-0">
-      <div className="bg-white rounded-xl border border-emerald-200 shadow-sm overflow-hidden">
-        {/* Header */}
-        <div className="px-5 py-3 bg-emerald-50 border-b border-emerald-200 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-bold text-emerald-900">Excel Test Zone · Free Trial Funnel</h3>
-            <p className="text-xs text-emerald-700 mt-0.5">HubSpot · signups → active subscribers</p>
-          </div>
-          <span className="text-xs font-medium text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full">
-            {allTime.converted.toLocaleString()} total converted
-          </span>
-        </div>
-
-        <div className="px-5 py-4 grid grid-cols-1 md:grid-cols-2 gap-6">
-
-          {/* This month */}
-          <div>
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">This Month</div>
-            <div className="grid grid-cols-2 gap-3 mb-3">
-              <div className="bg-gray-50 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-gray-900">{thisMonth.signups.toLocaleString()}</div>
-                <div className="text-xs text-gray-500 mt-0.5">New signups</div>
-              </div>
-              <div className="bg-emerald-50 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-emerald-700">{thisMonth.converted.toLocaleString()}</div>
-                <div className="text-xs text-emerald-600 mt-0.5">Converted</div>
-              </div>
-            </div>
-            {thisMonth.signups > 0 ? (
-              <div className="flex items-center gap-2 text-xs text-gray-500">
-                <span className="w-24 shrink-0">Conversion rate</span>
-                <div className="flex-1 h-3 bg-emerald-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${convPctMonth ?? 0}%` }} />
-                </div>
-                <span className={`w-8 text-right tabular-nums font-bold ${rateColor(convPctMonth)}`}>
-                  {convPctMonth != null ? `${convPctMonth}%` : '—'}
-                </span>
-              </div>
-            ) : (
-              <p className="text-xs text-gray-400 italic">No new signups this month yet</p>
-            )}
-          </div>
-
-          {/* All-time */}
-          <div className="md:pl-6 md:border-l border-gray-100">
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">All Time</div>
-            <div className="grid grid-cols-3 gap-2 mb-3">
-              <div className="bg-gray-50 rounded-lg p-2.5 text-center">
-                <div className="text-lg font-bold text-gray-900">{allTime.total.toLocaleString()}</div>
-                <div className="text-[11px] text-gray-500 mt-0.5">Total</div>
-              </div>
-              <div className="bg-blue-50 rounded-lg p-2.5 text-center">
-                <div className="text-lg font-bold text-blue-700">{allTime.onTrial.toLocaleString()}</div>
-                <div className="text-[11px] text-blue-600 mt-0.5">On trial</div>
-              </div>
-              <div className="bg-emerald-50 rounded-lg p-2.5 text-center">
-                <div className="text-lg font-bold text-emerald-700">{allTime.converted.toLocaleString()}</div>
-                <div className="text-[11px] text-emerald-600 mt-0.5">Converted</div>
-              </div>
-            </div>
-            {allTime.total > 0 && (
-              <div className="flex items-center gap-2 text-xs text-gray-500">
-                <span className="w-24 shrink-0">Conversion rate</span>
-                <div className="flex-1 h-3 bg-emerald-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${convPctAllTime ?? 0}%` }} />
-                </div>
-                <span className={`w-8 text-right tabular-nums font-bold ${rateColor(convPctAllTime)}`}>
-                  {convPctAllTime != null ? `${convPctAllTime}%` : '—'}
-                </span>
-              </div>
-            )}
-          </div>
-
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2005,6 +2142,10 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [loadingEtzTraffic,    setLoadingEtzTraffic   ] = useState(false);
   const [etzTrend,             setEtzTrend            ] = useState<EtzTrendResponse | null>(null);
   const [loadingEtzTrend,      setLoadingEtzTrend     ] = useState(false);
+  const [etzSources,           setEtzSources          ] = useState<EtzSourceResponse | null>(null);
+  const [loadingEtzSources,    setLoadingEtzSources   ] = useState(false);
+  const [etzClarity,           setEtzClarity          ] = useState<EtzClarityResponse | null>(null);
+  const [loadingClarity,       setLoadingClarity      ] = useState(false);
   const [financeView,          setFinanceView         ] = useState<'overview' | 'etz-trials'>('overview');
   const [siteConversion,   setSiteConversion  ] = useState<WebsiteConversionResponse | null>(null);
   const [channelRevenue,   setChannelRevenue  ] = useState<ChannelRevenueResponse | null>(null);
@@ -2029,6 +2170,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
     setMetaCampaigns(null);
     setEtzTrialFunnel(null);
     setEtzTraffic(null);
+    setEtzSources(null);
     setSiteConversion(null);
     setChannelRevenue(null);
 
@@ -2103,6 +2245,16 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
       .catch((e) => { if (e?.name !== 'AbortError') setEtzTraffic(null); })
       .finally(() => { if (!signal.aborted) setLoadingEtzTraffic(false); });
 
+    setLoadingEtzSources(true);
+    fetch('/api/etz-sources?month=' + month, { signal })
+      .then(r => r.json())
+      .then((data: EtzSourceResponse) => {
+        if (data?.month && data.month !== month) return;
+        if (!signal.aborted) setEtzSources(data);
+      })
+      .catch((e) => { if (e?.name !== 'AbortError') setEtzSources(null); })
+      .finally(() => { if (!signal.aborted) setLoadingEtzSources(false); });
+
     fetch('/api/website-conversion?month=' + month, { signal })
       .then(r => r.json())
       .then((data: WebsiteConversionResponse) => {
@@ -2122,7 +2274,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
     return () => ac.abort();
   }, [selectedMonth]);
 
-  // Fetch ETZ 12-month trend once on mount — independent of selectedMonth
+  // Fetch ETZ 12-month trend + Clarity behavioral data once on mount
   useEffect(() => {
     setLoadingEtzTrend(true);
     fetch('/api/etz-trend?months=12')
@@ -2130,6 +2282,13 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
       .then((data: EtzTrendResponse) => setEtzTrend(data))
       .catch(() => setEtzTrend(null))
       .finally(() => setLoadingEtzTrend(false));
+
+    setLoadingClarity(true);
+    fetch('/api/etz-clarity')
+      .then(r => r.json())
+      .then((data: EtzClarityResponse) => setEtzClarity(data))
+      .catch(() => setEtzClarity(null))
+      .finally(() => setLoadingClarity(false));
   }, []);
 
   useEffect(() => {
@@ -2336,6 +2495,10 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             loadingTraffic={loadingEtzTraffic}
             trend={etzTrend}
             loadingTrend={loadingEtzTrend}
+            sources={etzSources}
+            loadingSources={loadingEtzSources}
+            clarity={etzClarity}
+            loadingClarity={loadingClarity}
           />
         )}
 
