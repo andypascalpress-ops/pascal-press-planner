@@ -1654,6 +1654,12 @@ function EtzTrialsFullView({
               <p className="text-xs text-gray-400 pt-1">
                 {sources.total.toLocaleString()} total trials · first-touch source from HubSpot
               </p>
+              {sources.rows.some(r => r.source === 'Offline') && (
+                <p className="text-xs text-gray-400 italic border-t border-gray-100 pt-2 mt-1">
+                  <span className="font-medium not-italic text-gray-500">Offline</span> = source not captured — the trial was created without a tracked web visit (e.g. signed up directly in the app, or manually added in HubSpot). To reduce this, set up a HubSpot workflow to copy the contact&apos;s original source onto the deal at creation.
+                </p>
+              )}
+
             </div>
           )}
         </div>
