@@ -33,9 +33,10 @@ const PROJECT_ID   = process.env.CLARITY_ETZ_PROJECT_ID ?? 'qmef32brd0';
 const clarityAgent = new Agent({ connect: { rejectUnauthorized: false } });
 
 function clarityHeaders() {
+  // No Content-Type on GET requests — Azure WAF can reject GETs with that header
   return {
     Authorization: `Bearer ${process.env.CLARITY_API_TOKEN ?? ''}`,
-    'Content-Type': 'application/json',
+    Accept: 'application/json',
   };
 }
 
