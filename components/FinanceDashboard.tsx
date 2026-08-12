@@ -1656,7 +1656,7 @@ function EtzTrialsFullView({
               </p>
               {sources.rows.some(r => r.source === 'Offline') && (
                 <p className="text-xs text-gray-400 italic border-t border-gray-100 pt-2 mt-1">
-                  <span className="font-medium not-italic text-gray-500">Offline</span> = source not captured — the trial was created without a tracked web visit (e.g. signed up directly in the app, or manually added in HubSpot). To reduce this, set up a HubSpot workflow to copy the contact&apos;s original source onto the deal at creation.
+                  <span className="font-medium not-italic text-gray-500">Offline</span> = lost attribution — these are real web sign-ups but the marketing source wasn&apos;t passed when the deal was created in HubSpot. The contact likely has a source (Google, Facebook, etc.) but the app&apos;s HubSpot integration doesn&apos;t copy it onto the deal. Fix: add a HubSpot workflow to copy <span className="not-italic font-mono">hs_analytics_source</span> from the contact to the deal on creation.
                 </p>
               )}
 
