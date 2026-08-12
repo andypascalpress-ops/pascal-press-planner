@@ -2245,15 +2245,22 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
       .catch((e) => { if (e?.name !== 'AbortError') setEtzTraffic(null); })
       .finally(() => { if (!signal.aborted) setLoadingEtzTraffic(false); });
 
+    // Delay 600 ms so etz-sources doesn't fire simultaneously with etz-trial-funnel
+    // and breach HubSpot's 4 req/sec search limit. ISR caches the response after
+    // first load so subsequent views are instant (no live HubSpot call at all).
     setLoadingEtzSources(true);
-    fetch('/api/etz-sources?month=' + month, { signal })
-      .then(r => r.json())
-      .then((data: EtzSourceResponse) => {
-        if (data?.month && data.month !== month) return;
-        if (!signal.aborted) setEtzSources(data);
-      })
-      .catch((e) => { if (e?.name !== 'AbortError') setEtzSources(null); })
-      .finally(() => { if (!signal.aborted) setLoadingEtzSources(false); });
+    const srcTimer = setTimeout(() => {
+      if (signal.aborted) { setLoadingEtzSources(false); return; }
+      fetch('/api/etz-sources?month=' + month, { signal })
+        .then(r => r.json())
+        .then((data: EtzSourceResponse) => {
+          if (data?.month && data.month !== month) return;
+          if (!signal.aborted) setEtzSources(data);
+        })
+        .catch((e) => { if (e?.name !== 'AbortError') setEtzSources(null); })
+        .finally(() => { if (!signal.aborted) setLoadingEtzSources(false); });
+    }, 600);
+    signal.addEventListener('abort', () => clearTimeout(srcTimer));
 
     fetch('/api/website-conversion?month=' + month, { signal })
       .then(r => r.json())

@@ -13,7 +13,8 @@
  */
 import { NextResponse } from 'next/server';
 
-export const dynamic = 'force-dynamic';
+// Cache for 30 minutes — historical months don't change; current month acceptable
+export const revalidate = 1800;
 
 const HS_BASE = 'https://api.hubapi.com';
 
