@@ -1347,6 +1347,56 @@ export function normName(s: string): string {
   return s.toLowerCase().replace(/[\s\-]+/g, '_').replace(/[^a-z0-9_]/g, '');
 }
 
+// ---------------------------------------------------------------------------
+// Coupon code revenue — GA4 orderCoupon dimension
+// ---------------------------------------------------------------------------
+
+export interface CouponRevenueRow {
+  couponCode:   string;
+  revenue:      number;
+  transactions: number;
+}
+
+/**
+ * Returns revenue and transactions attributed to each coupon code in GA4.
+ * Uses the `orderCoupon` dimension (the code the customer enters at checkout).
+ * All-time by default; pass a date range to narrow.
+ */
+export async function fetchCouponRevenue(
+  startDate = '2020-01-01',
+  endDate   = 'today',
+): Promise<{ rows: CouponRevenueRow[]; connected: boolean }> {
+  const empty = { rows: [], connected: false };
+  if (!isConnected()) return empty;
+
+  try {
+    const accessToken = await getAccessToken();
+    const capped      = capGaEndDate(startDate, endDate);
+
+    const data = await runReport(accessToken, {
+      dateRanges: [{ startDate: capped.startDate, endDate: capped.endDate }],
+      dimensions: [{ name: 'orderCoupon' }],
+      metrics:    [{ name: 'purchaseRevenue' }, { name: 'transactions' }],
+      orderBys:   [{ metric: { metricName: 'purchaseRevenue' }, desc: true }],
+      limit: 500,
+    });
+
+    const rows: CouponRevenueRow[] = (data.rows ?? [])
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((row: any) => ({
+        couponCode:   (row.dimensionValues?.[0]?.value ?? '').toUpperCase(),
+        revenue:      Math.round(parseFloat(row.metricValues?.[0]?.value ?? '0') * 100) / 100,
+        transactions: parseInt(row.metricValues?.[1]?.value ?? '0', 10),
+      }))
+      .filter((r: CouponRevenueRow) => r.couponCode && r.couponCode !== '(NOT SET)' && r.couponCode !== '');
+
+    return { rows, connected: true };
+  } catch (err) {
+    console.error('[google-analytics fetchCouponRevenue]', err);
+    return empty;
+  }
+}
+
 /** Look up a HubSpot email name in a GA4 campaign revenue map */
 export function matchRevenue(
   emailName:  string,

@@ -1156,7 +1156,9 @@ interface CouponRow {
   type:              string;
   discountFormatted: string;
   numUses:           number;
-  totalSavings:      number | null;
+  totalSavings:      number | null;  // BC flat-rate savings; null for % / per-item
+  gaRevenue:         number | null;  // GA4 revenue from orders using this coupon
+  gaTransactions:    number | null;  // GA4 transaction count
   enabled:           boolean;
   expired:           boolean;
   maxUses:           number;
@@ -1168,7 +1170,9 @@ interface PPCouponsResponse {
   coupons:              CouponRow[];
   totalUses:            number;
   totalComputedSavings: number;
+  totalGaRevenue:       number;
   hasPercentageCoupons: boolean;
+  gaConnected:          boolean;
   error?:               string;
 }
 
@@ -2966,10 +2970,18 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
                     <div className="text-xs text-gray-500">Total uses</div>
                     <div className="text-base font-bold text-gray-900 tabular-nums">{coupons.totalUses.toLocaleString()}</div>
                   </div>
+                  {coupons.gaConnected && coupons.totalGaRevenue > 0 && (
+                    <div>
+                      <div className="text-xs text-gray-500">Revenue generated (GA4)</div>
+                      <div className="text-base font-bold text-emerald-600 tabular-nums">
+                        {AUD.format(coupons.totalGaRevenue)}
+                      </div>
+                    </div>
+                  )}
                   {coupons.totalComputedSavings > 0 && (
                     <div>
                       <div className="text-xs text-gray-500">
-                        Total savings given{coupons.hasPercentageCoupons ? ' *' : ''}
+                        Savings given{coupons.hasPercentageCoupons ? ' *' : ''} (BC)
                       </div>
                       <div className="text-base font-bold text-red-600 tabular-nums">
                         {AUD.format(coupons.totalComputedSavings)}
@@ -2999,7 +3011,10 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
                         <th className="text-left px-3 py-2.5 font-semibold">Discount</th>
                         <th className="text-right px-3 py-2.5 font-semibold">Uses</th>
                         <th className="text-right px-3 py-2.5 font-semibold">Max</th>
-                        <th className="text-right px-3 py-2.5 font-semibold">Savings given</th>
+                        {coupons?.gaConnected && (
+                          <th className="text-right px-3 py-2.5 font-semibold text-emerald-700">Revenue (GA4)</th>
+                        )}
+                        <th className="text-right px-3 py-2.5 font-semibold">Savings (BC)</th>
                         <th className="text-right px-5 py-2.5 font-semibold">Status</th>
                       </tr>
                     </thead>
@@ -3026,6 +3041,19 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
                           <td className="text-right px-3 py-2.5 tabular-nums text-gray-400 text-xs">
                             {c.maxUses === 0 ? '∞' : c.maxUses.toLocaleString()}
                           </td>
+                          {coupons?.gaConnected && (
+                            <td className="text-right px-3 py-2.5 tabular-nums">
+                              {c.gaRevenue !== null && c.gaRevenue > 0
+                                ? <span className="text-emerald-700 font-semibold">{AUD.format(c.gaRevenue)}</span>
+                                : <span className="text-gray-300 text-xs">—</span>
+                              }
+                              {c.gaTransactions !== null && c.gaTransactions > 0 && (
+                                <div className="text-xs text-gray-400 font-normal leading-tight">
+                                  {c.gaTransactions} order{c.gaTransactions !== 1 ? 's' : ''}
+                                </div>
+                              )}
+                            </td>
+                          )}
                           <td className="text-right px-3 py-2.5 tabular-nums text-gray-700">
                             {c.totalSavings !== null
                               ? <span className="text-red-600 font-medium">{AUD.format(c.totalSavings)}</span>
