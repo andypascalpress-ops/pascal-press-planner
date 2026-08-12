@@ -1097,16 +1097,6 @@ interface EtzFunnelTrafficResponse {
 
 // ─── ETZ Trials — full dedicated view ────────────────────────────────────────
 
-// Channel colour palette — consistent across bars
-const CHANNEL_COLORS: Record<string, string> = {
-  'Paid Search':     '#3b82f6', // blue
-  'Organic Search':  '#10b981', // emerald
-  'Direct':          '#8b5cf6', // violet
-  'Email':           '#f59e0b', // amber
-  'Organic Social':  '#ec4899', // pink
-  'Referral':        '#06b6d4', // cyan
-  'Other':           '#9ca3af', // gray
-};
 function channelColor(ch: string): string {
   return CHANNEL_COLORS[ch] ?? '#9ca3af';
 }
