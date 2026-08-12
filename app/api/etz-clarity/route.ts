@@ -30,6 +30,8 @@ function clarityHeaders() {
   return {
     Authorization: `Bearer ${process.env.CLARITY_API_TOKEN ?? ''}`,
     Accept: 'application/json',
+    // A browser-like User-Agent is required — Azure CDN WAF blocks generic Node.js agents
+    'User-Agent': 'Mozilla/5.0 (compatible; PascalPressPlanner/1.0)',
   };
 }
 
@@ -82,6 +84,7 @@ async function fetchClarity(
   params: Record<string, string>,
 ): Promise<{ rows: Record<string, unknown>[]; baseUsed: string }> {
   const candidates = [
+    { base: 'https://www.clarity.ms/export/api/v1',      useClarityAgent: false },
     { base: 'https://api.clarity.ms/v1',                 useClarityAgent: true  },
     { base: 'https://clarity.microsoft.com/api/v1',      useClarityAgent: false },
   ];
