@@ -1174,7 +1174,7 @@ function EtzTrialsFullView({
   const funnelReady = !loading && !loadingTraffic && data != null;
 
   return (
-    <div className="px-4 md:px-8 py-6 max-w-3xl space-y-2">
+    <div className="px-4 md:px-8 py-6 max-w-3xl mx-auto space-y-2">
 
       {/* Header */}
       <div className="mb-5">
