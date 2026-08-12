@@ -1095,6 +1095,114 @@ interface EtzFunnelTrafficResponse {
   connected:     boolean;
 }
 
+interface EtzTrendPoint {
+  month:    string;
+  label:    string;
+  sessions: number;
+  trials:   number;
+  orders:   number;
+  revenue:  number;
+}
+interface EtzTrendResponse {
+  points:     EtzTrendPoint[];
+  monthCount: number;
+}
+
+// ─── ETZ 12-month trend chart ─────────────────────────────────────────────────
+// Dual-axis SVG: sessions as bars (left axis) + trials & orders as lines (right axis)
+
+function EtzTrendChart({ points }: { points: EtzTrendPoint[] }) {
+  if (points.length < 2) return null;
+
+  const W   = 700;
+  const H   = 220;
+  const PAD = { t: 20, r: 52, b: 32, l: 52 };
+  const cW  = W - PAD.l - PAD.r;
+  const cH  = H - PAD.t - PAD.b;
+  const n   = points.length;
+
+  const maxSessions = Math.max(...points.map(p => p.sessions), 1);
+  const maxRight    = Math.max(...points.map(p => Math.max(p.trials, p.orders)), 1);
+
+  const slotW = cW / n;
+  const barW  = Math.max(slotW * 0.45, 6);
+
+  const lx  = (i: number) => PAD.l + slotW * i + slotW / 2;
+  const ly  = (v: number) => PAD.t + cH - (v / maxSessions) * cH;
+  const ry  = (v: number) => PAD.t + cH - (v / maxRight) * cH;
+
+  const fmtSess = (v: number) => v >= 1000 ? Math.round(v / 1000) + 'k' : String(v);
+  const fmtNum  = (v: number) => String(Math.round(v));
+
+  const makeLine = (vals: number[], axisY: (v: number) => number) =>
+    vals.map((v, i) => (i === 0 ? 'M' : 'L') + lx(i).toFixed(1) + ' ' + axisY(v).toFixed(1)).join(' ');
+
+  const trialPath = makeLine(points.map(p => p.trials), ry);
+  const orderPath = makeLine(points.map(p => p.orders), ry);
+
+  // Y-axis ticks
+  const leftTicks  = [0, 0.5, 1].map(f => ({ v: maxSessions * f, y: ly(maxSessions * f) }));
+  const rightTicks = [0, 0.5, 1].map(f => ({ v: maxRight    * f, y: ry(maxRight    * f) }));
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ display: 'block' }}>
+      {/* Gridlines */}
+      {leftTicks.map((t, i) => (
+        <line key={i} x1={PAD.l} y1={t.y.toFixed(1)} x2={W - PAD.r} y2={t.y.toFixed(1)}
+          stroke="#f3f4f6" strokeWidth="1" />
+      ))}
+
+      {/* Left Y axis — sessions */}
+      {leftTicks.map((t, i) => (
+        <text key={i} x={PAD.l - 5} y={(t.y + 4).toFixed(1)} textAnchor="end"
+          fontSize="9" fill="#93c5fd">{fmtSess(t.v)}</text>
+      ))}
+      <text x={PAD.l - 5} y={PAD.t - 6} textAnchor="end" fontSize="8" fill="#93c5fd" fontWeight="600">sess</text>
+
+      {/* Right Y axis — trials / orders */}
+      {rightTicks.map((t, i) => (
+        <text key={i} x={W - PAD.r + 5} y={(t.y + 4).toFixed(1)} textAnchor="start"
+          fontSize="9" fill="#a78bfa">{fmtNum(t.v)}</text>
+      ))}
+      <text x={W - PAD.r + 5} y={PAD.t - 6} textAnchor="start" fontSize="8" fill="#a78bfa" fontWeight="600">trials/orders</text>
+
+      {/* Session bars */}
+      {points.map((p, i) => {
+        const bx = lx(i) - barW / 2;
+        const by = ly(p.sessions);
+        const bh = Math.max((PAD.t + cH) - by, 2);
+        return (
+          <rect key={i} x={bx.toFixed(1)} y={by.toFixed(1)}
+            width={barW.toFixed(1)} height={bh.toFixed(1)}
+            fill="#bfdbfe" rx="2"
+            opacity="0.8"
+          />
+        );
+      })}
+
+      {/* Trial line (violet) */}
+      <path d={trialPath} fill="none" stroke="#7c3aed" strokeWidth="2" strokeLinejoin="round" />
+      {points.map((p, i) => p.trials > 0 ? (
+        <circle key={i} cx={lx(i).toFixed(1)} cy={ry(p.trials).toFixed(1)}
+          r="3" fill="#7c3aed" />
+      ) : null)}
+
+      {/* Order line (emerald) */}
+      <path d={orderPath} fill="none" stroke="#10b981" strokeWidth="2" strokeLinejoin="round" />
+      {points.map((p, i) => p.orders > 0 ? (
+        <circle key={i} cx={lx(i).toFixed(1)} cy={ry(p.orders).toFixed(1)}
+          r="3" fill="#10b981" />
+      ) : null)}
+
+      {/* Month labels */}
+      {points.map((p, i) => (
+        <text key={i} x={lx(i).toFixed(1)} y={H - 4} textAnchor="middle"
+          fontSize="10" fill="#6b7280">{p.label}</text>
+      ))}
+    </svg>
+  );
+}
+
 // ─── ETZ Trials — full dedicated view ────────────────────────────────────────
 
 function channelColor(ch: string): string {
@@ -1132,6 +1240,8 @@ function EtzTrialsFullView({
   stripeConnected,
   traffic,
   loadingTraffic,
+  trend,
+  loadingTrend,
 }: {
   data:            EtzTrialFunnelResponse | null;
   loading:         boolean;
@@ -1141,6 +1251,8 @@ function EtzTrialsFullView({
   stripeConnected: boolean;
   traffic:         EtzFunnelTrafficResponse | null;
   loadingTraffic:  boolean;
+  trend:           EtzTrendResponse | null;
+  loadingTrend:    boolean;
 }) {
   if (loading) {
     return (
@@ -1343,6 +1455,49 @@ function EtzTrialsFullView({
           </div>
         </div>
       )}
+
+      {/* ── 12-month trend chart ──────────────────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mt-2">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <span className="text-sm font-semibold text-gray-700">12-Month Trend</span>
+            <span className="text-xs text-gray-400 ml-2">Sessions · Trials · Orders</span>
+          </div>
+          {/* Legend */}
+          <div className="flex items-center gap-4 text-xs text-gray-500">
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm bg-blue-200 inline-block" />
+              Sessions
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-1.5 rounded-full bg-violet-600 inline-block" />
+              Trials
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-1.5 rounded-full bg-emerald-500 inline-block" />
+              Orders
+            </span>
+          </div>
+        </div>
+        <div className="px-4 py-4">
+          {loadingTrend ? (
+            <div className="h-40 flex items-center justify-center text-sm text-gray-400">
+              Loading trend data — this takes a moment…
+            </div>
+          ) : !trend || trend.points.length < 2 ? (
+            <div className="h-40 flex items-center justify-center text-sm text-gray-400 italic">
+              No trend data available
+            </div>
+          ) : (
+            <>
+              <EtzTrendChart points={trend.points} />
+              <p className="text-xs text-gray-400 mt-2 text-center">
+                Sessions (bars, left axis) · Trials &amp; Orders (lines, right axis) · rolling 12 months
+              </p>
+            </>
+          )}
+        </div>
+      </div>
 
       <p className="text-xs text-gray-400 pb-4 pt-1">
         Traffic: GA4 · Trials: HubSpot ({data?._meta?.pipeline ?? 'ETZ'} pipeline) ·
@@ -1779,6 +1934,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [loadingEtzTrial,      setLoadingEtzTrial     ] = useState(false);
   const [etzTraffic,           setEtzTraffic          ] = useState<EtzFunnelTrafficResponse | null>(null);
   const [loadingEtzTraffic,    setLoadingEtzTraffic   ] = useState(false);
+  const [etzTrend,             setEtzTrend            ] = useState<EtzTrendResponse | null>(null);
+  const [loadingEtzTrend,      setLoadingEtzTrend     ] = useState(false);
   const [financeView,          setFinanceView         ] = useState<'overview' | 'etz-trials'>('overview');
   const [siteConversion,   setSiteConversion  ] = useState<WebsiteConversionResponse | null>(null);
   const [channelRevenue,   setChannelRevenue  ] = useState<ChannelRevenueResponse | null>(null);
@@ -1895,6 +2052,16 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
 
     return () => ac.abort();
   }, [selectedMonth]);
+
+  // Fetch ETZ 12-month trend once on mount — independent of selectedMonth
+  useEffect(() => {
+    setLoadingEtzTrend(true);
+    fetch('/api/etz-trend?months=12')
+      .then(r => r.json())
+      .then((data: EtzTrendResponse) => setEtzTrend(data))
+      .catch(() => setEtzTrend(null))
+      .finally(() => setLoadingEtzTrend(false));
+  }, []);
 
   useEffect(() => {
     setLoadingHistory(true);
@@ -2098,6 +2265,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             stripeConnected={revenue?.etz?.connected === true}
             traffic={etzTraffic}
             loadingTraffic={loadingEtzTraffic}
+            trend={etzTrend}
+            loadingTrend={loadingEtzTrend}
           />
         )}
 

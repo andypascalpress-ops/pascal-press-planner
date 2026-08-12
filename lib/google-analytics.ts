@@ -829,6 +829,43 @@ export async function fetchEtzFunnelTraffic(
 }
 
 // ---------------------------------------------------------------------------
+// ETZ monthly session totals — single GA4 call for a date range
+// Uses yearMonth dimension so one request covers up to 12 months.
+// ---------------------------------------------------------------------------
+
+export interface EtzMonthlySessionPoint {
+  month:    string; // "YYYY-MM"
+  sessions: number;
+}
+
+export async function fetchEtzMonthlySessions(
+  startDate: string,
+  endDate:   string,
+): Promise<EtzMonthlySessionPoint[]> {
+  if (!isETZConnected()) return [];
+  try {
+    const accessToken = await getAccessToken();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data: any  = await runReportOnProperty(accessToken, GA4_ETZ_BASE, {
+      dateRanges: [{ startDate, endDate }],
+      dimensions: [{ name: 'yearMonth' }],
+      metrics:    [{ name: 'sessions' }],
+      orderBys:   [{ dimension: { dimensionName: 'yearMonth' }, desc: false }],
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (data.rows ?? []).map((row: any) => {
+      const raw = (row.dimensionValues?.[0]?.value ?? '') as string;
+      // GA4 returns "202607" — convert to "2026-07"
+      const month = raw.length === 6 ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}` : raw;
+      return { month, sessions: parseInt(row.metricValues?.[0]?.value ?? '0', 10) };
+    });
+  } catch (err) {
+    console.error('[google-analytics fetchEtzMonthlySessions]', err);
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Website conversion rate (sessions → purchases) — site-wide GA4, not Ads
 // ---------------------------------------------------------------------------
 
