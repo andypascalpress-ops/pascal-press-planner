@@ -1796,7 +1796,7 @@ function EtzTrialsFullView({
                   <p className="text-xs text-gray-400 mt-2">
                     High dead/rage click rates indicate UI issues that cause drop-off ·{' '}
                     <a
-                      href={`https://clarity.microsoft.com/projects/view/${process.env.NEXT_PUBLIC_CLARITY_PROJECT_ID ?? 'qmef32brd0'}/dashboard`}
+                      href="https://clarity.microsoft.com/projects/view/qmef32brd0/dashboard"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-indigo-500 hover:underline"
