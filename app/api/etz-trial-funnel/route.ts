@@ -3,19 +3,16 @@
  *
  * HubSpot trial counts for the ETZ funnel:
  *
- *  trialsStarted    – new deals in the ETZ pipeline this month across BOTH
- *                     Active Trial AND Active Paid stages (OR query).
- *                     A deal starts in Active Trial; if it converts it moves
- *                     to Active Paid. Counting both stages by createdate gives
- *                     us every trial that began this month regardless of where
- *                     it ended up.
+ *  trialsStarted    – deals that STARTED as a free trial this month:
+ *                     = (Active Trial created this month, still on trial)
+ *                     + (Active Paid created this month that passed through Active Trial)
+ *
+ *                     The second bucket uses hs_date_entered_[trialStageId] returned
+ *                     as a property (not a filter — filtering on it returns 400).
+ *                     Deals created directly in Active Paid (direct purchases, no trial)
+ *                     will have that property null and are correctly excluded.
  *
  *  currentlyOnTrial – deals sitting in Active Trial right now (all-time snapshot).
- *
- * NOTE: hs_date_entered_[stageId] is NOT filterable via the CRM search API —
- * that syntax only works in HubSpot's report builder. We use createdate instead.
- *
- * Conversion rate is computed in the UI: Stripe totalOrders ÷ trialsStarted.
  *
  * Required env var: HUBSPOT_CRM_TOKEN (ExcelTestZoneSync legacy app)
  */
@@ -41,11 +38,8 @@ async function hsGet(path: string) {
   return res.json();
 }
 
-/**
- * Count deals matching ANY of the supplied filter groups (OR between groups,
- * AND within each group). Returns total from HubSpot's paginated response.
- */
-async function hsSearchCountOr(filterGroups: { filters: object[] }[]): Promise<number> {
+/** Count-only search (limit:1 just to get .total). */
+async function hsCount(filterGroups: { filters: object[] }[]): Promise<number> {
   const res = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
     method: 'POST',
     headers: hsHeaders(),
@@ -58,6 +52,45 @@ async function hsSearchCountOr(filterGroups: { filters: object[] }[]): Promise<n
   }
   const json = await res.json();
   return (json.total as number) ?? 0;
+}
+
+/**
+ * Fetch ALL deals matching filterGroups, paginating until done.
+ * Returns the raw properties object for each deal.
+ */
+async function hsFetchAll(
+  filterGroups: { filters: object[] }[],
+  properties: string[],
+  delay: (ms: number) => Promise<void>,
+): Promise<Record<string, string | null>[]> {
+  const results: Record<string, string | null>[] = [];
+  let after: string | undefined;
+
+  do {
+    const body: Record<string, unknown> = { filterGroups, properties, limit: 100 };
+    if (after) body.after = after;
+
+    const res = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
+      method: 'POST',
+      headers: hsHeaders(),
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`HubSpot deals search → ${res.status}: ${text.slice(0, 300)}`);
+    }
+    const json = await res.json();
+
+    for (const r of (json.results ?? [])) {
+      results.push(r.properties ?? {});
+    }
+
+    after = json.paging?.next?.after as string | undefined;
+    if (after) await delay(300); // respect rate limits between pages
+  } while (after);
+
+  return results;
 }
 
 function monthToEpochRange(month: string) {
@@ -79,7 +112,7 @@ export async function GET(request: Request) {
     ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
   try {
-    const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+    const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
     // ── 1. Discover ETZ pipeline + stage IDs ──────────────────────────────
     const pipelinesData = await hsGet('/crm/v3/pipelines/deals');
@@ -117,34 +150,51 @@ export async function GET(request: Request) {
       { propertyName: 'createdate', operator: 'LT',  value: String(endMs)   },
     ];
 
-    // ── 3. Trials started this month ──────────────────────────────────────
-    // Deals created this month that are in (or started in) Active Trial.
-    // Matches HubSpot's ETZ_Trial Conversion report (125 for August 2026).
-    //
-    // Small known undercount: the ~8 trials that already converted to Active Paid
-    // this month won't appear here — acceptable vs. overcounting by including
-    // direct purchases (which are created directly in Active Paid and are not trials).
-    const trialsStarted = await hsSearchCountOr([
+    // ── 3a. Deals still in Active Trial, created this month ───────────────
+    const onTrialCount = await hsCount([
       { filters: [...createdThisMonth, { propertyName: 'dealstage', operator: 'EQ', value: trialStage.id }] },
     ]);
     await delay(300);
 
+    // ── 3b. Deals now in Active Paid, created this month ─────────────────
+    // Fetch all of them and check which ones have hs_date_entered_[trialStageId]
+    // set (meaning they actually went through the trial stage first).
+    // Deals created directly in Active Paid (direct purchases) will have null there.
+    let convertedTrialsCount = 0;
+    if (paidStage) {
+      const trialEnteredProp = `hs_date_entered_${trialStage.id}`;
+      const paidDeals = await hsFetchAll(
+        [{ filters: [...createdThisMonth, { propertyName: 'dealstage', operator: 'EQ', value: paidStage.id }] }],
+        [trialEnteredProp, 'dealstage', 'createdate'],
+        delay,
+      );
+      convertedTrialsCount = paidDeals.filter(p => {
+        const v = p[trialEnteredProp];
+        return v != null && v !== '';
+      }).length;
+      await delay(300);
+    }
+
+    const trialsStarted = onTrialCount + convertedTrialsCount;
+
     // ── 4. Currently on trial (all-time snapshot) ─────────────────────────
-    const currentlyOnTrial = await hsSearchCountOr([
+    const currentlyOnTrial = await hsCount([
       { filters: [{ propertyName: 'dealstage', operator: 'EQ', value: trialStage.id }] },
     ]);
 
     return NextResponse.json({
       month,
       _meta: {
-        pipeline:     etzPipeline.label,
-        trialStage:   trialStage.label,
-        trialStageId: trialStage.id,
-        paidStage:    paidStage?.label ?? null,
-        paidStageId:  paidStage?.id    ?? null,
+        pipeline:            etzPipeline.label,
+        trialStage:          trialStage.label,
+        trialStageId:        trialStage.id,
+        paidStage:           paidStage?.label ?? null,
+        paidStageId:         paidStage?.id    ?? null,
+        onTrialCount,
+        convertedTrialsCount,
       },
-      trialsStarted,    // new deals in ETZ pipeline this month (trial + paid stages)
-      currentlyOnTrial, // in Active Trial right now
+      trialsStarted,
+      currentlyOnTrial,
     });
 
   } catch (e) {
