@@ -1075,13 +1075,63 @@ interface MetaCampaignsResponse {
 
 interface EtzTrialFunnelResponse {
   month:            string;
-  trialsStarted:    number;   // deals that entered Active Trial this month (HubSpot, event-based)
-  currentlyOnTrial: number;   // deals in Active Trial right now (all-time snapshot)
+  trialsStarted:    number;
+  currentlyOnTrial: number;
   error?:           string;
   _meta?:           { pipeline: string; trialStage: string; trialStageId: string };
 }
 
+interface EtzFunnelChannelRow {
+  channel:  string;
+  sessions: number;
+  newUsers: number;
+  pct:      number;
+}
+interface EtzFunnelTrafficResponse {
+  month:         string;
+  totalSessions: number;
+  totalNewUsers: number;
+  byChannel:     EtzFunnelChannelRow[];
+  connected:     boolean;
+}
+
 // ─── ETZ Trials — full dedicated view ────────────────────────────────────────
+
+// Channel colour palette — consistent across bars
+const CHANNEL_COLORS: Record<string, string> = {
+  'Paid Search':     '#3b82f6', // blue
+  'Organic Search':  '#10b981', // emerald
+  'Direct':          '#8b5cf6', // violet
+  'Email':           '#f59e0b', // amber
+  'Organic Social':  '#ec4899', // pink
+  'Referral':        '#06b6d4', // cyan
+  'Other':           '#9ca3af', // gray
+};
+function channelColor(ch: string): string {
+  return CHANNEL_COLORS[ch] ?? '#9ca3af';
+}
+
+function FunnelDropArrow({ from, to, label }: { from: number; to: number; label?: string }) {
+  const pct = from > 0 ? Math.round((to / from) * 100) : null;
+  const dropPct = pct != null ? 100 - pct : null;
+  return (
+    <div className="flex flex-col items-center py-1 select-none">
+      <div className="w-0.5 h-4 bg-gray-200" />
+      <div className="flex items-center gap-2">
+        <div className="w-0.5 h-4 bg-gray-200" />
+        {dropPct != null && (
+          <span className="text-[11px] text-red-400 font-medium tabular-nums">
+            −{dropPct}% drop
+          </span>
+        )}
+      </div>
+      <svg width="12" height="8" viewBox="0 0 12 8" className="text-gray-300">
+        <path d="M6 8L0 0h12z" fill="currentColor" />
+      </svg>
+      {label && <span className="text-[10px] text-gray-400 mt-0.5">{label}</span>}
+    </div>
+  );
+}
 
 function EtzTrialsFullView({
   data,
@@ -1090,6 +1140,8 @@ function EtzTrialsFullView({
   stripeOrders,
   stripeRevenue,
   stripeConnected,
+  traffic,
+  loadingTraffic,
 }: {
   data:            EtzTrialFunnelResponse | null;
   loading:         boolean;
@@ -1097,6 +1149,8 @@ function EtzTrialsFullView({
   stripeOrders:    number;
   stripeRevenue:   number;
   stripeConnected: boolean;
+  traffic:         EtzFunnelTrafficResponse | null;
+  loadingTraffic:  boolean;
 }) {
   if (loading) {
     return (
@@ -1119,112 +1173,190 @@ function EtzTrialsFullView({
   }
 
   const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
-  const trials = data.trialsStarted;
-  const orders = stripeOrders;
-  const convRate = trials > 0 && stripeConnected ? orders / trials : null;
-  const convPct  = convRate != null ? convRate * 100 : null;
-  const rateColor = convPct == null ? 'text-gray-400'
-    : convPct >= 15 ? 'text-emerald-600'
-    : convPct >= 8  ? 'text-amber-500'
-    : 'text-red-500';
+  const sessions = traffic?.totalSessions ?? 0;
+  const trials   = data?.trialsStarted    ?? 0;
+  const orders   = stripeOrders;
+
+  const trialRate   = sessions > 0 ? (trials / sessions) * 100 : null;
+  const convRate    = trials   > 0 && stripeConnected ? (orders / trials) * 100 : null;
+  const overallRate = sessions > 0 && stripeConnected ? (orders / sessions) * 100 : null;
+
+  const funnelReady = !loading && !loadingTraffic && data != null;
 
   return (
-    <div className="px-4 md:px-8 py-6 space-y-5 max-w-4xl">
+    <div className="px-4 md:px-8 py-6 max-w-3xl space-y-2">
 
       {/* Header */}
-      <div>
-        <h2 className="text-lg font-bold text-gray-900">Excel Test Zone · Free Trial Funnel</h2>
+      <div className="mb-5">
+        <h2 className="text-lg font-bold text-gray-900">Excel Test Zone · Conversion Funnel</h2>
         <p className="text-sm text-gray-500 mt-0.5">
-          {monthLabel(month)} · HubSpot trials → Stripe orders
+          {monthLabel(month)} · GA4 → HubSpot → Stripe
         </p>
       </div>
 
-      {/* This Month ─────────────────────────────────────────────────────────── */}
+      {/* ── Stage 1: Traffic ───────────────────────────────────────────────── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-gray-700">This Month</h3>
-          <span className="text-xs text-gray-400">{monthLabel(month)}</span>
-        </div>
-
-        <div className="px-6 py-5">
-          {/* Three core metrics */}
-          <div className="grid grid-cols-3 gap-4 mb-6">
-            {/* Trials — HubSpot */}
-            <div className="text-center">
-              <div className="text-4xl font-extrabold text-gray-900 tabular-nums mb-1">
-                {trials.toLocaleString()}
-              </div>
-              <div className="text-xs font-semibold text-gray-600">Free trials</div>
-              <div className="text-[11px] text-gray-400 mt-0.5">HubSpot · Active Trial entries</div>
-            </div>
-
-            {/* Orders — Stripe */}
-            <div className="text-center">
-              <div className={`text-4xl font-extrabold tabular-nums mb-1 ${stripeConnected ? 'text-emerald-600' : 'text-gray-300'}`}>
-                {stripeConnected ? orders.toLocaleString() : '—'}
-              </div>
-              <div className="text-xs font-semibold text-gray-600">Paid orders</div>
-              <div className="text-[11px] text-gray-400 mt-0.5">Stripe · {stripeConnected ? AUD.format(stripeRevenue) + ' revenue' : 'not connected'}</div>
-            </div>
-
-            {/* Conversion rate */}
-            <div className="text-center">
-              <div className={`text-4xl font-extrabold tabular-nums mb-1 ${rateColor}`}>
-                {convPct != null ? `${convPct.toFixed(1)}%` : '—'}
-              </div>
-              <div className="text-xs font-semibold text-gray-600">Conversion rate</div>
-              <div className="text-[11px] text-gray-400 mt-0.5">Stripe orders ÷ HubSpot trials</div>
-            </div>
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-blue-400 inline-block" />
+            <span className="text-sm font-semibold text-gray-700">Stage 1 · Traffic</span>
           </div>
-
-          {/* Funnel progress bar */}
-          {trials > 0 && stripeConnected && (
-            <div className="space-y-1.5">
-              <div className="h-5 bg-gray-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-emerald-500 rounded-full transition-all duration-700"
-                  style={{ width: `${Math.min(convPct ?? 0, 100)}%` }}
-                />
+          <span className="text-xs text-gray-400">GA4</span>
+        </div>
+        <div className="px-5 py-4">
+          {loadingTraffic ? (
+            <p className="text-sm text-gray-400">Loading…</p>
+          ) : !traffic?.connected ? (
+            <p className="text-sm text-gray-400 italic">GA4 not connected</p>
+          ) : (
+            <>
+              <div className="flex items-baseline gap-3 mb-4">
+                <span className="text-4xl font-extrabold text-gray-900 tabular-nums">
+                  {sessions.toLocaleString()}
+                </span>
+                <span className="text-sm text-gray-500">sessions</span>
+                <span className="text-sm text-gray-400">·</span>
+                <span className="text-sm text-gray-500">
+                  {traffic.totalNewUsers.toLocaleString()} new users
+                </span>
               </div>
-              <p className="text-xs text-gray-400 text-center">
-                {orders.toLocaleString()} orders from {trials.toLocaleString()} trials
-                {convPct != null && ` · ${convPct.toFixed(1)}% converted`}
-              </p>
-            </div>
-          )}
-          {trials === 0 && (
-            <p className="text-sm text-gray-400 italic text-center py-2">No trials started yet this month</p>
+              {/* Channel breakdown bar */}
+              <div className="flex h-3 rounded-full overflow-hidden gap-px mb-3">
+                {traffic.byChannel.map(ch => (
+                  <div
+                    key={ch.channel}
+                    style={{ width: `${ch.pct}%`, background: channelColor(ch.channel) }}
+                    title={`${ch.channel}: ${ch.sessions.toLocaleString()} sessions (${ch.pct}%)`}
+                  />
+                ))}
+              </div>
+              {/* Channel legend */}
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                {traffic.byChannel.map(ch => (
+                  <div key={ch.channel} className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-sm inline-block flex-shrink-0"
+                      style={{ background: channelColor(ch.channel) }} />
+                    <span className="text-xs text-gray-600 font-medium">{ch.channel}</span>
+                    <span className="text-xs text-gray-400 tabular-nums">
+                      {ch.sessions.toLocaleString()} ({ch.pct}%)
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
       </div>
 
-      {/* Right Now — HubSpot snapshot ───────────────────────────────────────── */}
+      {/* Drop arrow 1 */}
+      {funnelReady && traffic?.connected && (
+        <FunnelDropArrow from={sessions} to={trials} label="session → trial" />
+      )}
+
+      {/* ── Stage 2: Free Trials ───────────────────────────────────────────── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100">
-          <h3 className="text-sm font-semibold text-gray-700">Right Now</h3>
-          <p className="text-xs text-gray-400 mt-0.5">Active trials in HubSpot at this moment</p>
-        </div>
-        <div className="px-6 py-5">
-          <div className="flex items-center gap-4">
-            <div className="bg-blue-50 rounded-xl px-8 py-5 text-center">
-              <div className="text-3xl font-extrabold text-blue-700 tabular-nums mb-1">
-                {data.currentlyOnTrial.toLocaleString()}
-              </div>
-              <div className="text-xs font-semibold text-blue-600">Currently trialling</div>
-              <div className="text-[11px] text-blue-400 mt-0.5">Active Trial stage · all time</div>
-            </div>
-            <p className="text-xs text-gray-400 flex-1">
-              These users have an open trial deal in HubSpot right now — they haven&apos;t converted
-              or expired yet. This is your live pipeline of potential conversions.
-            </p>
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-violet-400 inline-block" />
+            <span className="text-sm font-semibold text-gray-700">Stage 2 · Free Trials</span>
           </div>
+          <span className="text-xs text-gray-400">HubSpot</span>
+        </div>
+        <div className="px-5 py-4">
+          {loading ? (
+            <p className="text-sm text-gray-400">Loading…</p>
+          ) : (
+            <div className="flex items-center gap-8">
+              <div>
+                <div className="text-4xl font-extrabold text-gray-900 tabular-nums">
+                  {trials.toLocaleString()}
+                </div>
+                <div className="text-sm text-gray-500 mt-0.5">trials started</div>
+              </div>
+              {trialRate != null && (
+                <div>
+                  <div className="text-2xl font-bold text-violet-600 tabular-nums">
+                    {trialRate.toFixed(2)}%
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">of sessions → trial</div>
+                </div>
+              )}
+              {data && (
+                <div className="ml-auto text-right">
+                  <div className="text-xl font-bold text-blue-600 tabular-nums">
+                    {data.currentlyOnTrial.toLocaleString()}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">still trialling now</div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Source note */}
-      <p className="text-xs text-gray-400 pb-4">
-        Trials: HubSpot · {data._meta?.pipeline ?? 'ETZ'} pipeline · stage-entry timestamps ·
-        Orders &amp; revenue: Stripe · refreshes on each page load
+      {/* Drop arrow 2 */}
+      {funnelReady && (
+        <FunnelDropArrow from={trials} to={orders} label="trial → paid" />
+      )}
+
+      {/* ── Stage 3: Paid Orders ───────────────────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+            <span className="text-sm font-semibold text-gray-700">Stage 3 · Paid Orders</span>
+          </div>
+          <span className="text-xs text-gray-400">Stripe</span>
+        </div>
+        <div className="px-5 py-4">
+          {!stripeConnected ? (
+            <p className="text-sm text-gray-400 italic">Stripe not connected</p>
+          ) : (
+            <div className="flex items-center gap-8">
+              <div>
+                <div className="text-4xl font-extrabold text-emerald-600 tabular-nums">
+                  {orders.toLocaleString()}
+                </div>
+                <div className="text-sm text-gray-500 mt-0.5">orders · {AUD.format(stripeRevenue)}</div>
+              </div>
+              {convRate != null && (
+                <div>
+                  <div className="text-2xl font-bold text-emerald-600 tabular-nums">
+                    {convRate.toFixed(1)}%
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">trial → paid rate</div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Overall summary strip ─────────────────────────────────────────── */}
+      {funnelReady && stripeConnected && traffic?.connected && overallRate != null && (
+        <div className="bg-gray-900 rounded-2xl px-6 py-4 flex items-center justify-between mt-2">
+          <div>
+            <div className="text-xs text-gray-400 font-medium uppercase tracking-wide mb-1">
+              Overall · session → paid
+            </div>
+            <div className="text-2xl font-extrabold text-white tabular-nums">
+              {overallRate.toFixed(2)}%
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs text-gray-400 mb-1">
+              {sessions.toLocaleString()} sessions
+            </div>
+            <div className="text-xs text-gray-400">
+              → {trials.toLocaleString()} trials → {orders.toLocaleString()} paid
+            </div>
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs text-gray-400 pb-4 pt-1">
+        Traffic: GA4 · Trials: HubSpot ({data?._meta?.pipeline ?? 'ETZ'} pipeline) ·
+        Orders: Stripe · refreshes on each page load
       </p>
 
     </div>
@@ -1655,6 +1787,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [loadingMetaCampaigns, setLoadingMetaCampaigns] = useState(false);
   const [etzTrialFunnel,       setEtzTrialFunnel      ] = useState<EtzTrialFunnelResponse | null>(null);
   const [loadingEtzTrial,      setLoadingEtzTrial     ] = useState(false);
+  const [etzTraffic,           setEtzTraffic          ] = useState<EtzFunnelTrafficResponse | null>(null);
+  const [loadingEtzTraffic,    setLoadingEtzTraffic   ] = useState(false);
   const [financeView,          setFinanceView         ] = useState<'overview' | 'etz-trials'>('overview');
   const [siteConversion,   setSiteConversion  ] = useState<WebsiteConversionResponse | null>(null);
   const [channelRevenue,   setChannelRevenue  ] = useState<ChannelRevenueResponse | null>(null);
@@ -1678,6 +1812,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
     setCampaigns(null);
     setMetaCampaigns(null);
     setEtzTrialFunnel(null);
+    setEtzTraffic(null);
     setSiteConversion(null);
     setChannelRevenue(null);
 
@@ -1742,6 +1877,15 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
         if (e?.name !== 'AbortError') setEtzTrialFunnel(null);
       })
       .finally(() => { if (!signal.aborted) setLoadingEtzTrial(false); });
+
+    setLoadingEtzTraffic(true);
+    fetch('/api/etz-funnel-traffic?month=' + month, { signal })
+      .then(r => r.json())
+      .then((data: EtzFunnelTrafficResponse) => {
+        if (!signal.aborted) setEtzTraffic(data);
+      })
+      .catch((e) => { if (e?.name !== 'AbortError') setEtzTraffic(null); })
+      .finally(() => { if (!signal.aborted) setLoadingEtzTraffic(false); });
 
     fetch('/api/website-conversion?month=' + month, { signal })
       .then(r => r.json())
@@ -1962,6 +2106,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             stripeOrders={revenue?.etz?.totalOrders ?? 0}
             stripeRevenue={revenue?.etz?.totalRevenue ?? 0}
             stripeConnected={revenue?.etz?.connected === true}
+            traffic={etzTraffic}
+            loadingTraffic={loadingEtzTraffic}
           />
         )}
 

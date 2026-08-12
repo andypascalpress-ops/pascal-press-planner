@@ -756,6 +756,79 @@ export async function fetchChannelRevenue(
 }
 
 // ---------------------------------------------------------------------------
+// ETZ funnel traffic — sessions + new users by channel
+
+export interface EtzFunnelChannelRow {
+  channel:  string;
+  sessions: number;
+  newUsers: number;
+  pct:      number; // % of total sessions
+}
+
+export interface EtzFunnelTrafficData {
+  totalSessions: number;
+  totalNewUsers: number;
+  byChannel:     EtzFunnelChannelRow[];
+  connected:     boolean;
+}
+
+export async function fetchEtzFunnelTraffic(
+  startDate: string,
+  endDate:   string,
+): Promise<EtzFunnelTrafficData> {
+  const empty: EtzFunnelTrafficData = { totalSessions: 0, totalNewUsers: 0, byChannel: [], connected: false };
+  if (!isETZConnected()) return empty;
+
+  try {
+    const accessToken = await getAccessToken();
+
+    const data = await runReportOnProperty(accessToken, GA4_ETZ_BASE, {
+      dateRanges: [{ startDate, endDate }],
+      dimensions: [{ name: 'sessionDefaultChannelGroup' }],
+      metrics:    [{ name: 'sessions' }, { name: 'newUsers' }],
+      orderBys:   [{ metric: { metricName: 'sessions' }, desc: true }],
+      limit: 20,
+    });
+
+    // Normalise channel labels (same mapping used by fetchChannelRevenue)
+    const CHANNEL_MAP: Record<string, string> = {
+      'Unassigned': 'Other', '(not set)': 'Other', '(Other)': 'Other',
+      'Cross-network': 'Paid Search', 'Paid Shopping': 'Paid Search',
+    };
+    const acc: Record<string, { sessions: number; newUsers: number }> = {};
+    for (const row of (data.rows ?? [])) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const raw      = (row as any).dimensionValues?.[0]?.value ?? '(Other)';
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sessions = parseInt((row as any).metricValues?.[0]?.value ?? '0', 10);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const newUsers = parseInt((row as any).metricValues?.[1]?.value ?? '0', 10);
+      const channel  = CHANNEL_MAP[raw] ?? raw;
+      if (!acc[channel]) acc[channel] = { sessions: 0, newUsers: 0 };
+      acc[channel]!.sessions += sessions;
+      acc[channel]!.newUsers += newUsers;
+    }
+
+    const totalSessions = Object.values(acc).reduce((s, r) => s + r.sessions, 0);
+    const totalNewUsers = Object.values(acc).reduce((s, r) => s + r.newUsers, 0);
+
+    const byChannel: EtzFunnelChannelRow[] = Object.entries(acc)
+      .map(([channel, v]) => ({
+        channel,
+        sessions: v.sessions,
+        newUsers: v.newUsers,
+        pct: totalSessions > 0 ? Math.round((v.sessions / totalSessions) * 100) : 0,
+      }))
+      .sort((a, b) => b.sessions - a.sessions);
+
+    return { totalSessions, totalNewUsers, byChannel, connected: true };
+  } catch (err) {
+    console.error('[google-analytics fetchEtzFunnelTraffic]', err);
+    return empty;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Website conversion rate (sessions → purchases) — site-wide GA4, not Ads
 // ---------------------------------------------------------------------------
 
