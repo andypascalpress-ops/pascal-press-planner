@@ -34,22 +34,32 @@ async function hsGet(path: string) {
 async function hsFetchAllDeals(
   filterGroups: { filters: object[] }[],
   properties: string[],
-  delay: (ms: number) => Promise<void>,
+  wait: (ms: number) => Promise<void>,
 ): Promise<Record<string, string | null>[]> {
   const results: Record<string, string | null>[] = [];
   let after: string | undefined;
   do {
     const body: Record<string, unknown> = { filterGroups, properties, limit: 100 };
     if (after) body.after = after;
-    const res = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
+
+    // 429 retry: wait 1.1 s and retry once before giving up
+    let res = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
       method: 'POST', headers: hsHeaders(),
       body: JSON.stringify(body), cache: 'no-store',
     });
+    if (res.status === 429) {
+      await wait(1100);
+      res = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
+        method: 'POST', headers: hsHeaders(),
+        body: JSON.stringify(body), cache: 'no-store',
+      });
+    }
     if (!res.ok) throw new Error(`HubSpot search → ${res.status}`);
+
     const json = await res.json();
     for (const r of (json.results ?? [])) results.push(r.properties ?? {});
     after = json.paging?.next?.after as string | undefined;
-    if (after) await delay(200);
+    if (after) await wait(250); // slightly longer than minimum to stay clear of the limit
   } while (after);
   return results;
 }

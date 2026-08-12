@@ -15,9 +15,13 @@
  */
 import { NextResponse } from 'next/server';
 
-export const dynamic = 'force-dynamic';
+// Cache per month-URL for 30 minutes.
+// Prevents live HubSpot search calls on every page load.
+// On cache miss (first load or post-expiry) the route runs once, then serves from cache.
+export const revalidate = 1800;
 
-const HS_BASE = 'https://api.hubapi.com';
+const HS_BASE  = 'https://api.hubapi.com';
+const delay    = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
 function hsHeaders() {
   return {
@@ -35,19 +39,28 @@ async function hsGet(path: string) {
   return res.json();
 }
 
+/** HubSpot CRM search count with automatic 429 retry (waits 1.1 s then retries once). */
 async function hsCount(filterGroups: { filters: object[] }[]): Promise<number> {
-  const res = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
-    method: 'POST',
-    headers: hsHeaders(),
-    body: JSON.stringify({ filterGroups, limit: 1, properties: ['dealstage'] }),
-    cache: 'no-store',
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`HubSpot search → ${res.status}: ${body.slice(0, 300)}`);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
+      method:  'POST',
+      headers: hsHeaders(),
+      body:    JSON.stringify({ filterGroups, limit: 1, properties: ['dealstage'] }),
+      cache:   'no-store',
+    });
+    if (res.status === 429) {
+      if (attempt === 0) { await delay(1100); continue; }
+      const body = await res.text().catch(() => '');
+      throw new Error(`HubSpot search → 429 (rate limit): ${body.slice(0, 200)}`);
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`HubSpot search → ${res.status}: ${body.slice(0, 300)}`);
+    }
+    const json = await res.json();
+    return (json.total as number) ?? 0;
   }
-  const json = await res.json();
-  return (json.total as number) ?? 0;
+  return 0;
 }
 
 function monthToEpochRange(month: string) {
