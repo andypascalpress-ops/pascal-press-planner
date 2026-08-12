@@ -1123,14 +1123,13 @@ interface EtzSourceResponse {
 }
 
 interface ClarityMetricRow {
-  dimensionValue:      string;
-  sessions:            number;
-  bounceRate:          number;
-  activeTime:          number;
-  deadClickRate:       number;
-  rageClickRate:       number;
-  excessiveScrollRate: number;
-  scrollDepth:         number;
+  dimensionValue:  string;
+  sessions:        number;
+  activeTime:      number;   // seconds
+  pagesPerSession: number;
+  deadClickRate:   number;   // 0-100 (count / sessions * 100)
+  rageClickRate:   number;   // 0-100 (count / sessions * 100)
+  scrollDepth:     number;   // 0-100
 }
 interface EtzClarityResponse {
   connected:  boolean;
@@ -1681,7 +1680,7 @@ function EtzTrialsFullView({
             <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />
             <span className="text-sm font-semibold text-gray-700">User Behaviour · Microsoft Clarity</span>
           </div>
-          <span className="text-xs text-gray-400">Last 30 days</span>
+          <span className="text-xs text-gray-400">Last 3 days</span>
         </div>
         <div className="px-5 py-4">
           {loadingClarity ? (
@@ -1690,125 +1689,166 @@ function EtzTrialsFullView({
             <div className="space-y-1">
               <p className="text-sm text-gray-500 font-medium">Clarity not yet connected</p>
               <p className="text-xs text-gray-400 max-w-sm">
-                {clarity?.error ?? 'Add CLARITY_API_TOKEN to environment variables. Generate at clarity.microsoft.com → Settings → API.'}
+                {clarity?.error ?? 'Add CLARITY_API_TOKEN to environment variables. Generate at clarity.microsoft.com → Settings → Data Export.'}
               </p>
             </div>
           ) : (
             <div className="space-y-4">
               {/* Overall metrics row */}
-              {clarity.overall && (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  {[
-                    {
-                      label: 'Bounce rate',
-                      value: `${clarity.overall.bounceRate.toFixed(1)}%`,
-                      note:  clarity.overall.bounceRate > 60 ? '⚠ high' : clarity.overall.bounceRate < 35 ? '✓ good' : '',
-                      color: clarity.overall.bounceRate > 60 ? 'text-red-600' : clarity.overall.bounceRate < 35 ? 'text-emerald-600' : 'text-gray-900',
-                    },
-                    {
-                      label: 'Avg active time',
-                      value: `${Math.round(clarity.overall.activeTime)}s`,
-                      note:  clarity.overall.activeTime > 120 ? '✓ engaged' : clarity.overall.activeTime < 30 ? '⚠ low' : '',
-                      color: clarity.overall.activeTime > 120 ? 'text-emerald-600' : clarity.overall.activeTime < 30 ? 'text-red-600' : 'text-gray-900',
-                    },
-                    {
-                      label: 'Dead click rate',
-                      value: `${clarity.overall.deadClickRate.toFixed(1)}%`,
-                      note:  clarity.overall.deadClickRate > 8 ? '⚠ broken UI?' : '',
-                      color: clarity.overall.deadClickRate > 8 ? 'text-red-600' : 'text-gray-900',
-                    },
-                    {
-                      label: 'Rage click rate',
-                      value: `${clarity.overall.rageClickRate.toFixed(1)}%`,
-                      note:  clarity.overall.rageClickRate > 3 ? '⚠ frustration' : '',
-                      color: clarity.overall.rageClickRate > 3 ? 'text-red-600' : 'text-gray-900',
-                    },
-                  ].map(m => (
-                    <div key={m.label} className="bg-gray-50 rounded-xl px-4 py-3">
-                      <div className={`text-xl font-bold tabular-nums ${m.color}`}>{m.value}</div>
-                      <div className="text-xs text-gray-500 mt-0.5">{m.label}</div>
-                      {m.note && <div className="text-xs text-gray-400 mt-0.5">{m.note}</div>}
+              {clarity.overall && (() => {
+                const hasPPS   = clarity.overall.pagesPerSession > 0;
+                const hasScroll = clarity.overall.scrollDepth > 0;
+                const hasDead  = clarity.overall.deadClickRate > 0;
+                const hasRage  = clarity.overall.rageClickRate > 0;
+                const cards = [
+                  {
+                    label: 'Avg active time',
+                    value: `${Math.round(clarity.overall.activeTime)}s`,
+                    note:  clarity.overall.activeTime > 120 ? '✓ engaged' : clarity.overall.activeTime < 30 ? '⚠ low' : '',
+                    color: clarity.overall.activeTime > 120 ? 'text-emerald-600' : clarity.overall.activeTime < 30 ? 'text-red-600' : 'text-gray-900',
+                    show: true,
+                  },
+                  {
+                    label: 'Pages / session',
+                    value: hasPPS ? clarity.overall.pagesPerSession.toFixed(1) : '—',
+                    note:  hasPPS && clarity.overall.pagesPerSession > 2 ? '✓ exploring' : hasPPS && clarity.overall.pagesPerSession < 1.2 ? '⚠ low depth' : '',
+                    color: hasPPS && clarity.overall.pagesPerSession > 2 ? 'text-emerald-600' : 'text-gray-900',
+                    show: true,
+                  },
+                  {
+                    label: 'Dead click rate',
+                    value: hasDead ? `${clarity.overall.deadClickRate.toFixed(1)}%` : '—',
+                    note:  hasDead && clarity.overall.deadClickRate > 8 ? '⚠ broken UI?' : '',
+                    color: hasDead && clarity.overall.deadClickRate > 8 ? 'text-red-600' : 'text-gray-900',
+                    show: true,
+                  },
+                  {
+                    label: 'Rage click rate',
+                    value: hasRage ? `${clarity.overall.rageClickRate.toFixed(1)}%` : '—',
+                    note:  hasRage && clarity.overall.rageClickRate > 3 ? '⚠ frustration' : '',
+                    color: hasRage && clarity.overall.rageClickRate > 3 ? 'text-red-600' : 'text-gray-900',
+                    show: true,
+                  },
+                ].filter(c => c.show);
+                return (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {cards.map(m => (
+                        <div key={m.label} className="bg-gray-50 rounded-xl px-4 py-3">
+                          <div className={`text-xl font-bold tabular-nums ${m.color}`}>{m.value}</div>
+                          <div className="text-xs text-gray-500 mt-0.5">{m.label}</div>
+                          {m.note && <div className="text-xs text-gray-400 mt-0.5">{m.note}</div>}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
+                    {hasScroll && (
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs text-gray-500">Avg scroll depth</span>
+                          <span className="text-xs font-semibold text-gray-700">{clarity.overall.scrollDepth.toFixed(0)}%</span>
+                        </div>
+                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div className="h-full bg-indigo-400 rounded-full" style={{ width: `${Math.min(clarity.overall.scrollDepth, 100)}%` }} />
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1">
+                          {clarity.overall.scrollDepth < 40
+                            ? '⚠ Most visitors leave before the fold — consider moving CTAs higher'
+                            : clarity.overall.scrollDepth > 70
+                            ? '✓ Visitors are reading deep into the page'
+                            : 'Moderate scroll depth'}
+                        </p>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
-              {/* Scroll depth bar */}
-              {clarity.overall && (
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs text-gray-500">Avg scroll depth</span>
-                    <span className="text-xs font-semibold text-gray-700">{clarity.overall.scrollDepth.toFixed(0)}%</span>
-                  </div>
-                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-indigo-400 rounded-full"
-                      style={{ width: `${Math.min(clarity.overall.scrollDepth, 100)}%` }}
-                    />
-                  </div>
-                  <p className="text-xs text-gray-400 mt-1">
-                    {clarity.overall.scrollDepth < 40
-                      ? '⚠ Most visitors leave before the fold — consider moving CTAs higher on the page'
-                      : clarity.overall.scrollDepth > 70
-                      ? '✓ Visitors are reading deep into the page'
-                      : 'Moderate scroll depth'}
-                  </p>
-                </div>
-              )}
+              {/* Traffic quality by source */}
+              {clarity.bySource.length > 0 && (() => {
+                const maxTime = Math.max(...clarity.bySource.map(r => r.activeTime), 1);
+                const totalSessions = clarity.bySource.reduce((s, r) => s + r.sessions, 0);
+                const hasScroll  = clarity.bySource.some(r => r.scrollDepth > 0);
+                const hasDead    = clarity.bySource.some(r => r.deadClickRate > 0);
+                const hasRage    = clarity.bySource.some(r => r.rageClickRate > 0);
+                const hasPPS     = clarity.bySource.some(r => r.pagesPerSession > 0);
 
-              {/* Source breakdown table */}
-              {clarity.bySource.length > 0 && (
-                <div>
-                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                    Engagement by source
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-gray-400 border-b border-gray-100">
-                          <th className="text-left py-1.5 font-medium">Source</th>
-                          <th className="text-right py-1.5 font-medium">Sessions</th>
-                          <th className="text-right py-1.5 font-medium">Bounce</th>
-                          <th className="text-right py-1.5 font-medium">Active time</th>
-                          <th className="text-right py-1.5 font-medium">Dead clicks</th>
-                          <th className="text-right py-1.5 font-medium">Rage clicks</th>
-                          <th className="text-right py-1.5 font-medium">Scroll</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {clarity.bySource.slice(0, 8).map(row => (
-                          <tr key={row.dimensionValue} className="border-b border-gray-50 hover:bg-gray-50">
-                            <td className="py-1.5 text-gray-700 font-medium">{row.dimensionValue}</td>
-                            <td className="py-1.5 text-right text-gray-600 tabular-nums">{row.sessions.toLocaleString()}</td>
-                            <td className={`py-1.5 text-right tabular-nums font-medium ${row.bounceRate > 65 ? 'text-red-600' : row.bounceRate < 35 ? 'text-emerald-600' : 'text-gray-600'}`}>
-                              {row.bounceRate.toFixed(1)}%
-                            </td>
-                            <td className="py-1.5 text-right text-gray-600 tabular-nums">{Math.round(row.activeTime)}s</td>
-                            <td className={`py-1.5 text-right tabular-nums ${row.deadClickRate > 8 ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
-                              {row.deadClickRate.toFixed(1)}%
-                            </td>
-                            <td className={`py-1.5 text-right tabular-nums ${row.rageClickRate > 3 ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
-                              {row.rageClickRate.toFixed(1)}%
-                            </td>
-                            <td className="py-1.5 text-right text-gray-600 tabular-nums">{row.scrollDepth.toFixed(0)}%</td>
+                const qualityLabel = (t: number) =>
+                  t >= 120 ? { label: 'Engaged',  cls: 'bg-emerald-100 text-emerald-700' }
+                  : t >= 30 ? { label: 'Moderate', cls: 'bg-amber-100 text-amber-700' }
+                              : { label: 'Low',      cls: 'bg-red-100 text-red-600' };
+
+                return (
+                  <div>
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                      Traffic quality by source
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-gray-400 border-b border-gray-100">
+                            <th className="text-left py-1.5 font-medium w-32">Source</th>
+                            <th className="text-right py-1.5 font-medium">Sessions</th>
+                            <th className="text-left py-1.5 font-medium pl-3" colSpan={2}>Avg active time</th>
+                            {hasPPS    && <th className="text-right py-1.5 font-medium">Pages/s</th>}
+                            {hasScroll && <th className="text-right py-1.5 font-medium">Scroll</th>}
+                            {hasDead   && <th className="text-right py-1.5 font-medium">Dead clicks</th>}
+                            {hasRage   && <th className="text-right py-1.5 font-medium">Rage clicks</th>}
+                            <th className="text-right py-1.5 font-medium">Quality</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {clarity.bySource.slice(0, 10).map(row => {
+                            const q = qualityLabel(row.activeTime);
+                            const barPct = maxTime > 0 ? (row.activeTime / maxTime) * 100 : 0;
+                            const sessionPct = totalSessions > 0 ? ((row.sessions / totalSessions) * 100).toFixed(0) : '0';
+                            return (
+                              <tr key={row.dimensionValue} className="border-b border-gray-50 hover:bg-gray-50">
+                                <td className="py-2 text-gray-700 font-medium max-w-[120px] truncate" title={row.dimensionValue}>
+                                  {row.dimensionValue}
+                                </td>
+                                <td className="py-2 text-right text-gray-600 tabular-nums">
+                                  {row.sessions.toLocaleString()}
+                                  <span className="text-gray-400 ml-1">({sessionPct}%)</span>
+                                </td>
+                                {/* Active time with visual bar */}
+                                <td className="py-2 pl-3 tabular-nums font-medium text-gray-700 w-12">
+                                  {Math.round(row.activeTime)}s
+                                </td>
+                                <td className="py-2 w-24">
+                                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden w-24">
+                                    <div
+                                      className={`h-full rounded-full ${row.activeTime >= 120 ? 'bg-emerald-400' : row.activeTime >= 30 ? 'bg-amber-400' : 'bg-red-400'}`}
+                                      style={{ width: `${barPct}%` }}
+                                    />
+                                  </div>
+                                </td>
+                                {hasPPS    && <td className="py-2 text-right text-gray-600 tabular-nums">{row.pagesPerSession > 0 ? row.pagesPerSession.toFixed(1) : '—'}</td>}
+                                {hasScroll && <td className="py-2 text-right text-gray-600 tabular-nums">{row.scrollDepth > 0 ? `${row.scrollDepth.toFixed(0)}%` : '—'}</td>}
+                                {hasDead   && <td className={`py-2 text-right tabular-nums ${row.deadClickRate > 8 ? 'text-red-600 font-medium' : 'text-gray-600'}`}>{row.deadClickRate > 0 ? `${row.deadClickRate.toFixed(1)}%` : '—'}</td>}
+                                {hasRage   && <td className={`py-2 text-right tabular-nums ${row.rageClickRate > 3 ? 'text-red-600 font-medium' : 'text-gray-600'}`}>{row.rageClickRate > 0 ? `${row.rageClickRate.toFixed(1)}%` : '—'}</td>}
+                                <td className="py-2 text-right">
+                                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${q.cls}`}>{q.label}</span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-2">
+                      Active time &lt; 30s = low-quality visit · quality tiers help prioritise channel spend ·{' '}
+                      <a
+                        href="https://clarity.microsoft.com/projects/view/qmef32brd0/dashboard"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-indigo-500 hover:underline"
+                      >
+                        Open Clarity ↗
+                      </a>
+                    </p>
                   </div>
-                  <p className="text-xs text-gray-400 mt-2">
-                    High dead/rage click rates indicate UI issues that cause drop-off ·{' '}
-                    <a
-                      href="https://clarity.microsoft.com/projects/view/qmef32brd0/dashboard"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-indigo-500 hover:underline"
-                    >
-                      Open Clarity dashboard ↗
-                    </a>
-                  </p>
-                </div>
-              )}
+                );
+              })()}
             </div>
           )}
         </div>

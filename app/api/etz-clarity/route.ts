@@ -42,11 +42,10 @@ function clarityHeaders() {
 export interface ClarityMetricRow {
   dimensionValue:      string;
   sessions:            number;
-  bounceRate:          number;  // 0–100
   activeTime:          number;  // seconds (engagement time)
-  deadClickRate:       number;  // 0–100
-  rageClickRate:       number;  // 0–100
-  excessiveScrollRate: number;  // 0–100
+  pagesPerSession:     number;  // avg pages per session
+  deadClickRate:       number;  // 0–100 (computed from count / sessions)
+  rageClickRate:       number;  // 0–100 (computed from count / sessions)
   scrollDepth:         number;  // 0–100
 }
 
@@ -78,9 +77,8 @@ const pct = (obj: Record<string, unknown>, k: string): number => {
 
 /**
  * Merge information rows across metric groups, keyed by the dimension value.
- * Each metric group has one dimension-value key per row (e.g. "Source": "Organic Search").
- *
- * This accumulates all fields from every metric group into one merged object per source.
+ * Each metric group contributes its fields to the merged row for that dimension value.
+ * Empty dimension values are treated as "Direct" traffic.
  */
 function buildPerSourceMap(
   groups:    MetricGroup[],
@@ -90,7 +88,8 @@ function buildPerSourceMap(
 
   for (const group of groups) {
     for (const info of group.information) {
-      const dimVal = String(info[dimension] ?? info['dimensionValue'] ?? 'Unknown');
+      const raw    = String(info[dimension] ?? info['dimensionValue'] ?? '').trim();
+      const dimVal = raw || 'Direct';
       const existing = map.get(dimVal) ?? {};
       map.set(dimVal, { ...existing, ...info });
     }
@@ -98,21 +97,64 @@ function buildPerSourceMap(
   return map;
 }
 
+/**
+ * Extract a metric from the merged row, trying multiple field name variants.
+ * Clarity's export API field names aren't fully documented; this covers
+ * the known camelCase, PascalCase, and count vs rate variants.
+ */
 function rowFromMerged(merged: Record<string, unknown>, label: string): ClarityMetricRow {
+  const sessions = num(merged, 'totalSessionCount');
+
+  // Engagement time — tried in priority order
+  const activeTime =
+    num(merged, 'engagementTime')         ||
+    num(merged, 'EngagementTime')         ||
+    num(merged, 'activeTime')             ||
+    num(merged, 'ActiveTime')             ||
+    num(merged, 'averageEngagementTime')  ||
+    num(merged, 'avgEngagementTime');
+
+  // Pages per session — may be returned as PagesPerSessionPercentage (the actual value, despite the name)
+  const pagesPerSession =
+    num(merged, 'PagesPerSessionPercentage') ||
+    num(merged, 'pagesPerSession')           ||
+    num(merged, 'avgPagesPerSession');
+
+  // Scroll depth — returned as 0-1 fraction or 0-100 percentage
+  const scrollRaw =
+    num(merged, 'scrollDepth')      ||
+    num(merged, 'ScrollDepth')      ||
+    num(merged, 'avgScrollDepth')   ||
+    num(merged, 'averageScrollDepth');
+  const scrollDepth = scrollRaw > 0 && scrollRaw <= 1 ? scrollRaw * 100 : scrollRaw;
+
+  // Dead / rage clicks are exported as absolute counts — convert to per-100-sessions rate
+  const deadCount =
+    num(merged, 'deadClickCount')  ||
+    num(merged, 'DeadClickCount')  ||
+    num(merged, 'deadClicks')      ||
+    num(merged, 'dead_click_count');
+  const rageCount =
+    num(merged, 'rageClickCount')  ||
+    num(merged, 'RageClickCount')  ||
+    num(merged, 'rageClicks')      ||
+    num(merged, 'rage_click_count');
+
+  const deadClickRate = sessions > 0 ? (deadCount / sessions) * 100 : 0;
+  const rageClickRate = sessions > 0 ? (rageCount / sessions) * 100 : 0;
+
   return {
-    dimensionValue:      label,
-    sessions:            num(merged, 'totalSessionCount'),
-    bounceRate:          pct(merged, 'bounceRate'),
-    // "Engagement Time" metric uses engagementTime (seconds)
-    activeTime:          num(merged, 'engagementTime') || num(merged, 'activeTime'),
-    deadClickRate:       pct(merged, 'deadClickRate'),
-    rageClickRate:       pct(merged, 'rageClickRate'),
-    excessiveScrollRate: pct(merged, 'excessiveScrollingRate') || pct(merged, 'excessiveScrollRate'),
-    scrollDepth:         pct(merged, 'scrollDepth'),
+    dimensionValue:  label,
+    sessions,
+    activeTime,
+    pagesPerSession,
+    deadClickRate,
+    rageClickRate,
+    scrollDepth,
   };
 }
 
-/** Aggregate all per-source rows into a single "All" overall row */
+/** Aggregate per-source rows into a single "All" overall row (session-weighted averages) */
 function aggregateOverall(rows: ClarityMetricRow[]): ClarityMetricRow | null {
   if (rows.length === 0) return null;
   const totalSessions = rows.reduce((s, r) => s + r.sessions, 0);
@@ -120,14 +162,13 @@ function aggregateOverall(rows: ClarityMetricRow[]): ClarityMetricRow | null {
   const w = (field: keyof ClarityMetricRow) =>
     rows.reduce((s, r) => s + (r[field] as number) * r.sessions, 0) / totalSessions;
   return {
-    dimensionValue:      'All',
-    sessions:            totalSessions,
-    bounceRate:          w('bounceRate'),
-    activeTime:          w('activeTime'),
-    deadClickRate:       w('deadClickRate'),
-    rageClickRate:       w('rageClickRate'),
-    excessiveScrollRate: w('excessiveScrollRate'),
-    scrollDepth:         w('scrollDepth'),
+    dimensionValue:  'All',
+    sessions:        totalSessions,
+    activeTime:      w('activeTime'),
+    pagesPerSession: w('pagesPerSession'),
+    deadClickRate:   w('deadClickRate'),
+    rageClickRate:   w('rageClickRate'),
+    scrollDepth:     w('scrollDepth'),
   };
 }
 
@@ -173,7 +214,8 @@ export async function GET() {
     }
 
     const data = await res.json() as unknown;
-    console.log('[etz-clarity] raw response:', JSON.stringify(data).slice(0, 500));
+    // Log full raw response (field names vary by Clarity version — helpful for debugging)
+    console.log('[etz-clarity] raw response:', JSON.stringify(data).slice(0, 3000));
 
     // Response: array of { metricName: string, information: [...] }
     const groups: MetricGroup[] = Array.isArray(data)
