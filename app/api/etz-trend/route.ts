@@ -13,7 +13,8 @@ import { NextResponse }              from 'next/server';
 import { fetchEtzMonthlySessions }   from '@/lib/google-analytics';
 import { fetchETZStripeRevenue }     from '@/lib/stripe-revenue';
 
-export const dynamic = 'force-dynamic';
+// Cache for 30 minutes — historical months don't change; current month refreshes hourly
+export const revalidate = 1800;
 
 const HS_BASE = 'https://api.hubapi.com';
 const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -120,7 +121,7 @@ export async function GET(request: Request) {
     for (const month of months) {
       const { startMs, endMs } = monthToEpochRange(month);
       trialsByMonth[month] = await hsCountTrials(pipelineId, startMs, endMs);
-      await delay(300);
+      await delay(150);
     }
   }
 

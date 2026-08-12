@@ -1109,95 +1109,126 @@ interface EtzTrendResponse {
 }
 
 // ─── ETZ 12-month trend chart ─────────────────────────────────────────────────
-// Dual-axis SVG: sessions as bars (left axis) + trials & orders as lines (right axis)
+// Normalised/indexed chart: each metric shown as % of its own peak value.
+// This puts sessions, trials and orders on the same 0–100 % scale so all
+// three lines are clearly visible regardless of their absolute magnitudes.
+// Session bars use the same normalised scale.
 
 function EtzTrendChart({ points }: { points: EtzTrendPoint[] }) {
   if (points.length < 2) return null;
 
-  const W   = 700;
-  const H   = 220;
-  const PAD = { t: 20, r: 52, b: 32, l: 52 };
+  const W   = 800;
+  const H   = 300;
+  const PAD = { t: 16, r: 20, b: 36, l: 40 };
   const cW  = W - PAD.l - PAD.r;
   const cH  = H - PAD.t - PAD.b;
   const n   = points.length;
 
-  const maxSessions = Math.max(...points.map(p => p.sessions), 1);
-  const maxRight    = Math.max(...points.map(p => Math.max(p.trials, p.orders)), 1);
+  const maxSess   = Math.max(...points.map(p => p.sessions), 1);
+  const maxTrials = Math.max(...points.map(p => p.trials),   1);
+  const maxOrders = Math.max(...points.map(p => p.orders),   1);
+
+  // Normalise each metric to 0–1 relative to its own peak
+  const normSess   = (v: number) => v / maxSess;
+  const normTrials = (v: number) => v / maxTrials;
+  const normOrders = (v: number) => v / maxOrders;
+
+  // Y position from a 0–1 normalised value
+  const ny = (norm: number) => PAD.t + cH - norm * cH;
 
   const slotW = cW / n;
-  const barW  = Math.max(slotW * 0.45, 6);
+  const barW  = Math.max(slotW * 0.5, 8);
+  const cx    = (i: number) => PAD.l + slotW * i + slotW / 2;
 
-  const lx  = (i: number) => PAD.l + slotW * i + slotW / 2;
-  const ly  = (v: number) => PAD.t + cH - (v / maxSessions) * cH;
-  const ry  = (v: number) => PAD.t + cH - (v / maxRight) * cH;
+  const makeLine = (norms: number[]) =>
+    norms.map((v, i) => (i === 0 ? 'M' : 'L') + cx(i).toFixed(1) + ' ' + ny(v).toFixed(1)).join(' ');
 
-  const fmtSess = (v: number) => v >= 1000 ? Math.round(v / 1000) + 'k' : String(v);
-  const fmtNum  = (v: number) => String(Math.round(v));
+  const trialPath = makeLine(points.map(p => normTrials(p.trials)));
+  const orderPath = makeLine(points.map(p => normOrders(p.orders)));
 
-  const makeLine = (vals: number[], axisY: (v: number) => number) =>
-    vals.map((v, i) => (i === 0 ? 'M' : 'L') + lx(i).toFixed(1) + ' ' + axisY(v).toFixed(1)).join(' ');
+  const fmt = (v: number) => v >= 1000 ? (v / 1000).toFixed(0) + 'k' : String(Math.round(v));
 
-  const trialPath = makeLine(points.map(p => p.trials), ry);
-  const orderPath = makeLine(points.map(p => p.orders), ry);
-
-  // Y-axis ticks
-  const leftTicks  = [0, 0.5, 1].map(f => ({ v: maxSessions * f, y: ly(maxSessions * f) }));
-  const rightTicks = [0, 0.5, 1].map(f => ({ v: maxRight    * f, y: ry(maxRight    * f) }));
+  // Gridlines at 0 %, 25 %, 50 %, 75 %, 100 %
+  const gridLines = [0, 0.25, 0.5, 0.75, 1];
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ display: 'block' }}>
-      {/* Gridlines */}
-      {leftTicks.map((t, i) => (
-        <line key={i} x1={PAD.l} y1={t.y.toFixed(1)} x2={W - PAD.r} y2={t.y.toFixed(1)}
-          stroke="#f3f4f6" strokeWidth="1" />
-      ))}
 
-      {/* Left Y axis — sessions */}
-      {leftTicks.map((t, i) => (
-        <text key={i} x={PAD.l - 5} y={(t.y + 4).toFixed(1)} textAnchor="end"
-          fontSize="9" fill="#93c5fd">{fmtSess(t.v)}</text>
-      ))}
-      <text x={PAD.l - 5} y={PAD.t - 6} textAnchor="end" fontSize="8" fill="#93c5fd" fontWeight="600">sess</text>
-
-      {/* Right Y axis — trials / orders */}
-      {rightTicks.map((t, i) => (
-        <text key={i} x={W - PAD.r + 5} y={(t.y + 4).toFixed(1)} textAnchor="start"
-          fontSize="9" fill="#a78bfa">{fmtNum(t.v)}</text>
-      ))}
-      <text x={W - PAD.r + 5} y={PAD.t - 6} textAnchor="start" fontSize="8" fill="#a78bfa" fontWeight="600">trials/orders</text>
-
-      {/* Session bars */}
-      {points.map((p, i) => {
-        const bx = lx(i) - barW / 2;
-        const by = ly(p.sessions);
-        const bh = Math.max((PAD.t + cH) - by, 2);
+      {/* Gridlines + Y-axis labels */}
+      {gridLines.map((f, i) => {
+        const y = ny(f);
         return (
-          <rect key={i} x={bx.toFixed(1)} y={by.toFixed(1)}
-            width={barW.toFixed(1)} height={bh.toFixed(1)}
-            fill="#bfdbfe" rx="2"
-            opacity="0.8"
-          />
+          <g key={i}>
+            <line x1={PAD.l} y1={y.toFixed(1)} x2={W - PAD.r} y2={y.toFixed(1)}
+              stroke={f === 0 ? '#e5e7eb' : '#f3f4f6'} strokeWidth={f === 0 ? 1.5 : 1} />
+            <text x={PAD.l - 5} y={(y + 4).toFixed(1)} textAnchor="end"
+              fontSize="9" fill="#9ca3af">{Math.round(f * 100)}%</text>
+          </g>
         );
       })}
 
-      {/* Trial line (violet) */}
-      <path d={trialPath} fill="none" stroke="#7c3aed" strokeWidth="2" strokeLinejoin="round" />
+      {/* Session bars (light blue, normalised) */}
+      {points.map((p, i) => {
+        const norm = normSess(p.sessions);
+        const bx   = cx(i) - barW / 2;
+        const by   = ny(norm);
+        const bh   = Math.max((PAD.t + cH) - by, 2);
+        return (
+          <rect key={i} x={bx.toFixed(1)} y={by.toFixed(1)}
+            width={barW.toFixed(1)} height={bh.toFixed(1)}
+            fill="#bfdbfe" rx="2" opacity="0.75" />
+        );
+      })}
+
+      {/* Trial line + area fill (violet) */}
+      <path
+        d={trialPath + ` L${cx(n-1).toFixed(1)} ${ny(0).toFixed(1)} L${cx(0).toFixed(1)} ${ny(0).toFixed(1)} Z`}
+        fill="#7c3aed" fillOpacity="0.06" />
+      <path d={trialPath} fill="none" stroke="#7c3aed" strokeWidth="2.5" strokeLinejoin="round" />
       {points.map((p, i) => p.trials > 0 ? (
-        <circle key={i} cx={lx(i).toFixed(1)} cy={ry(p.trials).toFixed(1)}
-          r="3" fill="#7c3aed" />
+        <g key={i}>
+          <circle cx={cx(i).toFixed(1)} cy={ny(normTrials(p.trials)).toFixed(1)}
+            r="3.5" fill="#7c3aed" />
+          {/* Value label on peak only */}
+          {p.trials === maxTrials && (
+            <text x={cx(i).toFixed(1)} y={(ny(normTrials(p.trials)) - 8).toFixed(1)}
+              textAnchor="middle" fontSize="9" fill="#7c3aed" fontWeight="700">
+              {fmt(p.trials)}
+            </text>
+          )}
+        </g>
       ) : null)}
 
-      {/* Order line (emerald) */}
-      <path d={orderPath} fill="none" stroke="#10b981" strokeWidth="2" strokeLinejoin="round" />
+      {/* Order line + area fill (emerald) */}
+      <path
+        d={orderPath + ` L${cx(n-1).toFixed(1)} ${ny(0).toFixed(1)} L${cx(0).toFixed(1)} ${ny(0).toFixed(1)} Z`}
+        fill="#10b981" fillOpacity="0.06" />
+      <path d={orderPath} fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinejoin="round" />
       {points.map((p, i) => p.orders > 0 ? (
-        <circle key={i} cx={lx(i).toFixed(1)} cy={ry(p.orders).toFixed(1)}
-          r="3" fill="#10b981" />
+        <g key={i}>
+          <circle cx={cx(i).toFixed(1)} cy={ny(normOrders(p.orders)).toFixed(1)}
+            r="3.5" fill="#10b981" />
+          {p.orders === maxOrders && (
+            <text x={cx(i).toFixed(1)} y={(ny(normOrders(p.orders)) - 8).toFixed(1)}
+              textAnchor="middle" fontSize="9" fill="#10b981" fontWeight="700">
+              {fmt(p.orders)}
+            </text>
+          )}
+        </g>
+      ) : null)}
+
+      {/* Session peak label */}
+      {points.map((p, i) => p.sessions === maxSess ? (
+        <text key={i} x={cx(i).toFixed(1)} y={(ny(1) - 4).toFixed(1)}
+          textAnchor="middle" fontSize="9" fill="#60a5fa" fontWeight="700">
+          {fmt(p.sessions)}
+        </text>
       ) : null)}
 
       {/* Month labels */}
       {points.map((p, i) => (
-        <text key={i} x={lx(i).toFixed(1)} y={H - 4} textAnchor="middle"
-          fontSize="10" fill="#6b7280">{p.label}</text>
+        <text key={i} x={cx(i).toFixed(1)} y={H - 4} textAnchor="middle"
+          fontSize="11" fill="#6b7280">{p.label}</text>
       ))}
     </svg>
   );
@@ -1492,7 +1523,7 @@ function EtzTrialsFullView({
             <>
               <EtzTrendChart points={trend.points} />
               <p className="text-xs text-gray-400 mt-2 text-center">
-                Sessions (bars, left axis) · Trials &amp; Orders (lines, right axis) · rolling 12 months
+                Each metric shown as % of its own peak — sessions (bars) · trials (violet) · orders (emerald) · peak values labelled
               </p>
             </>
           )}
