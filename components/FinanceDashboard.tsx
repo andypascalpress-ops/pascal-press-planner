@@ -1081,6 +1081,15 @@ interface EtzTrialFunnelResponse {
   _meta?:           { pipeline: string; trialStage: string; trialStageId: string };
 }
 
+interface EtzAppTrafficResponse {
+  month:         string;
+  totalSessions: number;
+  totalNewUsers: number;
+  fromMainSite:  number;   // sessions arriving via exceltestzone.com.au referral
+  connected:     boolean;
+  source:        'app-property' | 'hostname-filter' | 'none';
+}
+
 interface EtzFunnelChannelRow {
   channel:  string;
   sessions: number;
@@ -1335,6 +1344,8 @@ function EtzTrialsFullView({
   stripeConnected,
   traffic,
   loadingTraffic,
+  appTraffic,
+  loadingAppTraffic,
   trend,
   loadingTrend,
   sources,
@@ -1342,20 +1353,22 @@ function EtzTrialsFullView({
   clarity,
   loadingClarity,
 }: {
-  data:            EtzTrialFunnelResponse | null;
-  loading:         boolean;
-  month:           string;
-  stripeOrders:    number;
-  stripeRevenue:   number;
-  stripeConnected: boolean;
-  traffic:         EtzFunnelTrafficResponse | null;
-  loadingTraffic:  boolean;
-  trend:           EtzTrendResponse | null;
-  loadingTrend:    boolean;
-  sources:         EtzSourceResponse | null;
-  loadingSources:  boolean;
-  clarity:         EtzClarityResponse | null;
-  loadingClarity:  boolean;
+  data:               EtzTrialFunnelResponse | null;
+  loading:            boolean;
+  month:              string;
+  stripeOrders:       number;
+  stripeRevenue:      number;
+  stripeConnected:    boolean;
+  traffic:            EtzFunnelTrafficResponse | null;
+  loadingTraffic:     boolean;
+  appTraffic:         EtzAppTrafficResponse | null;
+  loadingAppTraffic:  boolean;
+  trend:              EtzTrendResponse | null;
+  loadingTrend:       boolean;
+  sources:            EtzSourceResponse | null;
+  loadingSources:     boolean;
+  clarity:            EtzClarityResponse | null;
+  loadingClarity:     boolean;
 }) {
   if (loading) {
     return (
@@ -1378,15 +1391,20 @@ function EtzTrialsFullView({
   }
 
   const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
-  const sessions = traffic?.totalSessions ?? 0;
-  const trials   = data?.trialsStarted    ?? 0;
-  const orders   = stripeOrders;
+  const sessions    = traffic?.totalSessions      ?? 0;
+  const appSessions = appTraffic?.totalSessions   ?? 0;
+  const trials      = data?.trialsStarted         ?? 0;
+  const orders      = stripeOrders;
 
-  const trialRate   = sessions > 0 ? (trials / sessions) * 100 : null;
-  const convRate    = trials   > 0 && stripeConnected ? (orders / trials) * 100 : null;
-  const overallRate = sessions > 0 && stripeConnected ? (orders / sessions) * 100 : null;
+  // Conversion rates: prefer app sessions → trial rate when we have app data
+  const appClickRate  = sessions > 0 && appTraffic?.connected ? (appSessions / sessions) * 100 : null;
+  const appTrialRate  = appSessions > 0 && appTraffic?.connected ? (trials / appSessions) * 100 : null;
+  const trialRate     = sessions > 0 && !appTraffic?.connected ? (trials / sessions) * 100 : null;
+  const convRate      = trials > 0 && stripeConnected ? (orders / trials) * 100 : null;
+  const overallRate   = sessions > 0 && stripeConnected ? (orders / sessions) * 100 : null;
 
-  const funnelReady = !loading && !loadingTraffic && data != null;
+  const funnelReady   = !loading && !loadingTraffic && data != null;
+  const hasAppStage   = appTraffic?.connected === true;
 
   return (
     <div className="px-4 md:px-8 py-6 max-w-3xl mx-auto space-y-2">
@@ -1399,7 +1417,7 @@ function EtzTrialsFullView({
         </p>
       </div>
 
-      {/* ── Stage 1: Traffic ───────────────────────────────────────────────── */}
+      {/* ── Stage 1: Main site traffic ─────────────────────────────────────── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -1453,17 +1471,84 @@ function EtzTrialsFullView({
         </div>
       </div>
 
-      {/* Drop arrow 1 */}
-      {funnelReady && traffic?.connected && (
+      {/* Drop arrow 1: main site → app */}
+      {funnelReady && traffic?.connected && hasAppStage && (
+        <FunnelDropArrow from={sessions} to={appSessions} label="visited main site → reached app" />
+      )}
+      {/* Drop arrow 1 fallback: main site → trial (when no app data) */}
+      {funnelReady && traffic?.connected && !hasAppStage && (
         <FunnelDropArrow from={sessions} to={trials} label="session → trial" />
       )}
 
-      {/* ── Stage 2: Free Trials ───────────────────────────────────────────── */}
+      {/* ── Stage 1b: App site (app.exceltestzone.com.au) ─────────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-sky-400 inline-block" />
+            <span className="text-sm font-semibold text-gray-700">Stage 2 · App Site</span>
+          </div>
+          <span className="text-xs text-gray-400">app.exceltestzone.com.au · GA4</span>
+        </div>
+        <div className="px-5 py-4">
+          {loadingAppTraffic ? (
+            <p className="text-sm text-gray-400">Loading…</p>
+          ) : !appTraffic?.connected ? (
+            <div className="space-y-1">
+              <p className="text-sm text-gray-400 italic">App site tracking not connected</p>
+              <p className="text-xs text-gray-400 max-w-sm">
+                Add <code className="bg-gray-100 px-1 rounded text-xs">GOOGLE_ANALYTICS_ETZ_APP_PROPERTY_ID</code> to connect a
+                dedicated GA4 property for app.exceltestzone.com.au, or enable cross-domain tracking
+                in the existing ETZ GA4 property.
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-8">
+              <div>
+                <div className="text-4xl font-extrabold text-gray-900 tabular-nums">
+                  {appSessions.toLocaleString()}
+                </div>
+                <div className="text-sm text-gray-500 mt-0.5">app sessions</div>
+              </div>
+              {appClickRate != null && (
+                <div>
+                  <div className="text-2xl font-bold text-sky-600 tabular-nums">
+                    {appClickRate.toFixed(1)}%
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">of main site visitors</div>
+                </div>
+              )}
+              {appTraffic.fromMainSite > 0 && (
+                <div>
+                  <div className="text-xl font-bold text-sky-500 tabular-nums">
+                    {appTraffic.fromMainSite.toLocaleString()}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">arrived from main site</div>
+                </div>
+              )}
+              {appTraffic.totalNewUsers > 0 && (
+                <div className="ml-auto text-right">
+                  <div className="text-xl font-bold text-gray-500 tabular-nums">
+                    {appTraffic.totalNewUsers.toLocaleString()}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">new users</div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Drop arrow 2: app → trial */}
+      {funnelReady && hasAppStage && (
+        <FunnelDropArrow from={appSessions} to={trials} label="app session → free trial" />
+      )}
+
+      {/* ── Stage 3: Free Trials ───────────────────────────────────────────── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-violet-400 inline-block" />
-            <span className="text-sm font-semibold text-gray-700">Stage 2 · Free Trials</span>
+            <span className="text-sm font-semibold text-gray-700">Stage 3 · Free Trials</span>
           </div>
           <span className="text-xs text-gray-400">HubSpot</span>
         </div>
@@ -1478,6 +1563,14 @@ function EtzTrialsFullView({
                 </div>
                 <div className="text-sm text-gray-500 mt-0.5">trials started</div>
               </div>
+              {appTrialRate != null && (
+                <div>
+                  <div className="text-2xl font-bold text-violet-600 tabular-nums">
+                    {appTrialRate.toFixed(2)}%
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">of app visitors → trial</div>
+                </div>
+              )}
               {trialRate != null && (
                 <div>
                   <div className="text-2xl font-bold text-violet-600 tabular-nums">
@@ -2183,6 +2276,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [loadingEtzTrial,      setLoadingEtzTrial     ] = useState(false);
   const [etzTraffic,           setEtzTraffic          ] = useState<EtzFunnelTrafficResponse | null>(null);
   const [loadingEtzTraffic,    setLoadingEtzTraffic   ] = useState(false);
+  const [etzAppTraffic,        setEtzAppTraffic       ] = useState<EtzAppTrafficResponse | null>(null);
+  const [loadingEtzAppTraffic, setLoadingEtzAppTraffic] = useState(false);
   const [etzTrend,             setEtzTrend            ] = useState<EtzTrendResponse | null>(null);
   const [loadingEtzTrend,      setLoadingEtzTrend     ] = useState(false);
   const [etzSources,           setEtzSources          ] = useState<EtzSourceResponse | null>(null);
@@ -2213,6 +2308,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
     setMetaCampaigns(null);
     setEtzTrialFunnel(null);
     setEtzTraffic(null);
+    setEtzAppTraffic(null);
     setEtzSources(null);
     setSiteConversion(null);
     setChannelRevenue(null);
@@ -2287,6 +2383,15 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
       })
       .catch((e) => { if (e?.name !== 'AbortError') setEtzTraffic(null); })
       .finally(() => { if (!signal.aborted) setLoadingEtzTraffic(false); });
+
+    setLoadingEtzAppTraffic(true);
+    fetch('/api/etz-app-traffic?month=' + month, { signal })
+      .then(r => r.json())
+      .then((data: EtzAppTrafficResponse) => {
+        if (!signal.aborted) setEtzAppTraffic(data);
+      })
+      .catch((e) => { if (e?.name !== 'AbortError') setEtzAppTraffic(null); })
+      .finally(() => { if (!signal.aborted) setLoadingEtzAppTraffic(false); });
 
     // Delay 2 s so etz-sources fires after etz-trial-funnel (2 HubSpot search calls,
     // ~400–800 ms total) has cleared HubSpot's 4 req/sec secondly limit.
@@ -2544,6 +2649,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             stripeConnected={revenue?.etz?.connected === true}
             traffic={etzTraffic}
             loadingTraffic={loadingEtzTraffic}
+            appTraffic={etzAppTraffic}
+            loadingAppTraffic={loadingEtzAppTraffic}
             trend={etzTrend}
             loadingTrend={loadingEtzTrend}
             sources={etzSources}

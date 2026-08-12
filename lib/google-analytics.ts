@@ -18,8 +18,14 @@ import crypto from 'crypto';
 
 const GA4_PROPERTY_ID     = '354651290'; // Pascal Press (pascalpress.com.au)
 const GA4_BASE            = `https://analyticsdata.googleapis.com/v1beta/properties/${GA4_PROPERTY_ID}`;
-const GA4_ETZ_PROPERTY_ID = process.env.GOOGLE_ANALYTICS_ETZ_PROPERTY_ID ?? '';
-const GA4_ETZ_BASE        = `https://analyticsdata.googleapis.com/v1beta/properties/${GA4_ETZ_PROPERTY_ID}`;
+const GA4_ETZ_PROPERTY_ID     = process.env.GOOGLE_ANALYTICS_ETZ_PROPERTY_ID ?? '';
+const GA4_ETZ_BASE            = `https://analyticsdata.googleapis.com/v1beta/properties/${GA4_ETZ_PROPERTY_ID}`;
+// Optional: separate GA4 property for app.exceltestzone.com.au
+// If unset, fetchEtzAppTraffic falls back to filtering the main ETZ property by hostname.
+const GA4_ETZ_APP_PROPERTY_ID = process.env.GOOGLE_ANALYTICS_ETZ_APP_PROPERTY_ID ?? '';
+const GA4_ETZ_APP_BASE        = GA4_ETZ_APP_PROPERTY_ID
+  ? `https://analyticsdata.googleapis.com/v1beta/properties/${GA4_ETZ_APP_PROPERTY_ID}`
+  : null;
 const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
 // ---------------------------------------------------------------------------
@@ -824,6 +830,97 @@ export async function fetchEtzFunnelTraffic(
     return { totalSessions, totalNewUsers, byChannel, connected: true };
   } catch (err) {
     console.error('[google-analytics fetchEtzFunnelTraffic]', err);
+    return empty;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ETZ App site (app.exceltestzone.com.au) — sessions for a date range
+//
+// Priority:
+//  1. GOOGLE_ANALYTICS_ETZ_APP_PROPERTY_ID — separate GA4 property for the app
+//  2. Existing ETZ property filtered by hostname = "app.exceltestzone.com.au"
+//     (works if cross-domain tracking puts both domains in one property)
+// ---------------------------------------------------------------------------
+
+export interface EtzAppTrafficData {
+  totalSessions:   number;
+  totalNewUsers:   number;
+  fromMainSite:    number;   // sessions where sessionSource is exceltestzone.com.au
+  connected:       boolean;
+  source:          'app-property' | 'hostname-filter' | 'none';
+}
+
+export async function fetchEtzAppTraffic(
+  startDate: string,
+  endDate:   string,
+): Promise<EtzAppTrafficData> {
+  const empty: EtzAppTrafficData = {
+    totalSessions: 0, totalNewUsers: 0, fromMainSite: 0,
+    connected: false, source: 'none',
+  };
+  if (!isConnected()) return empty;
+
+  try {
+    const accessToken = await getAccessToken();
+    // Determine which property base URL to use
+    const baseUrl     = GA4_ETZ_APP_BASE ?? (GA4_ETZ_PROPERTY_ID ? GA4_ETZ_BASE : null);
+    const dataSource  = GA4_ETZ_APP_BASE ? 'app-property' : 'hostname-filter';
+    if (!baseUrl) return empty;
+
+    // Dimension filter: only needed when falling back to the main ETZ property
+    const dimensionFilter = GA4_ETZ_APP_BASE ? undefined : {
+      filter: {
+        fieldName: 'hostname',
+        stringFilter: { matchType: 'EXACT', value: 'app.exceltestzone.com.au' },
+      },
+    };
+
+    // 1. Total sessions (and new users) on the app site
+    const totalsBody: Record<string, unknown> = {
+      dateRanges: [{ startDate, endDate }],
+      metrics:    [{ name: 'sessions' }, { name: 'newUsers' }],
+      limit: 1,
+    };
+    if (dimensionFilter) totalsBody.dimensionFilter = dimensionFilter;
+
+    const totalsData = await runReportOnProperty(accessToken, baseUrl, totalsBody);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const firstRow: any = (totalsData.rows ?? [])[0];
+    const totalSessions = parseInt(firstRow?.metricValues?.[0]?.value ?? '0', 10) || 0;
+    const totalNewUsers = parseInt(firstRow?.metricValues?.[1]?.value ?? '0', 10) || 0;
+
+    if (totalSessions === 0) return empty; // no data found
+
+    // 2. Sessions that came from exceltestzone.com.au (click-throughs from main site)
+    const refBody: Record<string, unknown> = {
+      dateRanges: [{ startDate, endDate }],
+      dimensions: [{ name: 'sessionSource' }],
+      metrics:    [{ name: 'sessions' }],
+      dimensionFilter: {
+        andGroup: {
+          expressions: [
+            ...(dimensionFilter ? [dimensionFilter] : []),
+            {
+              filter: {
+                fieldName: 'sessionSource',
+                stringFilter: { matchType: 'CONTAINS', value: 'exceltestzone.com.au' },
+              },
+            },
+          ],
+        },
+      },
+      limit: 5,
+    };
+    const refData = await runReportOnProperty(accessToken, baseUrl, refBody);
+    const fromMainSite = (refData.rows ?? []).reduce((sum: number, r: unknown) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return sum + (parseInt((r as any).metricValues?.[0]?.value ?? '0', 10) || 0);
+    }, 0);
+
+    return { totalSessions, totalNewUsers, fromMainSite, connected: true, source: dataSource };
+  } catch (err) {
+    console.error('[google-analytics fetchEtzAppTraffic]', err);
     return empty;
   }
 }
