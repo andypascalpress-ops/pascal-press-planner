@@ -3,59 +3,45 @@
  *
  * Fetches behavioral metrics from Microsoft Clarity for the ETZ project.
  *
- * Returns:
- *   overall   – aggregated metrics for the past 30 days
- *   bySource  – same metrics broken down by traffic source
+ * Tries two known Clarity API base URLs in order:
+ *   1. https://api.clarity.ms/v1   (documented, but has TLS cert mismatch → needs undici)
+ *   2. https://clarity.microsoft.com/api/v1  (dashboard domain, proper cert)
  *
  * Required env var: CLARITY_API_TOKEN
  *   Generate at: clarity.microsoft.com → Settings → API
  *
  * Project ID: qmef32brd0 (from ETZ Clarity dashboard URL)
  * Optionally override with CLARITY_ETZ_PROJECT_ID env var.
- *
- * Cached for 1 hour — Clarity data updates daily.
  */
 import { NextResponse } from 'next/server';
 import { Agent, fetch as undiciFetch } from 'undici';
 
 export const revalidate = 3600;
 
-const CLARITY_BASE = 'https://api.clarity.ms/v1';
-const PROJECT_ID   = process.env.CLARITY_ETZ_PROJECT_ID ?? 'qmef32brd0';
+const PROJECT_ID = process.env.CLARITY_ETZ_PROJECT_ID ?? 'qmef32brd0';
 
 /**
- * api.clarity.ms is behind Azure CDN whose TLS cert only covers *.azureedge.net,
- * NOT api.clarity.ms — a cert misconfiguration on Microsoft's side (confirmed via
- * ERR_TLS_CERT_ALTNAME_INVALID in Vercel logs). We use a dedicated undici Agent
- * with rejectUnauthorized:false scoped ONLY to these Clarity calls so no other
- * outbound requests are affected.
+ * api.clarity.ms has an Azure CDN TLS cert mismatch (cert is *.azureedge.net).
+ * Use undici Agent with rejectUnauthorized:false ONLY for this host.
  */
 const clarityAgent = new Agent({ connect: { rejectUnauthorized: false } });
 
 function clarityHeaders() {
-  // No Content-Type on GET requests — Azure WAF can reject GETs with that header
   return {
     Authorization: `Bearer ${process.env.CLARITY_API_TOKEN ?? ''}`,
     Accept: 'application/json',
   };
 }
 
-/** Returns YYYY-MM-DD for N days ago */
-function daysAgo(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
-}
-
 export interface ClarityMetricRow {
-  dimensionValue:        string;
-  sessions:              number;
-  bounceRate:            number;  // 0-100
-  activeTime:            number;  // seconds
-  deadClickRate:         number;  // 0-100
-  rageClickRate:         number;  // 0-100
-  excessiveScrollRate:   number;  // 0-100
-  scrollDepth:           number;  // 0-100
+  dimensionValue:      string;
+  sessions:            number;
+  bounceRate:          number;  // 0-100
+  activeTime:          number;  // seconds
+  deadClickRate:       number;  // 0-100
+  rageClickRate:       number;  // 0-100
+  excessiveScrollRate: number;  // 0-100
+  scrollDepth:         number;  // 0-100
 }
 
 export interface EtzClarityResponse {
@@ -71,42 +57,78 @@ function normRow(raw: Record<string, unknown>, label?: string): ClarityMetricRow
     const v = raw[k];
     return typeof v === 'number' ? v : parseFloat(String(v ?? '0')) || 0;
   };
+  // Clarity returns rates as 0-1 fractions OR 0-100 percentages depending on version
+  const pct = (k: string) => {
+    const v = num(k);
+    return v <= 1 ? v * 100 : v;
+  };
   return {
     dimensionValue:      label ?? String(raw['dimensionValue'] ?? raw['name'] ?? ''),
     sessions:            num('sessions'),
-    bounceRate:          num('bounceRate')          * (num('bounceRate') > 1 ? 1 : 100),
+    bounceRate:          pct('bounceRate'),
     activeTime:          num('activeTime'),
-    deadClickRate:       num('deadClickRate')       * (num('deadClickRate') > 1 ? 1 : 100),
-    rageClickRate:       num('rageClickRate')       * (num('rageClickRate') > 1 ? 1 : 100),
-    excessiveScrollRate: num('excessiveScrollingRate') * (num('excessiveScrollingRate') > 1 ? 1 : 100),
-    scrollDepth:         num('scrollDepth')         * (num('scrollDepth') > 1 ? 1 : 100),
+    deadClickRate:       pct('deadClickRate'),
+    rageClickRate:       pct('rageClickRate'),
+    excessiveScrollRate: pct('excessiveScrollingRate'),
+    scrollDepth:         pct('scrollDepth'),
   };
 }
 
-async function fetchClarity(params: Record<string, string>): Promise<Record<string, unknown>[]> {
+/**
+ * Try calling the Clarity API at each base URL in turn.
+ * Returns on the first successful (2xx) response.
+ */
+async function fetchClarity(
+  params: Record<string, string>,
+): Promise<{ rows: Record<string, unknown>[]; baseUsed: string }> {
+  const candidates = [
+    { base: 'https://api.clarity.ms/v1',                 useClarityAgent: true  },
+    { base: 'https://clarity.microsoft.com/api/v1',      useClarityAgent: false },
+  ];
+
   const qs = new URLSearchParams(params).toString();
-  const url = `${CLARITY_BASE}/projects/${PROJECT_ID}/metrics?${qs}`;
-  console.log('[etz-clarity] fetching:', url);
-  let res: Awaited<ReturnType<typeof undiciFetch>>;
-  try {
-    res = await undiciFetch(url, {
-      headers:    clarityHeaders(),
-      dispatcher: clarityAgent,
-    } as Parameters<typeof undiciFetch>[1]);
-  } catch (netErr) {
-    const msg = netErr instanceof Error ? netErr.message : String(netErr);
-    throw new Error(`Network error reaching ${url} — ${msg}`);
+  const errors: string[] = [];
+
+  for (const { base, useClarityAgent } of candidates) {
+    const url = `${base}/projects/${PROJECT_ID}/metrics?${qs}`;
+    console.log('[etz-clarity] trying:', url);
+
+    let res: Response | Awaited<ReturnType<typeof undiciFetch>>;
+    try {
+      if (useClarityAgent) {
+        res = await undiciFetch(url, {
+          headers:    clarityHeaders(),
+          dispatcher: clarityAgent,
+        } as Parameters<typeof undiciFetch>[1]);
+      } else {
+        res = await fetch(url, { headers: clarityHeaders(), cache: 'no-store' });
+      }
+    } catch (netErr) {
+      const msg = netErr instanceof Error ? netErr.message : String(netErr);
+      console.log('[etz-clarity] network error on', url, '—', msg);
+      errors.push(`${base}: ${msg}`);
+      continue;
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.log('[etz-clarity] HTTP', res.status, 'from', url, body.slice(0, 100));
+      errors.push(`${base}: HTTP ${res.status}`);
+      continue;
+    }
+
+    const json = await res.json() as Record<string, unknown>;
+    let rows: Record<string, unknown>[];
+    if (Array.isArray(json))               rows = json as Record<string, unknown>[];
+    else if (Array.isArray(json['data']))   rows = json['data'] as Record<string, unknown>[];
+    else if (Array.isArray(json['results']))rows = json['results'] as Record<string, unknown>[];
+    else                                    rows = [json];
+
+    console.log('[etz-clarity] success from', base, '—', rows.length, 'rows');
+    return { rows, baseUsed: base };
   }
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Clarity API ${res.status}: ${body.slice(0, 300)}`);
-  }
-  const json = await res.json() as Record<string, unknown>;
-  // Clarity wraps results in { data: [...] } or returns an array directly
-  if (Array.isArray(json)) return json as Record<string, unknown>[];
-  if (Array.isArray(json['data'])) return json['data'] as Record<string, unknown>[];
-  if (Array.isArray(json['results'])) return json['results'] as Record<string, unknown>[];
-  return [json];
+
+  throw new Error(`All Clarity endpoints failed: ${errors.join(' | ')}`);
 }
 
 export async function GET() {
@@ -116,28 +138,31 @@ export async function GET() {
       dateRange: { start: '', end: '' },
       overall:   null,
       bySource:  [],
-      error:     'CLARITY_API_TOKEN not configured. Generate one at clarity.microsoft.com → Settings → API.',
+      error:     'CLARITY_API_TOKEN not configured. Generate at clarity.microsoft.com → Settings → API.',
     } satisfies EtzClarityResponse);
   }
 
-  const endDate   = daysAgo(1);   // yesterday (Clarity lags ~1 day)
-  const startDate = daysAgo(30);  // last 30 days
+  const endDate   = new Date(); endDate.setDate(endDate.getDate() - 1);
+  const startDate = new Date(); startDate.setDate(startDate.getDate() - 30);
+  const fmtDate   = (d: Date) => d.toISOString().slice(0, 10);
 
   try {
-    // 1. Overall metrics — use numOfDays (more widely supported than startDate/endDate)
-    const overallRows = await fetchClarity({ numOfDays: '30' });
+    // 1. Overall metrics
+    const { rows: overallRows } = await fetchClarity({ numOfDays: '30' });
     const overall = overallRows.length > 0 ? normRow(overallRows[0]!, 'All') : null;
 
-    // 2. By source dimension
-    const sourceRows = await fetchClarity({ numOfDays: '30', dimensionType: 'Source' });
+    // 2. By source
+    const { rows: sourceRows, baseUsed } = await fetchClarity({ numOfDays: '30', dimensionType: 'Source' });
     const bySource = sourceRows
       .map(r => normRow(r))
       .filter(r => r.dimensionValue && r.sessions > 0)
       .sort((a, b) => b.sessions - a.sessions);
 
+    console.log('[etz-clarity] done, baseUsed:', baseUsed);
+
     return NextResponse.json({
       connected: true,
-      dateRange: { start: startDate, end: endDate },
+      dateRange: { start: fmtDate(startDate), end: fmtDate(endDate) },
       overall,
       bySource,
     } satisfies EtzClarityResponse);
@@ -146,7 +171,7 @@ export async function GET() {
     console.error('[etz-clarity]', e);
     return NextResponse.json({
       connected: false,
-      dateRange: { start: startDate, end: endDate },
+      dateRange: { start: '', end: '' },
       overall:   null,
       bySource:  [],
       error:     e instanceof Error ? e.message : 'Unknown error',
