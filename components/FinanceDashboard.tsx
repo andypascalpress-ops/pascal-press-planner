@@ -1118,8 +1118,8 @@ function EtzTrendChart({ points }: { points: EtzTrendPoint[] }) {
   if (points.length < 2) return null;
 
   const W   = 800;
-  const H   = 300;
-  const PAD = { t: 16, r: 20, b: 36, l: 40 };
+  const H   = 460;
+  const PAD = { t: 24, r: 20, b: 44, l: 44 };
   const cW  = W - PAD.l - PAD.r;
   const cH  = H - PAD.t - PAD.b;
   const n   = points.length;
