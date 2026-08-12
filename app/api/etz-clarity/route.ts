@@ -19,6 +19,8 @@ import { NextResponse } from 'next/server';
 
 export const revalidate = 3600;
 
+// Try the documented Clarity Data API endpoint.
+// If this URL is wrong, check Vercel function logs for "Clarity fetch error:".
 const CLARITY_BASE = 'https://api.clarity.ms/v1';
 const PROJECT_ID   = process.env.CLARITY_ETZ_PROJECT_ID ?? 'qmef32brd0';
 
@@ -75,10 +77,17 @@ function normRow(raw: Record<string, unknown>, label?: string): ClarityMetricRow
 async function fetchClarity(params: Record<string, string>): Promise<Record<string, unknown>[]> {
   const qs = new URLSearchParams(params).toString();
   const url = `${CLARITY_BASE}/projects/${PROJECT_ID}/metrics?${qs}`;
-  const res = await fetch(url, { headers: clarityHeaders(), cache: 'no-store' });
+  console.log('[etz-clarity] fetching:', url);
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: clarityHeaders(), cache: 'no-store' });
+  } catch (netErr) {
+    const msg = netErr instanceof Error ? netErr.message : String(netErr);
+    throw new Error(`Network error reaching ${url} — ${msg}. Check that CLARITY_API_TOKEN is correct and api.clarity.ms is reachable.`);
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`Clarity API ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`Clarity API ${res.status} from ${url}: ${body.slice(0, 300)}`);
   }
   const json = await res.json() as Record<string, unknown>;
   // Clarity wraps results in { data: [...] } or returns an array directly
