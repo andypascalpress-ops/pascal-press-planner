@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { SpendRecord } from '@/lib/types';
-import { ANNUAL_BUDGETS, MONTHLY_GOOGLE_BUDGETS } from '@/lib/constants';
+import { ANNUAL_BUDGETS, MONTHLY_GOOGLE_BUDGETS, BLAKE_MONTHLY_REVENUE_TARGETS, BLAKE_MONTHLY_MARKETING_BUDGET } from '@/lib/constants';
 import { RevenueData } from '@/lib/bigcommerce-revenue';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
@@ -2951,6 +2951,108 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
               accentBg="bg-emerald-50"
               accentText="text-emerald-800"
             />
+          </div>
+        </div>
+
+        {/* ── Blake Education — FY27 sales & marketing budget ─────────────── */}
+        <div className="px-4 md:px-6 pb-6">
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 bg-orange-50 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <div className="text-xs font-semibold text-orange-900 uppercase tracking-wide">
+                  Blake Education &middot; FY27 Sales Targets &amp; Marketing Budget
+                </div>
+                <div className="text-xs text-orange-700 mt-0.5">
+                  Marketing budget: {AUD.format(BLAKE_MONTHLY_MARKETING_BUDGET)}/mo total
+                  &nbsp;·&nbsp; Google Ads {AUD.format(MONTHLY_GOOGLE_BUDGETS['Blake Education'] ?? 0)}/mo + other channels {AUD.format(BLAKE_MONTHLY_MARKETING_BUDGET - (MONTHLY_GOOGLE_BUDGETS['Blake Education'] ?? 0))}/mo
+                </div>
+              </div>
+              <div className="flex items-center gap-6 text-right">
+                <div>
+                  <div className="text-xs text-gray-500">Annual sales target</div>
+                  <div className="text-base font-bold text-gray-900 tabular-nums">
+                    {AUD.format(Object.values(BLAKE_MONTHLY_REVENUE_TARGETS).reduce((s, v) => s + v, 0))}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500">Annual mktg budget</div>
+                  <div className="text-base font-bold text-orange-700 tabular-nums">
+                    {AUD.format(BLAKE_MONTHLY_MARKETING_BUDGET * 12)}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-orange-50 text-xs text-orange-800 uppercase tracking-wide">
+                    <th className="text-left px-4 py-2.5 font-semibold">Month</th>
+                    <th className="text-right px-4 py-2.5 font-semibold">Sales Target</th>
+                    <th className="text-right px-4 py-2.5 font-semibold">ex-GST</th>
+                    <th className="text-right px-4 py-2.5 font-semibold">Marketing Budget</th>
+                    <th className="text-right px-4 py-2.5 font-semibold">Budget-to-Target %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {([ // FY27: Jul 2026 → Jun 2027
+                    ['2026-07', 7], ['2026-08', 8], ['2026-09', 9],
+                    ['2026-10', 10], ['2026-11', 11], ['2026-12', 12],
+                    ['2027-01', 1], ['2027-02', 2], ['2027-03', 3],
+                    ['2027-04', 4], ['2027-05', 5], ['2027-06', 6],
+                  ] as [string, number][]).map(([ym, mon], i) => {
+                    const { year } = parseYM(ym);
+                    const label = (MONTH_NAMES[mon - 1] ?? '') + ' ' + String(year).slice(-2);
+                    const salesTarget = BLAKE_MONTHLY_REVENUE_TARGETS[mon] ?? 0;
+                    const exGst = Math.round(salesTarget / 1.1);
+                    const pct = salesTarget > 0
+                      ? Math.round((BLAKE_MONTHLY_MARKETING_BUDGET / salesTarget) * 100)
+                      : 0;
+                    return (
+                      <tr key={ym} className={i % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                        <td className="px-4 py-2 font-medium text-gray-800">{label}</td>
+                        <td className="px-4 py-2 text-right tabular-nums font-semibold text-gray-900">
+                          {AUD.format(salesTarget)}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums text-gray-500 text-xs">
+                          {AUD.format(exGst)}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums text-orange-700 font-medium">
+                          {AUD.format(BLAKE_MONTHLY_MARKETING_BUDGET)}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                            pct <= 10 ? 'bg-green-50 text-green-700' :
+                            pct <= 20 ? 'bg-yellow-50 text-yellow-700' :
+                            'bg-red-50 text-red-600'
+                          }`}>
+                            {pct}%
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-orange-50 font-semibold border-t border-orange-200">
+                    <td className="px-4 py-2.5 text-orange-900">FY27 Total</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-900">
+                      {AUD.format(Object.values(BLAKE_MONTHLY_REVENUE_TARGETS).reduce((s, v) => s + v, 0))}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-500 text-xs">
+                      {AUD.format(Math.round(Object.values(BLAKE_MONTHLY_REVENUE_TARGETS).reduce((s, v) => s + v, 0) / 1.1))}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-orange-700">
+                      {AUD.format(BLAKE_MONTHLY_MARKETING_BUDGET * 12)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-50 text-green-700">
+                        {Math.round((BLAKE_MONTHLY_MARKETING_BUDGET * 12 / Object.values(BLAKE_MONTHLY_REVENUE_TARGETS).reduce((s, v) => s + v, 0)) * 100)}%
+                      </span>
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
           </div>
         </div>
 

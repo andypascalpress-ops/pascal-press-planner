@@ -130,6 +130,9 @@ export const HSC_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
 // Excel HSC Copilot total monthly marketing budget
 export const HSC_MONTHLY_MARKETING_BUDGET = 5500;
 
+// Blake Education total monthly marketing budget (Google Ads $700 + other channels $600)
+export const BLAKE_MONTHLY_MARKETING_BUDGET = 1300;
+
 // Blake Education monthly revenue targets (inc. GST = ex-GST × 1.1), FY27
 export const BLAKE_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
   1:   8800, // January
