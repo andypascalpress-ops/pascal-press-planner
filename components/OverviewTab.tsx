@@ -682,23 +682,16 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
         )}
       </div>
 
-      {/* Blake Education — marketing budget summary */}
-      {name === 'Blake Education' && (
-        <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2.5 space-y-1.5">
-          <p className="text-xs font-semibold text-violet-600 uppercase tracking-wide">Marketing Budget</p>
-          <div className="flex justify-between text-xs">
-            <span className="text-gray-500">Google Ads</span>
-            <span className="font-medium text-gray-700">{AUD.format(MONTHLY_GOOGLE_BUDGETS['Blake Education'] ?? 0)}/mo</span>
-          </div>
-          <div className="flex justify-between text-xs">
-            <span className="text-gray-500">Other channels</span>
-            <span className="font-medium text-gray-700">{AUD.format(BLAKE_MONTHLY_MARKETING_BUDGET - (MONTHLY_GOOGLE_BUDGETS['Blake Education'] ?? 0))}/mo</span>
-          </div>
-          <div className="flex justify-between text-xs border-t border-violet-200 pt-1.5">
-            <span className="font-semibold text-gray-700">Total budget</span>
-            <span className="font-bold text-violet-700">{AUD.format(BLAKE_MONTHLY_MARKETING_BUDGET)}/mo</span>
-          </div>
-        </div>
+      {/* Blake Education — show budget bar even before Meta connects */}
+      {name === 'Blake Education' && !data.adsConnected && (
+        <BudgetBar
+          spend={0}
+          budget={BLAKE_MONTHLY_MARKETING_BUDGET}
+          dayPct={dayPct}
+          isMonthly={isMonthly}
+          spendLabel="Meta not connected yet"
+          budgetLabel={`${AUD.format(BLAKE_MONTHLY_MARKETING_BUDGET)} monthly budget`}
+        />
       )}
 
       {/* Ad spend channel breakdown — shown whenever any non-Google spend exists */}
