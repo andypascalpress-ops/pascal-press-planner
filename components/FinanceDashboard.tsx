@@ -1519,7 +1519,9 @@ function EtzTrialsFullView({
                 {!isAcq && (
                   <>
                     <span className="text-sm text-gray-400">·</span>
-                    <span className="text-sm text-gray-500">{traffic.totalNewUsers.toLocaleString()} new users</span>
+                    <span className="text-sm text-gray-500">
+                      {(mainSiteTraffic ?? traffic).totalNewUsers.toLocaleString()} new users
+                    </span>
                   </>
                 )}
               </div>
