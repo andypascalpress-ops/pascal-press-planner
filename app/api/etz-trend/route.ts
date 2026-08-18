@@ -15,6 +15,8 @@ import { fetchETZStripeRevenue }     from '@/lib/stripe-revenue';
 
 // Cache for 30 minutes — historical months don't change; current month refreshes hourly
 export const revalidate = 1800;
+// Allow up to 60 seconds — sequential HubSpot + Stripe calls across 12 months need the headroom
+export const maxDuration = 60;
 
 const HS_BASE = 'https://api.hubapi.com';
 const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -95,48 +97,44 @@ export async function GET(request: Request) {
   const { startDate: ga4Start } = monthToEpochRange(firstMonth);
   const { endDate:   ga4End   } = monthToEpochRange(lastMonth);
 
-  const [ga4Rows] = await Promise.all([
+  // Run GA4 sessions + HubSpot pipeline lookup in parallel
+  const [ga4Rows, pipelineId] = await Promise.all([
     fetchEtzMonthlySessions(ga4Start, ga4End).catch(() => []),
+    fetch(`${HS_BASE}/crm/v3/pipelines/deals`, { headers: hsHeaders(), cache: 'no-store' })
+      .then(async res => {
+        if (!res.ok) return '';
+        const json = await res.json();
+        const pipelines = (json.results ?? []) as Array<{ id: string; label: string }>;
+        return pipelines.find(p => p.label.toLowerCase().includes('etz'))?.id ?? '';
+      })
+      .catch(() => ''),
   ]);
 
   const sessionsByMonth: Record<string, number> = {};
   for (const r of ga4Rows) sessionsByMonth[r.month] = r.sessions;
 
-  // ── 2. HubSpot pipeline ID ────────────────────────────────────────────────
-  let pipelineId = '';
-  try {
-    const res = await fetch(`${HS_BASE}/crm/v3/pipelines/deals`, {
-      headers: hsHeaders(), cache: 'no-store',
-    });
-    if (res.ok) {
-      const json = await res.json();
-      const pipelines = (json.results ?? []) as Array<{ id: string; label: string }>;
-      pipelineId = pipelines.find(p => p.label.toLowerCase().includes('etz'))?.id ?? '';
-    }
-  } catch { /* no HubSpot token — trials will be 0 */ }
-
-  // ── 3. HubSpot trials — sequential to respect rate limits ─────────────────
+  // ── 3. HubSpot trials — sequential with small delay to respect rate limits ──
   const trialsByMonth: Record<string, number> = {};
   if (pipelineId) {
     for (const month of months) {
       const { startMs, endMs } = monthToEpochRange(month);
       trialsByMonth[month] = await hsCountTrials(pipelineId, startMs, endMs);
-      await delay(150);
+      if (month !== months[months.length - 1]) await delay(120);
     }
   }
 
-  // ── 4. Stripe orders — sequential to avoid Vercel function timeouts ──────
+  // ── 4. Stripe orders — parallel across all months (no rate-limit concern) ──
   const ordersByMonth:   Record<string, number> = {};
   const revenueByMonth:  Record<string, number> = {};
-  for (const month of months) {
-    try {
-      const r = await fetchETZStripeRevenue(month);
-      ordersByMonth[month]  = r?.totalOrders  ?? 0;
-      revenueByMonth[month] = r?.totalRevenue ?? 0;
-    } catch {
-      ordersByMonth[month]  = 0;
-      revenueByMonth[month] = 0;
-    }
+  const stripeResults = await Promise.allSettled(
+    months.map(month => fetchETZStripeRevenue(month).catch(() => null)),
+  );
+  for (let i = 0; i < months.length; i++) {
+    const month = months[i]!;
+    const res   = stripeResults[i];
+    const r     = res?.status === 'fulfilled' ? res.value : null;
+    ordersByMonth[month]  = r?.totalOrders  ?? 0;
+    revenueByMonth[month] = r?.totalRevenue ?? 0;
   }
 
   // ── 5. Assemble response ──────────────────────────────────────────────────

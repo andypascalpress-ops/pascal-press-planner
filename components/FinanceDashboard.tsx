@@ -1806,6 +1806,7 @@ function EtzTrialsFullView({
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />
             <span className="text-sm font-semibold text-gray-700">User Behaviour · Microsoft Clarity</span>
+            <span className="text-xs font-mono text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded">app.exceltestzone.com.au</span>
           </div>
           <span className="text-xs text-gray-400">Last 3 days</span>
         </div>

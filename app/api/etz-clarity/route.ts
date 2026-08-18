@@ -28,9 +28,17 @@ export const revalidate = 86400;
 
 const CLARITY_BASE = 'https://www.clarity.ms/export-data/api/v1';
 
+// If the app site has its own Clarity project, use CLARITY_APP_API_TOKEN.
+// Otherwise fall back to the main ETZ token and filter rows by URL prefix.
+function clarityToken() {
+  return process.env.CLARITY_APP_API_TOKEN ?? process.env.CLARITY_API_TOKEN ?? '';
+}
+
+const APP_HOSTNAME = 'app.exceltestzone.com.au';
+
 function clarityHeaders() {
   return {
-    Authorization:    `Bearer ${process.env.CLARITY_API_TOKEN ?? ''}`,
+    Authorization:    `Bearer ${clarityToken()}`,
     'Content-Type':   'application/json',
     Accept:           'application/json',
     'User-Agent':     'Mozilla/5.0 (compatible; PascalPressPlanner/1.0)',
@@ -189,21 +197,30 @@ export async function GET() {
   try {
     // numOfDays accepts only 1, 2, or 3 (last 24/48/72 hours).
     // Use 3 for the widest available window.
-    const params = new URLSearchParams({
-      numOfDays:  '3',
-      dimension1: 'Source',
-    });
-    const url = `${CLARITY_BASE}/project-live-insights?${params}`;
-    console.log('[etz-clarity] fetching:', url);
+    // Fetch two breakdowns in parallel:
+    //   1. Source breakdown  — for the "traffic quality by source" table
+    //   2. Url breakdown     — to verify/filter data to app.exceltestzone.com.au
+    //      (used when CLARITY_APP_API_TOKEN is not set and main ETZ token covers both sites)
+    const hasAppToken = !!process.env.CLARITY_APP_API_TOKEN;
 
-    const res = await fetch(url, {
-      headers: clarityHeaders(),
-      cache:   'no-store',
-    });
+    const makeParams = (dimension: string) =>
+      new URLSearchParams({ numOfDays: '3', dimension1: dimension });
 
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      const msg  = `Clarity API ${res.status}: ${body.slice(0, 200)}`;
+    const [sourceRes, urlRes] = await Promise.all([
+      fetch(`${CLARITY_BASE}/project-live-insights?${makeParams('Source')}`, {
+        headers: clarityHeaders(), cache: 'no-store',
+      }),
+      // Only fetch URL breakdown when using the combined token (to filter to app subdomain)
+      !hasAppToken
+        ? fetch(`${CLARITY_BASE}/project-live-insights?${makeParams('Url')}`, {
+            headers: clarityHeaders(), cache: 'no-store',
+          })
+        : Promise.resolve(null),
+    ]);
+
+    if (!sourceRes.ok) {
+      const body = await sourceRes.text().catch(() => '');
+      const msg  = `Clarity API ${sourceRes.status}: ${body.slice(0, 200)}`;
       console.error('[etz-clarity]', msg);
       return NextResponse.json({
         connected: false,
@@ -214,24 +231,46 @@ export async function GET() {
       } satisfies EtzClarityResponse);
     }
 
-    const data = await res.json() as unknown;
-    // Log full raw response (field names vary by Clarity version — helpful for debugging)
-    console.log('[etz-clarity] raw response:', JSON.stringify(data).slice(0, 3000));
+    const sourceData = await sourceRes.json() as unknown;
+    console.log('[etz-clarity] raw source response:', JSON.stringify(sourceData).slice(0, 2000));
 
-    // Response: array of { metricName: string, information: [...] }
-    const groups: MetricGroup[] = Array.isArray(data)
-      ? (data as MetricGroup[])
-      : [];
+    const sourceGroups: MetricGroup[] = Array.isArray(sourceData) ? (sourceData as MetricGroup[]) : [];
 
-    const sourceMap = buildPerSourceMap(groups, 'Source');
+    // If we have a URL breakdown, compute the fraction of sessions that are on the app subdomain
+    // and use it to scale down source sessions (best available approximation when one Clarity
+    // project covers both exceltestzone.com.au and app.exceltestzone.com.au).
+    let appFraction = 1.0; // default: assume all data is from the app site (CLARITY_APP_API_TOKEN case)
+    if (!hasAppToken && urlRes && urlRes.ok) {
+      const urlData = await urlRes.json() as unknown;
+      const urlGroups: MetricGroup[] = Array.isArray(urlData) ? (urlData as MetricGroup[]) : [];
+      const urlMap   = buildPerSourceMap(urlGroups, 'Url');
+
+      let appSessions   = 0;
+      let totalSessions = 0;
+      for (const [url, merged] of urlMap.entries()) {
+        const sessions = (merged['totalSessionCount'] as number) || 0;
+        totalSessions += sessions;
+        if (url.includes(APP_HOSTNAME)) appSessions += sessions;
+      }
+      if (totalSessions > 0) {
+        appFraction = appSessions / totalSessions;
+        console.log(`[etz-clarity] app fraction: ${(appFraction * 100).toFixed(1)}% (${appSessions}/${totalSessions} sessions on ${APP_HOSTNAME})`);
+      }
+    }
+
+    const sourceMap = buildPerSourceMap(sourceGroups, 'Source');
     const bySource: ClarityMetricRow[] = Array.from(sourceMap.entries())
-      .map(([label, merged]) => rowFromMerged(merged, label))
+      .map(([label, merged]) => {
+        const row = rowFromMerged(merged, label);
+        // Scale sessions by the app fraction when using combined token
+        return { ...row, sessions: Math.round(row.sessions * appFraction) };
+      })
       .filter(r => r.sessions > 0)
       .sort((a, b) => b.sessions - a.sessions);
 
     const overall = aggregateOverall(bySource);
 
-    console.log('[etz-clarity] parsed:', bySource.length, 'sources');
+    console.log('[etz-clarity] parsed:', bySource.length, 'sources, app fraction:', (appFraction * 100).toFixed(1) + '%');
 
     return NextResponse.json({
       connected: true,
