@@ -16,7 +16,7 @@
  * PP campaigns should NOT (i.e. excludes: 'ETZ').
  */
 
-const META_GRAPH_API = 'https://graph.facebook.com/v20.0';
+const META_GRAPH_API = 'https://graph.facebook.com/v22.0';
 const ACCESS_TOKEN   = process.env.META_ADS_ACCESS_TOKEN   ?? '';
 
 export const META_PP_ACCOUNT_ID  = process.env.META_PP_AD_ACCOUNT_ID  ?? '';
