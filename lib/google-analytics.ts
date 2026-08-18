@@ -788,11 +788,23 @@ export async function fetchEtzFunnelTraffic(
   try {
     const accessToken = await getAccessToken();
 
+    // Restrict to the main marketing site only — exclude blog, learning, app subdomains.
+    // OR-match on exact hostnames so we get both www and non-www variants.
+    const mainSiteFilter = {
+      orGroup: {
+        expressions: [
+          { filter: { fieldName: 'hostname', stringFilter: { matchType: 'EXACT', value: 'exceltestzone.com.au'     } } },
+          { filter: { fieldName: 'hostname', stringFilter: { matchType: 'EXACT', value: 'www.exceltestzone.com.au' } } },
+        ],
+      },
+    };
+
     const data = await runReportOnProperty(accessToken, GA4_ETZ_BASE, {
-      dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: 'sessionDefaultChannelGroup' }],
-      metrics:    [{ name: 'sessions' }, { name: 'newUsers' }],
-      orderBys:   [{ metric: { metricName: 'sessions' }, desc: true }],
+      dateRanges:      [{ startDate, endDate }],
+      dimensions:      [{ name: 'sessionDefaultChannelGroup' }],
+      metrics:         [{ name: 'sessions' }, { name: 'newUsers' }],
+      dimensionFilter: mainSiteFilter,
+      orderBys:        [{ metric: { metricName: 'sessions' }, desc: true }],
       limit: 20,
     });
 
