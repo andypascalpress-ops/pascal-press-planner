@@ -1414,15 +1414,73 @@ function EtzTrialsFullView({
   const funnelReady   = !loading && !loadingTraffic && data != null;
   const hasAppStage   = appTraffic?.connected === true;
 
+  // ── Acquisition view (new users tab) ────────────────────────────────────
+  const [etzSubView, setEtzSubView] = useState<'all' | 'acquisition'>('all');
+  const isAcq        = etzSubView === 'acquisition';
+  const newUsers     = traffic?.totalNewUsers    ?? 0;
+  const newAppUsers  = appTraffic?.totalNewUsers ?? 0;
+
+  // Swap headline figures based on active tab
+  const s1      = isAcq ? newUsers    : sessions;
+  const s2      = isAcq ? newAppUsers : appSessions;
+  const s1Label = isAcq ? 'new visitors' : 'sessions';
+  const s2Label = isAcq ? 'new app visitors' : 'app sessions';
+
+  // Acquisition-view conversion rates (denominators use new users)
+  const acqAppClickRate = newUsers > 0 && appTraffic?.connected ? (newAppUsers / newUsers) * 100 : null;
+  const acqAppTrialRate = newAppUsers > 0 && appTraffic?.connected ? (trials / newAppUsers) * 100 : null;
+  const acqOverallRate  = newUsers > 0 && stripeConnected ? (orders / newUsers) * 100 : null;
+
+  // Channel bar recalculated from newUsers when in acquisition view
+  const channelData = (isAcq && traffic)
+    ? traffic.byChannel.map(ch => ({
+        ...ch,
+        displayCount: ch.newUsers,
+        pct: newUsers > 0 ? Math.round((ch.newUsers / newUsers) * 100) : 0,
+      }))
+    : (traffic?.byChannel ?? []).map(ch => ({ ...ch, displayCount: ch.sessions }));
+
+  // Pro-rata daily average revenue for acquisition view
+  const [ymY, ymM] = month.split('-').map(Number);
+  const nowDate       = new Date();
+  const isCurrentMo   = ymY === nowDate.getFullYear() && ymM === nowDate.getMonth() + 1;
+  const daysElapsed   = isCurrentMo ? nowDate.getDate() : new Date(ymY!, ymM!, 0).getDate();
+  const daysInMonth   = new Date(ymY!, ymM!, 0).getDate();
+  const dailyAvgRev   = daysElapsed > 0 ? stripeRevenue / daysElapsed : 0;
+  const prevTrendPt   = trend?.points?.[trend.points.length - 2] ?? null;
+  const prevRevenue   = prevTrendPt?.revenue ?? 0;
+  const prevDaysInMo  = prevTrendPt
+    ? new Date(parseInt(prevTrendPt.month.split('-')[0]!), parseInt(prevTrendPt.month.split('-')[1]!), 0).getDate()
+    : 30;
+  const prevDailyAvg  = prevDaysInMo > 0 ? prevRevenue / prevDaysInMo : 0;
+  const projectedRev  = dailyAvgRev * daysInMonth;
+
   return (
     <div className="px-4 md:px-8 py-6 max-w-3xl mx-auto space-y-2">
 
       {/* Header */}
-      <div className="mb-5">
-        <h2 className="text-lg font-bold text-gray-900">Excel Test Zone · Conversion Funnel</h2>
-        <p className="text-sm text-gray-500 mt-0.5">
-          {monthLabel(month)} · GA4 → HubSpot → Stripe
-        </p>
+      <div className="flex items-start justify-between mb-5">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Excel Test Zone · Conversion Funnel</h2>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {monthLabel(month)} · GA4 → HubSpot → Stripe
+          </p>
+        </div>
+        <div className="flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 shrink-0">
+          {(['all', 'acquisition'] as const).map(v => (
+            <button
+              key={v}
+              onClick={() => setEtzSubView(v)}
+              className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
+                etzSubView === v
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {v === 'all' ? 'All Sessions' : 'New Users'}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ── Stage 1: Main site traffic ─────────────────────────────────────── */}
@@ -1443,33 +1501,41 @@ function EtzTrialsFullView({
             <>
               <div className="flex items-baseline gap-3 mb-4">
                 <span className="text-4xl font-extrabold text-gray-900 tabular-nums">
-                  {sessions.toLocaleString()}
+                  {s1.toLocaleString()}
                 </span>
-                <span className="text-sm text-gray-500">sessions</span>
-                <span className="text-sm text-gray-400">·</span>
-                <span className="text-sm text-gray-500">
-                  {traffic.totalNewUsers.toLocaleString()} new users
-                </span>
+                <span className="text-sm text-gray-500">{s1Label}</span>
+                {isAcq && (
+                  <>
+                    <span className="text-sm text-gray-400">·</span>
+                    <span className="text-sm text-gray-400">{sessions.toLocaleString()} total sessions</span>
+                  </>
+                )}
+                {!isAcq && (
+                  <>
+                    <span className="text-sm text-gray-400">·</span>
+                    <span className="text-sm text-gray-500">{traffic.totalNewUsers.toLocaleString()} new users</span>
+                  </>
+                )}
               </div>
               {/* Channel breakdown bar */}
               <div className="flex h-3 rounded-full overflow-hidden gap-px mb-3">
-                {traffic.byChannel.map(ch => (
+                {channelData.map(ch => (
                   <div
                     key={ch.channel}
                     style={{ width: `${ch.pct}%`, background: channelColor(ch.channel) }}
-                    title={`${ch.channel}: ${ch.sessions.toLocaleString()} sessions (${ch.pct}%)`}
+                    title={`${ch.channel}: ${ch.displayCount.toLocaleString()} ${s1Label} (${ch.pct}%)`}
                   />
                 ))}
               </div>
               {/* Channel legend */}
               <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                {traffic.byChannel.map(ch => (
+                {channelData.map(ch => (
                   <div key={ch.channel} className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-sm inline-block flex-shrink-0"
                       style={{ background: channelColor(ch.channel) }} />
                     <span className="text-xs text-gray-600 font-medium">{ch.channel}</span>
                     <span className="text-xs text-gray-400 tabular-nums">
-                      {ch.sessions.toLocaleString()} ({ch.pct}%)
+                      {ch.displayCount.toLocaleString()} ({ch.pct}%)
                     </span>
                   </div>
                 ))}
@@ -1481,11 +1547,11 @@ function EtzTrialsFullView({
 
       {/* Drop arrow 1: main site → app */}
       {funnelReady && traffic?.connected && hasAppStage && (
-        <FunnelDropArrow from={sessions} to={appSessions} label="visited main site → reached app" />
+        <FunnelDropArrow from={s1} to={s2} label={`${s1Label} → reached app`} />
       )}
       {/* Drop arrow 1 fallback: main site → trial (when no app data) */}
       {funnelReady && traffic?.connected && !hasAppStage && (
-        <FunnelDropArrow from={sessions} to={trials} label="session → trial" />
+        <FunnelDropArrow from={s1} to={trials} label={`${s1Label} → trial`} />
       )}
 
       {/* ── Stage 1b: App site (app.exceltestzone.com.au) ─────────────────── */}
@@ -1513,16 +1579,16 @@ function EtzTrialsFullView({
             <div className="flex flex-wrap items-center gap-8">
               <div>
                 <div className="text-4xl font-extrabold text-gray-900 tabular-nums">
-                  {appSessions.toLocaleString()}
+                  {s2.toLocaleString()}
                 </div>
-                <div className="text-sm text-gray-500 mt-0.5">app sessions</div>
+                <div className="text-sm text-gray-500 mt-0.5">{s2Label}</div>
               </div>
-              {appClickRate != null && (
+              {(isAcq ? acqAppClickRate : appClickRate) != null && (
                 <div>
                   <div className="text-2xl font-bold text-sky-600 tabular-nums">
-                    {appClickRate.toFixed(1)}%
+                    {(isAcq ? acqAppClickRate! : appClickRate!).toFixed(1)}%
                   </div>
-                  <div className="text-xs text-gray-400 mt-0.5">of main site visitors</div>
+                  <div className="text-xs text-gray-400 mt-0.5">of main site {isAcq ? 'new visitors' : 'visitors'}</div>
                 </div>
               )}
               {appTraffic.fromMainSite > 0 && (
@@ -1548,7 +1614,7 @@ function EtzTrialsFullView({
 
       {/* Drop arrow 2: app → trial */}
       {funnelReady && hasAppStage && (
-        <FunnelDropArrow from={appSessions} to={trials} label="app session → free trial" />
+        <FunnelDropArrow from={s2} to={trials} label={`${s2Label} → free trial`} />
       )}
 
       {/* ── Stage 3: Free Trials ───────────────────────────────────────────── */}
@@ -1571,12 +1637,12 @@ function EtzTrialsFullView({
                 </div>
                 <div className="text-sm text-gray-500 mt-0.5">trials started</div>
               </div>
-              {appTrialRate != null && (
+              {(isAcq ? acqAppTrialRate : appTrialRate) != null && (
                 <div>
                   <div className="text-2xl font-bold text-violet-600 tabular-nums">
-                    {appTrialRate.toFixed(2)}%
+                    {(isAcq ? acqAppTrialRate! : appTrialRate!).toFixed(2)}%
                   </div>
-                  <div className="text-xs text-gray-400 mt-0.5">of app visitors → trial</div>
+                  <div className="text-xs text-gray-400 mt-0.5">of {isAcq ? 'new' : ''} app visitors → trial</div>
                 </div>
               )}
               {trialRate != null && (
@@ -1691,19 +1757,53 @@ function EtzTrialsFullView({
           {!stripeConnected ? (
             <p className="text-sm text-gray-400 italic">Stripe not connected</p>
           ) : (
-            <div className="flex items-center gap-8">
-              <div>
-                <div className="text-4xl font-extrabold text-emerald-600 tabular-nums">
-                  {orders.toLocaleString()}
-                </div>
-                <div className="text-sm text-gray-500 mt-0.5">orders · {AUD.format(stripeRevenue)}</div>
-              </div>
-              {convRate != null && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-8">
                 <div>
-                  <div className="text-2xl font-bold text-emerald-600 tabular-nums">
-                    {convRate.toFixed(1)}%
+                  <div className="text-4xl font-extrabold text-emerald-600 tabular-nums">
+                    {orders.toLocaleString()}
                   </div>
-                  <div className="text-xs text-gray-400 mt-0.5">trial → paid rate</div>
+                  <div className="text-sm text-gray-500 mt-0.5">orders · {AUD.format(stripeRevenue)}</div>
+                </div>
+                {convRate != null && (
+                  <div>
+                    <div className="text-2xl font-bold text-emerald-600 tabular-nums">
+                      {convRate.toFixed(1)}%
+                    </div>
+                    <div className="text-xs text-gray-400 mt-0.5">trial → paid rate</div>
+                  </div>
+                )}
+              </div>
+              {/* Pro-rata daily average — acquisition view only */}
+              {isAcq && stripeRevenue > 0 && (
+                <div className="bg-gray-50 rounded-xl px-4 py-3 space-y-2">
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Daily average revenue</div>
+                  <div className="flex items-center gap-6 flex-wrap">
+                    <div>
+                      <div className="text-2xl font-bold text-emerald-600 tabular-nums">
+                        {AUD.format(dailyAvgRev)}<span className="text-sm font-normal text-gray-400">/day</span>
+                      </div>
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        this month · {daysElapsed} of {daysInMonth} days elapsed
+                      </div>
+                    </div>
+                    {prevDailyAvg > 0 && (
+                      <div>
+                        <div className={`text-xl font-bold tabular-nums ${dailyAvgRev >= prevDailyAvg ? 'text-emerald-500' : 'text-red-500'}`}>
+                          {dailyAvgRev >= prevDailyAvg ? '▲' : '▼'} {AUD.format(prevDailyAvg)}<span className="text-sm font-normal text-gray-400">/day</span>
+                        </div>
+                        <div className="text-xs text-gray-400 mt-0.5">
+                          {prevTrendPt?.label ?? 'prev month'} avg · {((dailyAvgRev - prevDailyAvg) / prevDailyAvg * 100).toFixed(1)}% {dailyAvgRev >= prevDailyAvg ? 'ahead' : 'behind'}
+                        </div>
+                      </div>
+                    )}
+                    {isCurrentMo && (
+                      <div className="ml-auto text-right">
+                        <div className="text-sm font-semibold text-gray-600 tabular-nums">{AUD.format(projectedRev)}</div>
+                        <div className="text-xs text-gray-400">projected month-end</div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -1712,19 +1812,19 @@ function EtzTrialsFullView({
       </div>
 
       {/* ── Overall summary strip ─────────────────────────────────────────── */}
-      {funnelReady && stripeConnected && traffic?.connected && overallRate != null && (
+      {funnelReady && stripeConnected && traffic?.connected && (isAcq ? acqOverallRate : overallRate) != null && (
         <div className="bg-gray-900 rounded-2xl px-6 py-4 flex items-center justify-between mt-2">
           <div>
             <div className="text-xs text-gray-400 font-medium uppercase tracking-wide mb-1">
-              Overall · session → paid
+              Overall · {isAcq ? 'new visitor' : 'session'} → paid
             </div>
             <div className="text-2xl font-extrabold text-white tabular-nums">
-              {overallRate.toFixed(2)}%
+              {(isAcq ? acqOverallRate! : overallRate!).toFixed(2)}%
             </div>
           </div>
           <div className="text-right">
             <div className="text-xs text-gray-400 mb-1">
-              {sessions.toLocaleString()} sessions
+              {s1.toLocaleString()} {s1Label}
             </div>
             <div className="text-xs text-gray-400">
               → {trials.toLocaleString()} trials → {orders.toLocaleString()} paid
