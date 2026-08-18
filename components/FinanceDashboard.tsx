@@ -1551,13 +1551,12 @@ function EtzTrialsFullView({
         </div>
       </div>
 
-      {/* Drop arrow 1: main site → app (acquisition view only — in All Sessions
-           app sessions include returning users so the ratio is not a funnel metric) */}
-      {funnelReady && traffic?.connected && hasAppStage && isAcq && (
+      {/* Drop arrow 1: main site → app */}
+      {funnelReady && traffic?.connected && hasAppStage && (
         <FunnelDropArrow from={s1} to={s2} label={`${s1Label} → reached app`} />
       )}
-      {/* Drop arrow 1 fallback: main site → trial (when no app data, or All Sessions without app stage) */}
-      {funnelReady && traffic?.connected && (!hasAppStage || !isAcq) && (
+      {/* Drop arrow 1 fallback: main site → trial (when no app data) */}
+      {funnelReady && traffic?.connected && !hasAppStage && (
         <FunnelDropArrow from={s1} to={trials} label={`${s1Label} → trial`} />
       )}
 
@@ -1590,15 +1589,12 @@ function EtzTrialsFullView({
                 </div>
                 <div className="text-sm text-gray-500 mt-0.5">{s2Label}</div>
               </div>
-              {/* Only show the click-through % in acquisition (New Users) view —
-                   in All Sessions, returning users inflate app sessions above the
-                   main-site count, making the ratio meaningless as a funnel metric. */}
-              {isAcq && acqAppClickRate != null && (
+              {(isAcq ? acqAppClickRate : appClickRate) != null && (
                 <div>
                   <div className="text-2xl font-bold text-sky-600 tabular-nums">
-                    {acqAppClickRate.toFixed(1)}%
+                    {(isAcq ? acqAppClickRate! : appClickRate!).toFixed(1)}%
                   </div>
-                  <div className="text-xs text-gray-400 mt-0.5">of new visitors</div>
+                  <div className="text-xs text-gray-400 mt-0.5">of main site {isAcq ? 'new visitors' : 'visitors'}</div>
                 </div>
               )}
               {appTraffic.fromMainSite > 0 && (
@@ -1622,8 +1618,8 @@ function EtzTrialsFullView({
         </div>
       </div>
 
-      {/* Drop arrow 2: app → trial (acquisition view only, same reason as arrow 1) */}
-      {funnelReady && hasAppStage && isAcq && (
+      {/* Drop arrow 2: app → trial */}
+      {funnelReady && hasAppStage && (
         <FunnelDropArrow from={s2} to={trials} label={`${s2Label} → free trial`} />
       )}
 
@@ -1647,12 +1643,12 @@ function EtzTrialsFullView({
                 </div>
                 <div className="text-sm text-gray-500 mt-0.5">trials started</div>
               </div>
-              {isAcq && acqAppTrialRate != null && (
+              {(isAcq ? acqAppTrialRate : appTrialRate) != null && (
                 <div>
                   <div className="text-2xl font-bold text-violet-600 tabular-nums">
-                    {acqAppTrialRate.toFixed(2)}%
+                    {(isAcq ? acqAppTrialRate! : appTrialRate!).toFixed(2)}%
                   </div>
-                  <div className="text-xs text-gray-400 mt-0.5">of new app visitors → trial</div>
+                  <div className="text-xs text-gray-400 mt-0.5">of {isAcq ? 'new' : ''} app visitors → trial</div>
                 </div>
               )}
               {trialRate != null && (
