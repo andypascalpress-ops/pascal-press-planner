@@ -1,7 +1,12 @@
 /**
  * GET /api/etz-clarity
  *
- * Fetches behavioral metrics from Microsoft Clarity for the ETZ project.
+ * Fetches behavioral metrics from Microsoft Clarity for the ETZ project,
+ * filtered to app.exceltestzone.com.au pages only.
+ *
+ * The single Clarity project tracks both www and app subdomains.
+ * We use dimension1=URL and filter rows where the URL contains "app"
+ * — equivalent to Clarity UI's "Visited URL contains: app" segment.
  *
  * Uses the official Clarity Data Export API:
  *   GET https://www.clarity.ms/export-data/api/v1/project-live-insights
@@ -189,9 +194,11 @@ export async function GET() {
   try {
     // numOfDays accepts only 1, 2, or 3 (last 24/48/72 hours).
     // Use 3 for the widest available window.
+    // Use dimension1=URL so we can filter rows to app-subdomain pages only,
+    // matching the Clarity UI "Visited URL contains: app" segment.
     const params = new URLSearchParams({
       numOfDays:  '3',
-      dimension1: 'Source',
+      dimension1: 'URL',
     });
     const url = `${CLARITY_BASE}/project-live-insights?${params}`;
     console.log('[etz-clarity] fetching:', url);
@@ -219,15 +226,29 @@ export async function GET() {
 
     const groups: MetricGroup[] = Array.isArray(data) ? (data as MetricGroup[]) : [];
 
-    const sourceMap = buildPerSourceMap(groups, 'Source');
-    const bySource: ClarityMetricRow[] = Array.from(sourceMap.entries())
+    // Build per-URL map, then filter to rows where URL contains "app"
+    // (catches app.exceltestzone.com.au/* pages, mirroring the Clarity UI filter)
+    const urlMap = buildPerSourceMap(groups, 'URL');
+    const allUrlRows: ClarityMetricRow[] = Array.from(urlMap.entries())
       .map(([label, merged]) => rowFromMerged(merged, label))
-      .filter(r => r.sessions > 0)
-      .sort((a, b) => b.sessions - a.sessions);
+      .filter(r => r.sessions > 0);
+
+    const appRows = allUrlRows.filter(r =>
+      r.dimensionValue.toLowerCase().includes('app'),
+    );
+
+    // Use app-filtered rows; fall back to all rows if the filter returns nothing
+    // (e.g. if URL dimension values don't include the hostname)
+    const bySource: ClarityMetricRow[] = (appRows.length > 0 ? appRows : allUrlRows)
+      .sort((a, b) => b.sessions - a.sessions)
+      .slice(0, 10); // top 10 pages
 
     const overall = aggregateOverall(bySource);
 
-    console.log('[etz-clarity] parsed:', bySource.length, 'sources');
+    console.log(
+      '[etz-clarity] parsed:', allUrlRows.length, 'URLs,',
+      appRows.length, 'app URLs',
+    );
 
     return NextResponse.json({
       connected: true,
