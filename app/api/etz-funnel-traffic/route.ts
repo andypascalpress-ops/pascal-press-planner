@@ -22,6 +22,7 @@ export async function GET(req: NextRequest) {
   const endDayNum   = isCurrentMonth ? Math.min(lastDay, now.getDate()) : lastDay;
   const endDate     = `${year}-${mon}-${String(endDayNum).padStart(2, '0')}`;
 
-  const data = await fetchEtzFunnelTraffic(startDate, endDate);
+  const mainSiteOnly = req.nextUrl.searchParams.get('mainSiteOnly') === 'true';
+  const data = await fetchEtzFunnelTraffic(startDate, endDate, mainSiteOnly);
   return NextResponse.json({ month, ...data });
 }

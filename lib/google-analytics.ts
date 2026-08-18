@@ -779,8 +779,9 @@ export interface EtzFunnelTrafficData {
 }
 
 export async function fetchEtzFunnelTraffic(
-  startDate: string,
-  endDate:   string,
+  startDate:    string,
+  endDate:      string,
+  mainSiteOnly: boolean = false,
 ): Promise<EtzFunnelTrafficData> {
   const empty: EtzFunnelTrafficData = { totalSessions: 0, totalNewUsers: 0, byChannel: [], connected: false };
   if (!isETZConnected()) return empty;
@@ -788,22 +789,23 @@ export async function fetchEtzFunnelTraffic(
   try {
     const accessToken = await getAccessToken();
 
-    // Restrict to the main marketing site only — exclude blog, learning, app subdomains.
-    // OR-match on exact hostnames so we get both www and non-www variants.
-    const mainSiteFilter = {
+    // When mainSiteOnly=true (used by the New Users acquisition view), restrict to
+    // exceltestzone.com.au and www.exceltestzone.com.au only — excludes blog,
+    // learning, app subdomains so new-visitor counts reflect only marketing site traffic.
+    const mainSiteFilter = mainSiteOnly ? {
       orGroup: {
         expressions: [
           { filter: { fieldName: 'hostname', stringFilter: { matchType: 'EXACT', value: 'exceltestzone.com.au'     } } },
           { filter: { fieldName: 'hostname', stringFilter: { matchType: 'EXACT', value: 'www.exceltestzone.com.au' } } },
         ],
       },
-    };
+    } : undefined;
 
     const data = await runReportOnProperty(accessToken, GA4_ETZ_BASE, {
       dateRanges:      [{ startDate, endDate }],
       dimensions:      [{ name: 'sessionDefaultChannelGroup' }],
       metrics:         [{ name: 'sessions' }, { name: 'newUsers' }],
-      dimensionFilter: mainSiteFilter,
+      ...(mainSiteFilter ? { dimensionFilter: mainSiteFilter } : {}),
       orderBys:        [{ metric: { metricName: 'sessions' }, desc: true }],
       limit: 20,
     });

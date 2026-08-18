@@ -1356,6 +1356,8 @@ function EtzTrialsFullView({
   stripeConnected,
   traffic,
   loadingTraffic,
+  mainSiteTraffic,
+  loadingMainSiteTraffic,
   appTraffic,
   loadingAppTraffic,
   trend,
@@ -1363,20 +1365,22 @@ function EtzTrialsFullView({
   sources,
   loadingSources,
 }: {
-  data:               EtzTrialFunnelResponse | null;
-  loading:            boolean;
-  month:              string;
-  stripeOrders:       number;
-  stripeRevenue:      number;
-  stripeConnected:    boolean;
-  traffic:            EtzFunnelTrafficResponse | null;
-  loadingTraffic:     boolean;
-  appTraffic:         EtzAppTrafficResponse | null;
-  loadingAppTraffic:  boolean;
-  trend:              EtzTrendResponse | null;
-  loadingTrend:       boolean;
-  sources:            EtzSourceResponse | null;
-  loadingSources:     boolean;
+  data:                    EtzTrialFunnelResponse | null;
+  loading:                 boolean;
+  month:                   string;
+  stripeOrders:            number;
+  stripeRevenue:           number;
+  stripeConnected:         boolean;
+  traffic:                 EtzFunnelTrafficResponse | null;
+  loadingTraffic:          boolean;
+  mainSiteTraffic:         EtzFunnelTrafficResponse | null;
+  loadingMainSiteTraffic:  boolean;
+  appTraffic:              EtzAppTrafficResponse | null;
+  loadingAppTraffic:       boolean;
+  trend:                   EtzTrendResponse | null;
+  loadingTrend:            boolean;
+  sources:                 EtzSourceResponse | null;
+  loadingSources:          boolean;
 }) {
   if (loading) {
     return (
@@ -1417,8 +1421,10 @@ function EtzTrialsFullView({
   // ── Acquisition view (new users tab) ────────────────────────────────────
   const [etzSubView, setEtzSubView] = useState<'all' | 'acquisition'>('all');
   const isAcq        = etzSubView === 'acquisition';
-  const newUsers     = traffic?.totalNewUsers    ?? 0;
-  const newAppUsers  = appTraffic?.totalNewUsers ?? 0;
+  // New users: use hostname-filtered data (exceltestzone.com.au only) for acquisition view
+  const acqTraffic   = mainSiteTraffic ?? traffic;          // fall back to unfiltered if not loaded yet
+  const newUsers     = acqTraffic?.totalNewUsers  ?? 0;
+  const newAppUsers  = appTraffic?.totalNewUsers  ?? 0;
 
   // Swap headline figures based on active tab
   const s1      = isAcq ? newUsers    : sessions;
@@ -1431,9 +1437,9 @@ function EtzTrialsFullView({
   const acqAppTrialRate = newAppUsers > 0 && appTraffic?.connected ? (trials / newAppUsers) * 100 : null;
   const acqOverallRate  = newUsers > 0 && stripeConnected ? (orders / newUsers) * 100 : null;
 
-  // Channel bar recalculated from newUsers when in acquisition view
-  const channelData = (isAcq && traffic)
-    ? traffic.byChannel.map(ch => ({
+  // Channel bar recalculated from newUsers when in acquisition view (uses filtered acqTraffic)
+  const channelData = (isAcq && acqTraffic)
+    ? acqTraffic.byChannel.map(ch => ({
         ...ch,
         displayCount: ch.newUsers,
         pct: newUsers > 0 ? Math.round((ch.newUsers / newUsers) * 100) : 0,
@@ -1545,12 +1551,13 @@ function EtzTrialsFullView({
         </div>
       </div>
 
-      {/* Drop arrow 1: main site → app */}
-      {funnelReady && traffic?.connected && hasAppStage && (
+      {/* Drop arrow 1: main site → app (acquisition view only — in All Sessions
+           app sessions include returning users so the ratio is not a funnel metric) */}
+      {funnelReady && traffic?.connected && hasAppStage && isAcq && (
         <FunnelDropArrow from={s1} to={s2} label={`${s1Label} → reached app`} />
       )}
-      {/* Drop arrow 1 fallback: main site → trial (when no app data) */}
-      {funnelReady && traffic?.connected && !hasAppStage && (
+      {/* Drop arrow 1 fallback: main site → trial (when no app data, or All Sessions without app stage) */}
+      {funnelReady && traffic?.connected && (!hasAppStage || !isAcq) && (
         <FunnelDropArrow from={s1} to={trials} label={`${s1Label} → trial`} />
       )}
 
@@ -1583,12 +1590,15 @@ function EtzTrialsFullView({
                 </div>
                 <div className="text-sm text-gray-500 mt-0.5">{s2Label}</div>
               </div>
-              {(isAcq ? acqAppClickRate : appClickRate) != null && (
+              {/* Only show the click-through % in acquisition (New Users) view —
+                   in All Sessions, returning users inflate app sessions above the
+                   main-site count, making the ratio meaningless as a funnel metric. */}
+              {isAcq && acqAppClickRate != null && (
                 <div>
                   <div className="text-2xl font-bold text-sky-600 tabular-nums">
-                    {(isAcq ? acqAppClickRate! : appClickRate!).toFixed(1)}%
+                    {acqAppClickRate.toFixed(1)}%
                   </div>
-                  <div className="text-xs text-gray-400 mt-0.5">of main site {isAcq ? 'new visitors' : 'visitors'}</div>
+                  <div className="text-xs text-gray-400 mt-0.5">of new visitors</div>
                 </div>
               )}
               {appTraffic.fromMainSite > 0 && (
@@ -1612,8 +1622,8 @@ function EtzTrialsFullView({
         </div>
       </div>
 
-      {/* Drop arrow 2: app → trial */}
-      {funnelReady && hasAppStage && (
+      {/* Drop arrow 2: app → trial (acquisition view only, same reason as arrow 1) */}
+      {funnelReady && hasAppStage && isAcq && (
         <FunnelDropArrow from={s2} to={trials} label={`${s2Label} → free trial`} />
       )}
 
@@ -1637,12 +1647,12 @@ function EtzTrialsFullView({
                 </div>
                 <div className="text-sm text-gray-500 mt-0.5">trials started</div>
               </div>
-              {(isAcq ? acqAppTrialRate : appTrialRate) != null && (
+              {isAcq && acqAppTrialRate != null && (
                 <div>
                   <div className="text-2xl font-bold text-violet-600 tabular-nums">
-                    {(isAcq ? acqAppTrialRate! : appTrialRate!).toFixed(2)}%
+                    {acqAppTrialRate.toFixed(2)}%
                   </div>
-                  <div className="text-xs text-gray-400 mt-0.5">of {isAcq ? 'new' : ''} app visitors → trial</div>
+                  <div className="text-xs text-gray-400 mt-0.5">of new app visitors → trial</div>
                 </div>
               )}
               {trialRate != null && (
@@ -2316,6 +2326,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [loadingEtzTrial,      setLoadingEtzTrial     ] = useState(false);
   const [etzTraffic,           setEtzTraffic          ] = useState<EtzFunnelTrafficResponse | null>(null);
   const [loadingEtzTraffic,    setLoadingEtzTraffic   ] = useState(false);
+  const [etzMainSiteTraffic,   setEtzMainSiteTraffic  ] = useState<EtzFunnelTrafficResponse | null>(null);
+  const [loadingMainSiteTraffic, setLoadingMainSiteTraffic] = useState(false);
   const [etzAppTraffic,        setEtzAppTraffic       ] = useState<EtzAppTrafficResponse | null>(null);
   const [loadingEtzAppTraffic, setLoadingEtzAppTraffic] = useState(false);
   const [etzTrend,             setEtzTrend            ] = useState<EtzTrendResponse | null>(null);
@@ -2348,6 +2360,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
     setMetaCampaigns(null);
     setEtzTrialFunnel(null);
     setEtzTraffic(null);
+    setEtzMainSiteTraffic(null);
     setEtzAppTraffic(null);
     setEtzSources(null);
     setSiteConversion(null);
@@ -2423,6 +2436,15 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
       })
       .catch((e) => { if (e?.name !== 'AbortError') setEtzTraffic(null); })
       .finally(() => { if (!signal.aborted) setLoadingEtzTraffic(false); });
+
+    setLoadingMainSiteTraffic(true);
+    fetch('/api/etz-funnel-traffic?month=' + month + '&mainSiteOnly=true', { signal })
+      .then(r => r.json())
+      .then((data: EtzFunnelTrafficResponse) => {
+        if (!signal.aborted) setEtzMainSiteTraffic(data);
+      })
+      .catch((e) => { if (e?.name !== 'AbortError') setEtzMainSiteTraffic(null); })
+      .finally(() => { if (!signal.aborted) setLoadingMainSiteTraffic(false); });
 
     setLoadingEtzAppTraffic(true);
     fetch('/api/etz-app-traffic?month=' + month, { signal })
@@ -2689,6 +2711,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             stripeConnected={revenue?.etz?.connected === true}
             traffic={etzTraffic}
             loadingTraffic={loadingEtzTraffic}
+            mainSiteTraffic={etzMainSiteTraffic}
+            loadingMainSiteTraffic={loadingMainSiteTraffic}
             appTraffic={etzAppTraffic}
             loadingAppTraffic={loadingEtzAppTraffic}
             trend={etzTrend}
