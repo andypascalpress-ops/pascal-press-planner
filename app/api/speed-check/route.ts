@@ -69,7 +69,11 @@ async function runPSI(url: string, strategy: 'mobile' | 'desktop'): Promise<Spee
         url, strategy, score: null, grade: 'error',
         vitals: { lcp: null, cls: null, inp: null, fcp: null, ttfb: null },
         fetchedAt: new Date().toISOString(),
-        error: (err as any)?.error?.message ?? `HTTP ${res.status}`,
+        error: (() => {
+          const msg: string = (err as any)?.error?.message ?? `HTTP ${res.status}`;
+          if (msg.includes('Quota') || msg.includes('quota')) return 'API quota exceeded — add PAGESPEED_API_KEY to Vercel env vars';
+          return msg;
+        })(),
       };
     }
 

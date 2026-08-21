@@ -2746,7 +2746,11 @@ function SystemsCheckView({ selectedMonth, stripeRevenue, googleAdsSpend, metaAd
                             {r.score !== null ? r.score : '—'}
                           </span>
                           <span className="text-xs text-gray-400">{strat}</span>
-                          {r.error && <span className="text-xs text-red-400">{r.error}</span>}
+                          {r.error && (
+                          <span className="text-xs text-red-400">
+                            {r.error.includes('Quota') ? 'API quota exceeded' : r.error}
+                          </span>
+                        )}
                         </div>
                       ))}
                     </div>
