@@ -2304,6 +2304,245 @@ function CampaignBreakdownTable({
   );
 }
 
+// ─── Systems Check ────────────────────────────────────────────────────────────
+
+interface SystemsServiceCheck {
+  id:          string;
+  name:        string;
+  url:         string;
+  category:    string;
+  status:      'up' | 'slow' | 'down';
+  statusCode:  number | null;
+  responseMs:  number | null;
+  error?:      string;
+}
+interface SystemsCheckResponse {
+  checkedAt: string;
+  overall:   'healthy' | 'partial' | 'degraded';
+  services:  SystemsServiceCheck[];
+}
+
+function StatusBadge({ status }: { status: 'up' | 'slow' | 'down' | 'loading' }) {
+  if (status === 'loading') return (
+    <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+      <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+      </svg>
+      Checking…
+    </span>
+  );
+  const cfg = {
+    up:   { dot: 'bg-emerald-400', text: 'text-emerald-700', bg: 'bg-emerald-50', label: 'Up' },
+    slow: { dot: 'bg-amber-400',   text: 'text-amber-700',   bg: 'bg-amber-50',   label: 'Slow' },
+    down: { dot: 'bg-red-500',     text: 'text-red-700',     bg: 'bg-red-50',     label: 'Down' },
+  }[status];
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold ${cfg.bg} ${cfg.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+      {cfg.label}
+    </span>
+  );
+}
+
+function SystemsCheckView({ selectedMonth, stripeRevenue, googleAdsSpend, metaAdsSpend, campaignCount }: {
+  selectedMonth:  string;
+  stripeRevenue:  number;
+  googleAdsSpend: number;
+  metaAdsSpend:   number;
+  campaignCount:  number;
+}) {
+  const [data,    setData   ] = useState<SystemsCheckResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [checkedAt, setCheckedAt] = useState<string | null>(null);
+
+  const runCheck = () => {
+    setLoading(true);
+    setData(null);
+    fetch('/api/systems-check', { cache: 'no-store' })
+      .then(r => r.json())
+      .then((d: SystemsCheckResponse) => { setData(d); setCheckedAt(d.checkedAt); })
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { runCheck(); }, []);
+
+  // Sales context helpers
+  const now      = new Date();
+  const dayName  = now.toLocaleDateString('en-AU', { weekday: 'long' });
+  const dayNum   = now.getDate();
+  const [ymY, ymM] = selectedMonth.split('-').map(Number);
+  const daysInMo   = new Date(ymY!, ymM!, 0).getDate();
+  const paceLabel  = stripeRevenue === 0
+    ? 'No revenue recorded yet today'
+    : `$${stripeRevenue.toLocaleString()} this month · ${dayNum} of ${daysInMo} days`;
+  const dailyAvg   = dayNum > 0 ? stripeRevenue / dayNum : 0;
+
+  const CATEGORIES: { key: string; label: string }[] = [
+    { key: 'pascal-press', label: 'Pascal Press' },
+    { key: 'etz',          label: 'Excel Test Zone' },
+    { key: 'payment',      label: 'Payments' },
+    { key: 'api',          label: 'Integrations' },
+  ];
+
+  return (
+    <div className="px-4 md:px-8 py-6 max-w-3xl mx-auto space-y-4">
+
+      {/* Header */}
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Systems Check</h2>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Live status of all sites and integrations
+            {checkedAt && (
+              <span className="ml-2 text-gray-400">
+                · last checked {new Date(checkedAt).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+            )}
+          </p>
+        </div>
+        <button
+          onClick={runCheck}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+        >
+          <svg className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          {loading ? 'Checking…' : 'Re-check'}
+        </button>
+      </div>
+
+      {/* Overall banner */}
+      {data && (
+        <div className={`rounded-xl px-5 py-3 flex items-center gap-3 ${
+          data.overall === 'healthy'  ? 'bg-emerald-50 border border-emerald-200' :
+          data.overall === 'partial'  ? 'bg-amber-50 border border-amber-200' :
+                                        'bg-red-50 border border-red-200'
+        }`}>
+          <span className="text-2xl">
+            {data.overall === 'healthy' ? '✅' : data.overall === 'partial' ? '⚠️' : '🔴'}
+          </span>
+          <div>
+            <div className={`text-sm font-bold ${
+              data.overall === 'healthy' ? 'text-emerald-800' :
+              data.overall === 'partial' ? 'text-amber-800'   : 'text-red-800'
+            }`}>
+              {data.overall === 'healthy' ? 'All systems operational' :
+               data.overall === 'partial' ? 'Some services degraded'  : 'Service issues detected'}
+            </div>
+            <div className="text-xs text-gray-500 mt-0.5">
+              {data.services.filter(s => s.status === 'up').length} of {data.services.length} services up
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Service rows grouped by category */}
+      {CATEGORIES.map(cat => {
+        const rows = data?.services.filter(s => s.category === cat.key) ?? [];
+        if (!loading && rows.length === 0) return null;
+        return (
+          <div key={cat.key} className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-5 py-3 border-b border-gray-100">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{cat.label}</span>
+            </div>
+            <div className="divide-y divide-gray-50">
+              {loading && rows.length === 0
+                ? [1, 2].map(i => (
+                    <div key={i} className="px-5 py-3.5 flex items-center justify-between">
+                      <div className="h-4 w-40 bg-gray-100 rounded animate-pulse" />
+                      <StatusBadge status="loading" />
+                    </div>
+                  ))
+                : rows.map(svc => (
+                    <div key={svc.id} className="px-5 py-3.5 flex items-center justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-gray-800 truncate">{svc.name}</div>
+                        {svc.error ? (
+                          <div className="text-xs text-red-500 mt-0.5">{svc.error}</div>
+                        ) : svc.responseMs !== null ? (
+                          <div className="text-xs text-gray-400 mt-0.5 tabular-nums">
+                            {svc.responseMs}ms
+                            {svc.statusCode && <span className="ml-2">HTTP {svc.statusCode}</span>}
+                          </div>
+                        ) : null}
+                      </div>
+                      <StatusBadge status={svc.status} />
+                    </div>
+                  ))
+              }
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Sales context */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-gray-100">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Sales context · {monthLabel(selectedMonth)}</span>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <div className="flex items-start gap-3">
+            <span className="text-lg mt-0.5">📅</span>
+            <div>
+              <div className="text-sm font-medium text-gray-800">Today is {dayName}, day {dayNum} of {daysInMo}</div>
+              <div className="text-xs text-gray-400 mt-0.5">
+                {(['Saturday', 'Sunday'].includes(dayName))
+                  ? 'Weekend — consumer purchases typically lower'
+                  : dayNum <= 7
+                  ? 'Start of month — some accounts settle later in the cycle'
+                  : dayNum >= 25
+                  ? 'End of month — good time to check subscription renewals'
+                  : 'Mid-month — typical trading period'}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-start gap-3">
+            <span className="text-lg mt-0.5">💰</span>
+            <div>
+              <div className="text-sm font-medium text-gray-800">{paceLabel}</div>
+              {stripeRevenue > 0 && (
+                <div className="text-xs text-gray-400 mt-0.5">
+                  Running at ${dailyAvg.toFixed(0)}/day average this month
+                </div>
+              )}
+            </div>
+          </div>
+          {(googleAdsSpend > 0 || metaAdsSpend > 0) && (
+            <div className="flex items-start gap-3">
+              <span className="text-lg mt-0.5">📢</span>
+              <div>
+                <div className="text-sm font-medium text-gray-800">
+                  Ad spend active · Google ${googleAdsSpend.toLocaleString()} · Meta ${metaAdsSpend.toLocaleString()}
+                </div>
+                <div className="text-xs text-gray-400 mt-0.5">
+                  {campaignCount > 0 ? `${campaignCount} campaign${campaignCount !== 1 ? 's' : ''} running` : 'Check campaign status if revenue is unexpectedly low'}
+                </div>
+              </div>
+            </div>
+          )}
+          <div className="flex items-start gap-3">
+            <span className="text-lg mt-0.5">🔍</span>
+            <div>
+              <div className="text-sm font-medium text-gray-800">Common reasons for low revenue</div>
+              <ul className="text-xs text-gray-400 mt-1 space-y-0.5 list-disc list-inside">
+                <li>Weekend or public holiday</li>
+                <li>Ad campaigns paused or budget exhausted</li>
+                <li>Checkout or payment gateway issue (check above)</li>
+                <li>Seasonal — compare same week last year</li>
+                <li>Stripe webhook delay — orders may appear tomorrow</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
 // ─── Main dashboard ───────────────────────────────────────────────────────────
 
 export default function FinanceDashboard({ records, syncing, lastSynced, onSyncGoogleAds }: Props) {
@@ -2332,7 +2571,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [loadingEtzTrend,      setLoadingEtzTrend     ] = useState(false);
   const [etzSources,           setEtzSources          ] = useState<EtzSourceResponse | null>(null);
   const [loadingEtzSources,    setLoadingEtzSources   ] = useState(false);
-  const [financeView,          setFinanceView         ] = useState<'overview' | 'etz-trials'>('overview');
+  const [financeView,          setFinanceView         ] = useState<'overview' | 'etz-trials' | 'systems'>('overview');
   const [siteConversion,   setSiteConversion  ] = useState<WebsiteConversionResponse | null>(null);
   const [channelRevenue,   setChannelRevenue  ] = useState<ChannelRevenueResponse | null>(null);
   const [coupons,          setCoupons         ] = useState<PPCouponsResponse | null>(null);
@@ -2630,7 +2869,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
         <div className="flex items-center gap-3">
           {/* Sub-tab switcher */}
           <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-1 mr-1">
-            {(['overview', 'etz-trials'] as const).map(v => (
+            {(['overview', 'etz-trials', 'systems'] as const).map(v => (
               <button
                 key={v}
                 onClick={() => setFinanceView(v)}
@@ -2640,7 +2879,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
                     : 'text-gray-500 hover:text-gray-700'
                 }`}
               >
-                {v === 'overview' ? 'Overview' : '🧪 ETZ Trials'}
+                {v === 'overview' ? 'Overview' : v === 'etz-trials' ? '🧪 ETZ Trials' : '🔧 Systems'}
               </button>
             ))}
           </div>
@@ -2717,6 +2956,17 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             loadingTrend={loadingEtzTrend}
             sources={etzSources}
             loadingSources={loadingEtzSources}
+          />
+        )}
+
+        {/* ── Systems Check view ───────────────────────────────────────────── */}
+        {financeView === 'systems' && (
+          <SystemsCheckView
+            selectedMonth={selectedMonth}
+            stripeRevenue={ppRevenue}
+            googleAdsSpend={ppSpend}
+            metaAdsSpend={ppMetaSpend}
+            campaignCount={(campaigns?.pp?.campaigns?.length ?? 0) + (campaigns?.etz?.campaigns?.length ?? 0)}
           />
         )}
 
