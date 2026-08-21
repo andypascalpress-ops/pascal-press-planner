@@ -38,7 +38,8 @@ async function pingService(
     });
     clearTimeout(timer);
     const ms = Date.now() - start;
-    const ok = res.status < 400;
+    // 4xx responses still mean the server is reachable — only 5xx = service error
+    const ok = res.status < 500;
     return {
       id, name, url, category,
       status:     ok ? (ms > 3000 ? 'slow' : 'up') : 'down',
