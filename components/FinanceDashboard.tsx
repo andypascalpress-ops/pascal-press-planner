@@ -123,6 +123,7 @@ interface Props {
   syncing: boolean;
   lastSynced?: string;
   onSyncGoogleAds: () => void;
+  initialView?: 'overview' | 'etz-trials' | 'systems';
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -2689,7 +2690,7 @@ function SystemsCheckView({ selectedMonth, stripeRevenue, googleAdsSpend, metaAd
 
 // ─── Main dashboard ───────────────────────────────────────────────────────────
 
-export default function FinanceDashboard({ records, syncing, lastSynced, onSyncGoogleAds }: Props) {
+export default function FinanceDashboard({ records, syncing, lastSynced, onSyncGoogleAds, initialView }: Props) {
   const [selectedMonth,    setSelectedMonth   ] = useState<string>(defaultYearMonth);
   const [revenue,          setRevenue         ] = useState<RevenueResponse | null>(null);
   const [loadingRevenue,   setLoadingRevenue  ] = useState(false);
@@ -2715,7 +2716,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [loadingEtzTrend,      setLoadingEtzTrend     ] = useState(false);
   const [etzSources,           setEtzSources          ] = useState<EtzSourceResponse | null>(null);
   const [loadingEtzSources,    setLoadingEtzSources   ] = useState(false);
-  const [financeView,          setFinanceView         ] = useState<'overview' | 'etz-trials' | 'systems'>('overview');
+  const [financeView,          setFinanceView         ] = useState<'overview' | 'etz-trials' | 'systems'>(initialView ?? 'overview');
   const [siteConversion,   setSiteConversion  ] = useState<WebsiteConversionResponse | null>(null);
   const [channelRevenue,   setChannelRevenue  ] = useState<ChannelRevenueResponse | null>(null);
   const [coupons,          setCoupons         ] = useState<PPCouponsResponse | null>(null);
@@ -3013,7 +3014,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
         <div className="flex items-center gap-3">
           {/* Sub-tab switcher */}
           <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-1 mr-1">
-            {(['overview', 'etz-trials', 'systems'] as const).map(v => (
+            {(['overview', 'etz-trials'] as const).map(v => (
               <button
                 key={v}
                 onClick={() => setFinanceView(v)}
@@ -3023,7 +3024,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
                     : 'text-gray-500 hover:text-gray-700'
                 }`}
               >
-                {v === 'overview' ? 'Overview' : v === 'etz-trials' ? '🧪 ETZ Trials' : '🔧 Systems'}
+                {v === 'overview' ? 'Overview' : '🧪 ETZ Trials'}
               </button>
             ))}
           </div>

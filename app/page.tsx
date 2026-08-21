@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Campaign, FYFilter, ViewMode, SpendRecord } from '@/lib/types';
 import { SpendBrand } from '@/lib/constants';
 import CalendarView from '@/components/CalendarView';
-import ListView from '@/components/ListView';
+import SystemsTab from '@/components/SystemsTab';
 import ChatPanel from '@/components/ChatPanel';
 import CampaignModal from '@/components/CampaignModal';
 import FinanceTab from '@/components/FinanceTab';
@@ -301,7 +301,7 @@ export default function Home() {
   const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
   const FMT = new Intl.NumberFormat('en-AU');
 
-  const isCampaignView = view !== 'finance' && view !== 'email' && view !== 'overview' && view !== 'action' && view !== 'products';
+  const isCampaignView = view !== 'finance' && view !== 'email' && view !== 'overview' && view !== 'action' && view !== 'products' && view !== 'systems';
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -351,20 +351,17 @@ export default function Home() {
                 <span className="hidden sm:inline">Calendar</span>
               </button>
               <button
-                onClick={() => setView('list')}
+                onClick={() => setView('systems')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
-                  view === 'list' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+                  view === 'systems' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'
                 }`}
               >
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                  <line x1="4" y1="3.5" x2="13" y2="3.5"/>
-                  <line x1="4" y1="7" x2="13" y2="7"/>
-                  <line x1="4" y1="10.5" x2="13" y2="10.5"/>
-                  <circle cx="1.5" cy="3.5" r="0.8" fill="currentColor" stroke="none"/>
-                  <circle cx="1.5" cy="7" r="0.8" fill="currentColor" stroke="none"/>
-                  <circle cx="1.5" cy="10.5" r="0.8" fill="currentColor" stroke="none"/>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="7" cy="7" r="2"/>
+                  <path d="M7 1v2M7 11v2M1 7h2M11 7h2"/>
+                  <path d="M2.93 2.93l1.41 1.41M9.66 9.66l1.41 1.41M2.93 11.07l1.41-1.41M9.66 4.34l1.41-1.41"/>
                 </svg>
-                <span className="hidden sm:inline">List</span>
+                <span className="hidden sm:inline">Systems</span>
               </button>
               <button
                 onClick={() => setView('finance')}
@@ -527,14 +524,12 @@ export default function Home() {
                   onDelete={handleDelete}
                 />
               </>
-            ) : (
-              <ListView
-                campaigns={filteredCampaigns}
-                onEdit={openEditModal}
-                onDelete={handleDelete}
-                onMarkComplete={handleMarkComplete}
-              />
-            )
+            ) : null
+          )}
+
+          {/* Systems view */}
+          {view === 'systems' && (
+            <SystemsTab />
           )}
 
           {/* Overview view */}
@@ -660,9 +655,9 @@ export default function Home() {
           <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="2" width="12" height="11" rx="1.5"/><line x1="1" y1="5.5" x2="13" y2="5.5"/><line x1="4.5" y1="1" x2="4.5" y2="4"/><line x1="9.5" y1="1" x2="9.5" y2="4"/></svg>
           <span className="text-[9px] font-medium leading-none mt-0.5">Calendar</span>
         </button>
-        <button onClick={() => setView('list')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'list' ? 'text-blue-600' : 'text-gray-400'}`}>
-          <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="4" y1="3.5" x2="13" y2="3.5"/><line x1="4" y1="7" x2="13" y2="7"/><line x1="4" y1="10.5" x2="13" y2="10.5"/><circle cx="1.5" cy="3.5" r="0.8" fill="currentColor" stroke="none"/><circle cx="1.5" cy="7" r="0.8" fill="currentColor" stroke="none"/><circle cx="1.5" cy="10.5" r="0.8" fill="currentColor" stroke="none"/></svg>
-          <span className="text-[9px] font-medium leading-none mt-0.5">List</span>
+        <button onClick={() => setView('systems')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'systems' ? 'text-blue-600' : 'text-gray-400'}`}>
+          <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="7" cy="7" r="2"/><path d="M7 1v2M7 11v2M1 7h2M11 7h2"/><path d="M2.93 2.93l1.41 1.41M9.66 9.66l1.41 1.41M2.93 11.07l1.41-1.41M9.66 4.34l1.41-1.41"/></svg>
+          <span className="text-[9px] font-medium leading-none mt-0.5">Systems</span>
         </button>
         <button onClick={() => setView('finance')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'finance' ? 'text-blue-600' : 'text-gray-400'}`}>
           <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="7" width="3" height="6" rx="0.5"/><rect x="5.5" y="4" width="3" height="9" rx="0.5"/><rect x="10" y="1" width="3" height="12" rx="0.5"/></svg>
