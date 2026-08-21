@@ -2304,6 +2304,29 @@ function CampaignBreakdownTable({
   );
 }
 
+// ─── Daily Pulse types ────────────────────────────────────────────────────────
+
+interface DailyPulseResponse {
+  asOf:         string;
+  todayDate:    string;
+  lastWkDate:   string;
+  elapsedMins:  number;
+  traffic: {
+    totalToday:    number;
+    totalLastWeek: number;
+    deltaPct:      number;
+    channelDeltas: Array<{ channel: string; today: number; lastWeek: number; deltaPct: number }>;
+  };
+  revenue: {
+    etz: { today: number; lastWeek: number; deltaPct: number };
+    hsc: { today: number; lastWeek: number; deltaPct: number };
+  };
+  ads: {
+    pp:  { metaToday: number; metaLastWeek: number; metaDeltaPct: number };
+    etz: { metaToday: number; metaLastWeek: number; metaDeltaPct: number };
+  };
+}
+
 // ─── Systems Check ────────────────────────────────────────────────────────────
 
 interface SystemsServiceCheck {
@@ -2355,6 +2378,8 @@ function SystemsCheckView({ selectedMonth, stripeRevenue, googleAdsSpend, metaAd
   const [data,    setData   ] = useState<SystemsCheckResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
+  const [pulse,       setPulse      ] = useState<DailyPulseResponse | null>(null);
+  const [loadingPulse, setLoadingPulse] = useState(false);
 
   const runCheck = () => {
     setLoading(true);
@@ -2366,7 +2391,15 @@ function SystemsCheckView({ selectedMonth, stripeRevenue, googleAdsSpend, metaAd
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { runCheck(); }, []);
+  useEffect(() => {
+    runCheck();
+    setLoadingPulse(true);
+    fetch('/api/daily-pulse', { cache: 'no-store' })
+      .then(r => r.json())
+      .then((d: DailyPulseResponse) => setPulse(d))
+      .catch(() => setPulse(null))
+      .finally(() => setLoadingPulse(false));
+  }, []);
 
   // Sales context helpers
   const now      = new Date();
@@ -2478,17 +2511,140 @@ function SystemsCheckView({ selectedMonth, stripeRevenue, googleAdsSpend, metaAd
         );
       })}
 
+      {/* ── Daily Pulse ── today vs same day last week ── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+            Today vs same day last week
+          </span>
+          {pulse && (
+            <span className="text-xs text-gray-400">
+              {new Date(pulse.asOf).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })} ·
+              {' '}{pulse.elapsedMins}min into the day
+            </span>
+          )}
+        </div>
+        {loadingPulse ? (
+          <div className="px-5 py-4 text-sm text-gray-400">Loading comparison data…</div>
+        ) : !pulse ? (
+          <div className="px-5 py-4 text-sm text-gray-400 italic">Comparison data unavailable</div>
+        ) : (
+          <div className="divide-y divide-gray-50">
+
+            {/* Revenue row */}
+            {(pulse.revenue.etz.today > 0 || pulse.revenue.etz.lastWeek > 0 || pulse.revenue.hsc.today > 0) && (
+              <div className="px-5 py-4">
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Revenue so far today</div>
+                <div className="flex flex-wrap gap-6">
+                  {(pulse.revenue.etz.today > 0 || pulse.revenue.etz.lastWeek > 0) && (
+                    <div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-2xl font-bold text-gray-900 tabular-nums">
+                          ${pulse.revenue.etz.today.toLocaleString()}
+                        </span>
+                        <span className={`text-sm font-semibold tabular-nums ${pulse.revenue.etz.deltaPct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                          {pulse.revenue.etz.deltaPct >= 0 ? '▲' : '▼'} {Math.abs(pulse.revenue.etz.deltaPct)}%
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        ETZ · was ${pulse.revenue.etz.lastWeek.toLocaleString()} last {new Date(pulse.lastWkDate).toLocaleDateString('en-AU', { weekday: 'short' })}
+                      </div>
+                    </div>
+                  )}
+                  {(pulse.revenue.hsc.today > 0 || pulse.revenue.hsc.lastWeek > 0) && (
+                    <div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-2xl font-bold text-gray-900 tabular-nums">
+                          ${pulse.revenue.hsc.today.toLocaleString()}
+                        </span>
+                        <span className={`text-sm font-semibold tabular-nums ${pulse.revenue.hsc.deltaPct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                          {pulse.revenue.hsc.deltaPct >= 0 ? '▲' : '▼'} {Math.abs(pulse.revenue.hsc.deltaPct)}%
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        HSC · was ${pulse.revenue.hsc.lastWeek.toLocaleString()} last {new Date(pulse.lastWkDate).toLocaleDateString('en-AU', { weekday: 'short' })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Traffic row */}
+            {pulse.traffic.totalToday > 0 || pulse.traffic.totalLastWeek > 0 ? (
+              <div className="px-5 py-4">
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Traffic by channel</div>
+                <div className="flex items-baseline gap-2 mb-3">
+                  <span className="text-2xl font-bold text-gray-900 tabular-nums">
+                    {pulse.traffic.totalToday.toLocaleString()} sessions
+                  </span>
+                  <span className={`text-sm font-semibold tabular-nums ${pulse.traffic.deltaPct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                    {pulse.traffic.deltaPct >= 0 ? '▲' : '▼'} {Math.abs(pulse.traffic.deltaPct)}% vs last {new Date(pulse.lastWkDate).toLocaleDateString('en-AU', { weekday: 'short' })}
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {pulse.traffic.channelDeltas.slice(0, 8).map(ch => (
+                    <div key={ch.channel} className="flex items-center gap-3">
+                      <span className="text-xs text-gray-600 w-32 truncate flex-shrink-0">{ch.channel}</span>
+                      <span className="text-xs tabular-nums text-gray-800 w-10 text-right flex-shrink-0">{ch.today}</span>
+                      <span className={`text-xs tabular-nums font-semibold w-14 text-right flex-shrink-0 ${
+                        ch.deltaPct === 0 ? 'text-gray-400' : ch.deltaPct > 0 ? 'text-emerald-600' : 'text-red-500'
+                      }`}>
+                        {ch.deltaPct > 0 ? '▲' : ch.deltaPct < 0 ? '▼' : ''}
+                        {ch.deltaPct !== 0 ? ` ${Math.abs(ch.deltaPct)}%` : '—'}
+                      </span>
+                      <span className="text-xs text-gray-300 tabular-nums">vs {ch.lastWeek}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {/* Ads row */}
+            {(pulse.ads.pp.metaToday > 0 || pulse.ads.pp.metaLastWeek > 0 || pulse.ads.etz.metaToday > 0 || pulse.ads.etz.metaLastWeek > 0) && (
+              <div className="px-5 py-4">
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Meta ad spend today</div>
+                <div className="flex flex-wrap gap-6">
+                  {(pulse.ads.pp.metaToday > 0 || pulse.ads.pp.metaLastWeek > 0) && (
+                    <div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-lg font-bold text-gray-800 tabular-nums">${pulse.ads.pp.metaToday.toFixed(0)}</span>
+                        <span className={`text-xs font-semibold ${pulse.ads.pp.metaDeltaPct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                          {pulse.ads.pp.metaDeltaPct >= 0 ? '▲' : '▼'} {Math.abs(pulse.ads.pp.metaDeltaPct)}%
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-400">PP Meta · was ${pulse.ads.pp.metaLastWeek.toFixed(0)} last week</div>
+                    </div>
+                  )}
+                  {(pulse.ads.etz.metaToday > 0 || pulse.ads.etz.metaLastWeek > 0) && (
+                    <div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-lg font-bold text-gray-800 tabular-nums">${pulse.ads.etz.metaToday.toFixed(0)}</span>
+                        <span className={`text-xs font-semibold ${pulse.ads.etz.metaDeltaPct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                          {pulse.ads.etz.metaDeltaPct >= 0 ? '▲' : '▼'} {Math.abs(pulse.ads.etz.metaDeltaPct)}%
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-400">ETZ Meta · was ${pulse.ads.etz.metaLastWeek.toFixed(0)} last week</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+          </div>
+        )}
+      </div>
+
       {/* Sales context */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-gray-100">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Sales context · {monthLabel(selectedMonth)}</span>
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Context · {dayName}, day {dayNum} of {daysInMo}</span>
         </div>
         <div className="px-5 py-4 space-y-3">
           <div className="flex items-start gap-3">
             <span className="text-lg mt-0.5">📅</span>
             <div>
-              <div className="text-sm font-medium text-gray-800">Today is {dayName}, day {dayNum} of {daysInMo}</div>
-              <div className="text-xs text-gray-400 mt-0.5">
+              <div className="text-xs text-gray-400">
                 {(['Saturday', 'Sunday'].includes(dayName))
                   ? 'Weekend — consumer purchases typically lower'
                   : dayNum <= 7
@@ -2499,30 +2655,6 @@ function SystemsCheckView({ selectedMonth, stripeRevenue, googleAdsSpend, metaAd
               </div>
             </div>
           </div>
-          <div className="flex items-start gap-3">
-            <span className="text-lg mt-0.5">💰</span>
-            <div>
-              <div className="text-sm font-medium text-gray-800">{paceLabel}</div>
-              {stripeRevenue > 0 && (
-                <div className="text-xs text-gray-400 mt-0.5">
-                  Running at ${dailyAvg.toFixed(0)}/day average this month
-                </div>
-              )}
-            </div>
-          </div>
-          {(googleAdsSpend > 0 || metaAdsSpend > 0) && (
-            <div className="flex items-start gap-3">
-              <span className="text-lg mt-0.5">📢</span>
-              <div>
-                <div className="text-sm font-medium text-gray-800">
-                  Ad spend active · Google ${googleAdsSpend.toLocaleString()} · Meta ${metaAdsSpend.toLocaleString()}
-                </div>
-                <div className="text-xs text-gray-400 mt-0.5">
-                  {campaignCount > 0 ? `${campaignCount} campaign${campaignCount !== 1 ? 's' : ''} running` : 'Check campaign status if revenue is unexpectedly low'}
-                </div>
-              </div>
-            </div>
-          )}
           <div className="flex items-start gap-3">
             <span className="text-lg mt-0.5">🔍</span>
             <div>
