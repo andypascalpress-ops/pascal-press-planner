@@ -2443,17 +2443,6 @@ function SystemsCheckView({ selectedMonth, stripeRevenue, googleAdsSpend, metaAd
     runSpeedCheck();
   }, []);
 
-  // Sales context helpers
-  const now      = new Date();
-  const dayName  = now.toLocaleDateString('en-AU', { weekday: 'long' });
-  const dayNum   = now.getDate();
-  const [ymY, ymM] = selectedMonth.split('-').map(Number);
-  const daysInMo   = new Date(ymY!, ymM!, 0).getDate();
-  const paceLabel  = stripeRevenue === 0
-    ? 'No revenue recorded yet today'
-    : `$${stripeRevenue.toLocaleString()} this month · ${dayNum} of ${daysInMo} days`;
-  const dailyAvg   = dayNum > 0 ? stripeRevenue / dayNum : 0;
-
   const CATEGORIES: { key: string; label: string }[] = [
     { key: 'pascal-press', label: 'Pascal Press' },
     { key: 'etz',          label: 'Excel Test Zone' },
@@ -2784,41 +2773,6 @@ function SystemsCheckView({ selectedMonth, stripeRevenue, googleAdsSpend, metaAd
         )}
       </div>
 
-      {/* Sales context */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-5 py-3 border-b border-gray-100">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Context · {dayName}, day {dayNum} of {daysInMo}</span>
-        </div>
-        <div className="px-5 py-4 space-y-3">
-          <div className="flex items-start gap-3">
-            <span className="text-lg mt-0.5">📅</span>
-            <div>
-              <div className="text-xs text-gray-400">
-                {(['Saturday', 'Sunday'].includes(dayName))
-                  ? 'Weekend — consumer purchases typically lower'
-                  : dayNum <= 7
-                  ? 'Start of month — some accounts settle later in the cycle'
-                  : dayNum >= 25
-                  ? 'End of month — good time to check subscription renewals'
-                  : 'Mid-month — typical trading period'}
-              </div>
-            </div>
-          </div>
-          <div className="flex items-start gap-3">
-            <span className="text-lg mt-0.5">🔍</span>
-            <div>
-              <div className="text-sm font-medium text-gray-800">Common reasons for low revenue</div>
-              <ul className="text-xs text-gray-400 mt-1 space-y-0.5 list-disc list-inside">
-                <li>Weekend or public holiday</li>
-                <li>Ad campaigns paused or budget exhausted</li>
-                <li>Checkout or payment gateway issue (check above)</li>
-                <li>Seasonal — compare same week last year</li>
-                <li>Stripe webhook delay — orders may appear tomorrow</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </div>
 
     </div>
   );
