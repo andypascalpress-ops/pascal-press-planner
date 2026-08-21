@@ -2349,6 +2349,32 @@ interface SystemsCheckResponse {
   services:  SystemsServiceCheck[];
 }
 
+// ── Speed check ─────────────────────────────────────────────────────────────
+interface SpeedVitals {
+  lcp:  number | null;
+  cls:  number | null;
+  inp:  number | null;
+  fcp:  number | null;
+  ttfb: number | null;
+}
+interface SpeedResult {
+  url:      string;
+  strategy: 'mobile' | 'desktop';
+  score:    number | null;
+  grade:    'good' | 'needs-improvement' | 'poor' | 'error';
+  vitals:   SpeedVitals;
+  error?:   string;
+}
+interface SpeedCheckBrand {
+  mobile:  SpeedResult;
+  desktop: SpeedResult;
+}
+interface SpeedCheckResponse {
+  fetchedAt: string;
+  pp:        SpeedCheckBrand;
+  etz:       SpeedCheckBrand;
+}
+
 function StatusBadge({ status }: { status: 'up' | 'slow' | 'down' | 'loading' }) {
   if (status === 'loading') return (
     <span className="inline-flex items-center gap-1 text-xs text-gray-400">
@@ -2382,8 +2408,19 @@ function SystemsCheckView({ selectedMonth, stripeRevenue, googleAdsSpend, metaAd
   const [data,    setData   ] = useState<SystemsCheckResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
-  const [pulse,       setPulse      ] = useState<DailyPulseResponse | null>(null);
+  const [pulse,        setPulse       ] = useState<DailyPulseResponse | null>(null);
   const [loadingPulse, setLoadingPulse] = useState(false);
+  const [speedData,    setSpeedData   ] = useState<SpeedCheckResponse | null>(null);
+  const [loadingSpeed, setLoadingSpeed] = useState(false);
+
+  const runSpeedCheck = () => {
+    setLoadingSpeed(true);
+    fetch('/api/speed-check', { cache: 'no-store' })
+      .then(r => r.json())
+      .then((d: SpeedCheckResponse) => setSpeedData(d))
+      .catch(() => setSpeedData(null))
+      .finally(() => setLoadingSpeed(false));
+  };
 
   const runCheck = () => {
     setLoading(true);
@@ -2403,6 +2440,7 @@ function SystemsCheckView({ selectedMonth, stripeRevenue, googleAdsSpend, metaAd
       .then((d: DailyPulseResponse) => setPulse(d))
       .catch(() => setPulse(null))
       .finally(() => setLoadingPulse(false));
+    runSpeedCheck();
   }, []);
 
   // Sales context helpers
@@ -2644,6 +2682,100 @@ function SystemsCheckView({ selectedMonth, stripeRevenue, googleAdsSpend, metaAd
               </div>
             )}
 
+          </div>
+        )}
+      </div>
+
+      {/* ── Website Speed ── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Website Speed · Lighthouse</span>
+          <div className="flex items-center gap-2">
+            {speedData && (
+              <span className="text-xs text-gray-400">
+                {new Date(speedData.fetchedAt).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })} · cached 4 h
+              </span>
+            )}
+            <button
+              onClick={runSpeedCheck}
+              disabled={loadingSpeed}
+              className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            >
+              <svg className={`w-3 h-3 ${loadingSpeed ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              {loadingSpeed ? 'Running…' : 'Re-run'}
+            </button>
+          </div>
+        </div>
+
+        {loadingSpeed ? (
+          <div className="px-5 py-6 text-sm text-gray-400">
+            Running Lighthouse audit — this takes about 30 seconds…
+          </div>
+        ) : !speedData ? (
+          <div className="px-5 py-4 text-sm text-gray-400 italic">Speed data unavailable</div>
+        ) : (
+          <div className="divide-y divide-gray-50">
+            {(
+              [
+                { label: 'Pascal Press', brand: speedData.pp  },
+                { label: 'Excel Test Zone', brand: speedData.etz },
+              ] as { label: string; brand: SpeedCheckBrand }[]
+            ).map(({ label, brand }) => {
+              const scoreBg = (s: number | null) =>
+                s === null ? 'bg-gray-100 text-gray-400'
+                : s >= 90 ? 'bg-emerald-100 text-emerald-800'
+                : s >= 50 ? 'bg-amber-100 text-amber-800'
+                :           'bg-red-100 text-red-700';
+              const mobile  = brand.mobile;
+              const desktop = brand.desktop;
+              return (
+                <div key={label} className="px-5 py-4">
+                  <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">{label}</div>
+                  <div className="flex flex-wrap gap-6 items-start">
+
+                    {/* Score pills */}
+                    <div className="flex gap-3">
+                      {[
+                        { strat: '📱 Mobile',  r: mobile  },
+                        { strat: '🖥 Desktop', r: desktop },
+                      ].map(({ strat, r }) => (
+                        <div key={strat} className="flex flex-col items-center gap-1">
+                          <span className={`text-2xl font-bold tabular-nums rounded-xl px-3 py-1 ${scoreBg(r.score)}`}>
+                            {r.score !== null ? r.score : '—'}
+                          </span>
+                          <span className="text-xs text-gray-400">{strat}</span>
+                          {r.error && <span className="text-xs text-red-400">{r.error}</span>}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Core Web Vitals (from mobile — most impactful) */}
+                    {mobile.score !== null && (
+                      <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs tabular-nums">
+                        {[
+                          { key: 'LCP',  val: mobile.vitals.lcp  !== null ? `${mobile.vitals.lcp}s`  : null, good: (v: number) => v <= 2.5 },
+                          { key: 'FCP',  val: mobile.vitals.fcp  !== null ? `${mobile.vitals.fcp}s`  : null, good: (v: number) => v <= 1.8 },
+                          { key: 'CLS',  val: mobile.vitals.cls  !== null ? String(mobile.vitals.cls) : null, good: (v: number) => v <= 0.1 },
+                          { key: 'INP',  val: mobile.vitals.inp  !== null ? `${mobile.vitals.inp}ms` : null, good: (v: number) => v <= 200 },
+                          { key: 'TTFB', val: mobile.vitals.ttfb !== null ? `${mobile.vitals.ttfb}s` : null, good: (v: number) => v <= 0.8 },
+                        ].filter(m => m.val !== null).map(({ key, val, good }) => {
+                          const num = parseFloat(val!);
+                          const ok  = good(num);
+                          return (
+                            <div key={key} className="flex flex-col">
+                              <span className={`font-semibold ${ok ? 'text-emerald-700' : 'text-amber-700'}`}>{val}</span>
+                              <span className="text-gray-400">{key}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
