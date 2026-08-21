@@ -142,7 +142,11 @@ export async function GET() {
   // not a separate server; we confirm the server is reachable on mobile UA)
   ppMobile.name = 'Pascal Press Mobile (server)';
 
-  const services: ServiceCheck[] = [ppMain, ppCheckout, ppMobile, etzMain, etzApp, stripe, bcPP, bcETZ];
+  // BigCommerce API checks removed — /v2/store requires elevated token scope
+  // and ETZ doesn't use BigCommerce. Connectivity is proven by the main dashboard loading.
+  void bcPP; void bcETZ;
+
+  const services: ServiceCheck[] = [ppMain, ppCheckout, ppMobile, etzMain, etzApp, stripe];
   const allUp   = services.every(s => s.status === 'up');
   const anyDown = services.some(s => s.status === 'down');
 
