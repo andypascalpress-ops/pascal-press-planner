@@ -2306,24 +2306,27 @@ function CampaignBreakdownTable({
 
 // ─── Daily Pulse types ────────────────────────────────────────────────────────
 
+interface DailyPulseBrand {
+  revenueToday:  number;
+  revenueLastWk: number;
+  revenueDelta:  number;
+  adSpendToday:  number;
+  adSpendLastWk: number;
+  adSpendDelta:  number;
+  adBreakdown: { googleToday: number; metaToday: number; googleLastWk: number; metaLastWk: number };
+}
 interface DailyPulseResponse {
-  asOf:         string;
-  todayDate:    string;
-  lastWkDate:   string;
-  elapsedMins:  number;
+  asOf:        string;
+  todayDate:   string;
+  lastWkDate:  string;
+  elapsedMins: number;
+  pp:          DailyPulseBrand;
+  etz:         DailyPulseBrand;
   traffic: {
     totalToday:    number;
     totalLastWeek: number;
     deltaPct:      number;
     channelDeltas: Array<{ channel: string; today: number; lastWeek: number; deltaPct: number }>;
-  };
-  revenue: {
-    etz: { today: number; lastWeek: number; deltaPct: number };
-    hsc: { today: number; lastWeek: number; deltaPct: number };
-  };
-  ads: {
-    pp:  { metaToday: number; metaLastWeek: number; metaDeltaPct: number };
-    etz: { metaToday: number; metaLastWeek: number; metaDeltaPct: number };
   };
 }
 
@@ -2514,13 +2517,11 @@ function SystemsCheckView({ selectedMonth, stripeRevenue, googleAdsSpend, metaAd
       {/* ── Daily Pulse ── today vs same day last week ── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-            Today vs same day last week
-          </span>
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Today vs same day last week</span>
           {pulse && (
             <span className="text-xs text-gray-400">
-              {new Date(pulse.asOf).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })} ·
-              {' '}{pulse.elapsedMins}min into the day
+              {new Date(pulse.asOf).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}
+              {' · '}{Math.floor(pulse.elapsedMins / 60)}h {pulse.elapsedMins % 60}m into the day
             </span>
           )}
         </div>
@@ -2531,102 +2532,113 @@ function SystemsCheckView({ selectedMonth, stripeRevenue, googleAdsSpend, metaAd
         ) : (
           <div className="divide-y divide-gray-50">
 
-            {/* Revenue row */}
-            {(pulse.revenue.etz.today > 0 || pulse.revenue.etz.lastWeek > 0 || pulse.revenue.hsc.today > 0) && (
-              <div className="px-5 py-4">
-                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Revenue so far today</div>
-                <div className="flex flex-wrap gap-6">
-                  {(pulse.revenue.etz.today > 0 || pulse.revenue.etz.lastWeek > 0) && (
-                    <div>
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-2xl font-bold text-gray-900 tabular-nums">
-                          ${pulse.revenue.etz.today.toLocaleString()}
-                        </span>
-                        <span className={`text-sm font-semibold tabular-nums ${pulse.revenue.etz.deltaPct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                          {pulse.revenue.etz.deltaPct >= 0 ? '▲' : '▼'} {Math.abs(pulse.revenue.etz.deltaPct)}%
-                        </span>
-                      </div>
-                      <div className="text-xs text-gray-400 mt-0.5">
-                        ETZ · was ${pulse.revenue.etz.lastWeek.toLocaleString()} last {new Date(pulse.lastWkDate).toLocaleDateString('en-AU', { weekday: 'short' })}
-                      </div>
-                    </div>
-                  )}
-                  {(pulse.revenue.hsc.today > 0 || pulse.revenue.hsc.lastWeek > 0) && (
-                    <div>
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-2xl font-bold text-gray-900 tabular-nums">
-                          ${pulse.revenue.hsc.today.toLocaleString()}
-                        </span>
-                        <span className={`text-sm font-semibold tabular-nums ${pulse.revenue.hsc.deltaPct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                          {pulse.revenue.hsc.deltaPct >= 0 ? '▲' : '▼'} {Math.abs(pulse.revenue.hsc.deltaPct)}%
-                        </span>
-                      </div>
-                      <div className="text-xs text-gray-400 mt-0.5">
-                        HSC · was ${pulse.revenue.hsc.lastWeek.toLocaleString()} last {new Date(pulse.lastWkDate).toLocaleDateString('en-AU', { weekday: 'short' })}
-                      </div>
-                    </div>
-                  )}
+            {/* ── Pascal Press ── */}
+            <div className="px-5 py-4">
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Pascal Press</div>
+              <div className="flex flex-wrap gap-8">
+                <div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-bold text-gray-900 tabular-nums">
+                      ${pulse.pp.revenueToday.toLocaleString()}
+                    </span>
+                    {pulse.pp.revenueLastWk > 0 && (
+                      <span className={`text-sm font-semibold ${pulse.pp.revenueDelta >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                        {pulse.pp.revenueDelta >= 0 ? '▲' : '▼'} {Math.abs(pulse.pp.revenueDelta)}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    sales today · was ${pulse.pp.revenueLastWk.toLocaleString()} last {new Date(pulse.lastWkDate + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short' })}
+                  </div>
+                </div>
+                <div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-bold text-gray-700 tabular-nums">
+                      ${pulse.pp.adSpendToday.toFixed(0)}
+                    </span>
+                    {pulse.pp.adSpendLastWk > 0 && (
+                      <span className={`text-sm font-semibold ${pulse.pp.adSpendDelta >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                        {pulse.pp.adSpendDelta >= 0 ? '▲' : '▼'} {Math.abs(pulse.pp.adSpendDelta)}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    ad spend today · was ${pulse.pp.adSpendLastWk.toFixed(0)} last week
+                    {(pulse.pp.adBreakdown.googleToday > 0 || pulse.pp.adBreakdown.metaToday > 0) && (
+                      <span className="ml-1 text-gray-300">
+                        (G ${pulse.pp.adBreakdown.googleToday.toFixed(0)} · M ${pulse.pp.adBreakdown.metaToday.toFixed(0)})
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
-            )}
+            </div>
 
-            {/* Traffic row */}
-            {pulse.traffic.totalToday > 0 || pulse.traffic.totalLastWeek > 0 ? (
+            {/* ── ETZ ── */}
+            <div className="px-5 py-4">
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Excel Test Zone</div>
+              <div className="flex flex-wrap gap-8">
+                <div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-bold text-gray-900 tabular-nums">
+                      ${pulse.etz.revenueToday.toLocaleString()}
+                    </span>
+                    {pulse.etz.revenueLastWk > 0 && (
+                      <span className={`text-sm font-semibold ${pulse.etz.revenueDelta >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                        {pulse.etz.revenueDelta >= 0 ? '▲' : '▼'} {Math.abs(pulse.etz.revenueDelta)}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    sales today · was ${pulse.etz.revenueLastWk.toLocaleString()} last {new Date(pulse.lastWkDate + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short' })}
+                  </div>
+                </div>
+                <div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-bold text-gray-700 tabular-nums">
+                      ${pulse.etz.adSpendToday.toFixed(0)}
+                    </span>
+                    {pulse.etz.adSpendLastWk > 0 && (
+                      <span className={`text-sm font-semibold ${pulse.etz.adSpendDelta >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                        {pulse.etz.adSpendDelta >= 0 ? '▲' : '▼'} {Math.abs(pulse.etz.adSpendDelta)}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    ad spend today · was ${pulse.etz.adSpendLastWk.toFixed(0)} last week
+                    {(pulse.etz.adBreakdown.googleToday > 0 || pulse.etz.adBreakdown.metaToday > 0) && (
+                      <span className="ml-1 text-gray-300">
+                        (G ${pulse.etz.adBreakdown.googleToday.toFixed(0)} · M ${pulse.etz.adBreakdown.metaToday.toFixed(0)})
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Traffic by channel ── */}
+            {(pulse.traffic.totalToday > 0 || pulse.traffic.totalLastWeek > 0) && (
               <div className="px-5 py-4">
-                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Traffic by channel</div>
                 <div className="flex items-baseline gap-2 mb-3">
-                  <span className="text-2xl font-bold text-gray-900 tabular-nums">
-                    {pulse.traffic.totalToday.toLocaleString()} sessions
-                  </span>
-                  <span className={`text-sm font-semibold tabular-nums ${pulse.traffic.deltaPct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                    {pulse.traffic.deltaPct >= 0 ? '▲' : '▼'} {Math.abs(pulse.traffic.deltaPct)}% vs last {new Date(pulse.lastWkDate).toLocaleDateString('en-AU', { weekday: 'short' })}
+                  <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Traffic by channel</span>
+                  <span className={`text-xs font-semibold ${pulse.traffic.deltaPct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                    {pulse.traffic.totalToday.toLocaleString()} sessions ·
+                    {pulse.traffic.deltaPct >= 0 ? ' ▲' : ' ▼'} {Math.abs(pulse.traffic.deltaPct)}% vs last week
                   </span>
                 </div>
                 <div className="space-y-1.5">
                   {pulse.traffic.channelDeltas.slice(0, 8).map(ch => (
                     <div key={ch.channel} className="flex items-center gap-3">
-                      <span className="text-xs text-gray-600 w-32 truncate flex-shrink-0">{ch.channel}</span>
-                      <span className="text-xs tabular-nums text-gray-800 w-10 text-right flex-shrink-0">{ch.today}</span>
+                      <span className="text-xs text-gray-600 w-36 truncate flex-shrink-0">{ch.channel}</span>
+                      <span className="text-xs tabular-nums text-gray-800 w-12 text-right flex-shrink-0">{ch.today.toLocaleString()}</span>
                       <span className={`text-xs tabular-nums font-semibold w-14 text-right flex-shrink-0 ${
-                        ch.deltaPct === 0 ? 'text-gray-400' : ch.deltaPct > 0 ? 'text-emerald-600' : 'text-red-500'
+                        ch.deltaPct === 0 ? 'text-gray-300' : ch.deltaPct > 0 ? 'text-emerald-600' : 'text-red-500'
                       }`}>
-                        {ch.deltaPct > 0 ? '▲' : ch.deltaPct < 0 ? '▼' : ''}
-                        {ch.deltaPct !== 0 ? ` ${Math.abs(ch.deltaPct)}%` : '—'}
+                        {ch.deltaPct > 0 ? `▲ ${ch.deltaPct}%` : ch.deltaPct < 0 ? `▼ ${Math.abs(ch.deltaPct)}%` : '—'}
                       </span>
-                      <span className="text-xs text-gray-300 tabular-nums">vs {ch.lastWeek}</span>
+                      <span className="text-xs text-gray-300 tabular-nums">vs {ch.lastWeek.toLocaleString()}</span>
                     </div>
                   ))}
-                </div>
-              </div>
-            ) : null}
-
-            {/* Ads row */}
-            {(pulse.ads.pp.metaToday > 0 || pulse.ads.pp.metaLastWeek > 0 || pulse.ads.etz.metaToday > 0 || pulse.ads.etz.metaLastWeek > 0) && (
-              <div className="px-5 py-4">
-                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Meta ad spend today</div>
-                <div className="flex flex-wrap gap-6">
-                  {(pulse.ads.pp.metaToday > 0 || pulse.ads.pp.metaLastWeek > 0) && (
-                    <div>
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-lg font-bold text-gray-800 tabular-nums">${pulse.ads.pp.metaToday.toFixed(0)}</span>
-                        <span className={`text-xs font-semibold ${pulse.ads.pp.metaDeltaPct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                          {pulse.ads.pp.metaDeltaPct >= 0 ? '▲' : '▼'} {Math.abs(pulse.ads.pp.metaDeltaPct)}%
-                        </span>
-                      </div>
-                      <div className="text-xs text-gray-400">PP Meta · was ${pulse.ads.pp.metaLastWeek.toFixed(0)} last week</div>
-                    </div>
-                  )}
-                  {(pulse.ads.etz.metaToday > 0 || pulse.ads.etz.metaLastWeek > 0) && (
-                    <div>
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-lg font-bold text-gray-800 tabular-nums">${pulse.ads.etz.metaToday.toFixed(0)}</span>
-                        <span className={`text-xs font-semibold ${pulse.ads.etz.metaDeltaPct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                          {pulse.ads.etz.metaDeltaPct >= 0 ? '▲' : '▼'} {Math.abs(pulse.ads.etz.metaDeltaPct)}%
-                        </span>
-                      </div>
-                      <div className="text-xs text-gray-400">ETZ Meta · was ${pulse.ads.etz.metaLastWeek.toFixed(0)} last week</div>
-                    </div>
-                  )}
                 </div>
               </div>
             )}
