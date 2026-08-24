@@ -235,7 +235,7 @@ async function handleTool(name: string, input: any, account: string): Promise<st
       return JSON.stringify(terms, null, 2);
     }
 
-    // ── Read: GA4 product revenue ────────────────────────────────────────────
+    // ── Read: GA4 product revenue (Pascal Press — ecommerce item-level) ─────
     case 'get_ga4_product_revenue': {
       const { startDate, endDate } = ga4DateRange(input.date_range);
       const report = await runGA4Report(account, {
@@ -257,6 +257,7 @@ async function handleTool(name: string, input: any, account: string): Promise<st
         .filter(p => p.revenue >= minRevenue);
       return JSON.stringify(products, null, 2);
     }
+
 
     // ── Write: pause campaign ────────────────────────────────────────────────
     case 'pause_campaign': {
@@ -372,7 +373,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name:        'get_ga4_product_revenue',
-    description: 'Get product revenue from Google Analytics 4 — the source of truth for revenue (Google Ads conversion values are NOT reliable). Cross-reference with ad spend to calculate true ROAS.',
+    description: 'Get product-level ecommerce revenue from Google Analytics 4. Pascal Press (pp) only — books and packs tracked as ecommerce items. Do NOT call this for Excel Test Zone (etz) or HSC Copilot (hsc); those accounts sell subscriptions, not products, so this tool returns nothing useful for them.',
     input_schema: {
       type:       'object',
       properties: {
@@ -458,18 +459,21 @@ export async function POST(req: NextRequest) {
     const accountName = ACCOUNT_NAMES[account] ?? account;
     const today       = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
 
+    const ga4Note = account === 'pp'
+      ? '**GA4 is the source of truth for revenue (Pascal Press).** Google Ads conversion numbers are unreliable — use get_ga4_product_revenue to cross-reference shopping spend with actual book/pack purchases. A ROAS below 2× is poor; above 4× is good.'
+      : '**For Excel Test Zone and HSC Copilot, do NOT call get_ga4_product_revenue** — it only works for Pascal Press ecommerce products and will return nothing. Analyse performance using Google Ads metrics only (spend, clicks, conversions reported by Google Ads). Revenue cross-referencing for ETZ/HSC is done separately in the Finance tab.';
+
     const systemPrompt = `You are a Google Ads assistant for the Pascal Press team. You have full read and write access to the Google Ads account.
 
 **Currently managing:** ${accountName}
 **Today's date:** ${today}
-**GA4 is the source of truth for revenue.** Google Ads conversion numbers are unreliable — always use the get_ga4_product_revenue tool when calculating ROAS or evaluating product performance.
+${ga4Note}
 
 **How to approach analysis:**
 - Use get_campaigns for an account overview first
-- Use get_shopping_products for product-level shopping breakdowns
+- Use get_shopping_products for product-level shopping breakdowns (shopping campaigns)
 - Use get_search_terms to find wasted spend or negative keyword opportunities
-- Cross-reference ad spend with GA4 revenue to calculate true ROAS (revenue ÷ cost)
-- A ROAS below 2× is generally poor for Pascal Press; above 4× is good
+- A campaign with many clicks but zero conversions is a candidate for pausing or bid reduction
 
 **Before making changes:**
 - Confirm what you're about to do in plain language before calling a mutate tool
