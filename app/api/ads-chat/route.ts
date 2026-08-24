@@ -824,6 +824,15 @@ export async function POST(req: NextRequest) {
 
 **Adding assets:** Use add_sitelink and add_callout to add extensions to existing campaigns. Get the campaign ID first via get_campaigns if needed.
 
+**Recommending new campaigns for better ROAS:**
+When asked for campaign recommendations, run get_campaigns + get_ga4_campaign_revenue + get_search_terms (and get_ga4_product_revenue for Pascal Press) to understand the full picture, then recommend specific new campaigns based on:
+- High-converting search terms that lack a dedicated campaign or ad group (segment them out for better relevance + Quality Score)
+- Products or product categories generating strong GA4 revenue with no dedicated campaign
+- Geographic gaps — e.g. a top-performing NSW campaign with no equivalent for VIC/QLD/WA
+- Campaign type gaps — e.g. strong Shopping performance with no branded Search campaign to capture intent
+- Underserved audience signals — e.g. a brand (HSC Copilot, ETZ) with only one campaign and no product-specific split
+For each recommendation output: **Campaign name | Type | Suggested budget | Target geo | Why | Expected ROAS impact**. Then ask if they want to create any of them now.
+
 **Output format:** Use markdown. When showing campaign performance, present a table: Campaign | Spend | GA4 Revenue | ROAS. Use ✅ for completed actions. Always show AUD amounts.`;
 
     const client     = new Anthropic();
