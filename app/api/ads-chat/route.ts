@@ -259,6 +259,40 @@ async function handleTool(name: string, input: any, account: string): Promise<st
     }
 
 
+    // ── Read: GA4 campaign revenue (ETZ / HSC / PP campaign-level view) ─────
+    case 'get_ga4_campaign_revenue': {
+      const { startDate, endDate } = ga4DateRange(input.date_range);
+      const report = await runGA4Report(account, {
+        dimensions: [
+          { name: 'sessionCampaignName' },
+          { name: 'sessionMedium' },
+        ],
+        metrics: [
+          { name: 'totalRevenue' },
+          { name: 'sessions' },
+          { name: 'keyEvents' },
+        ],
+        dateRanges: [{ startDate, endDate }],
+        // Only paid traffic
+        dimensionFilter: {
+          filter: {
+            fieldName: 'sessionMedium',
+            stringFilter: { matchType: 'EXACT', value: 'cpc' },
+          },
+        },
+        orderBys: [{ metric: { metricName: 'totalRevenue' }, desc: true }],
+        limit: 50,
+      });
+      const rows = (report.rows ?? []).map(row => ({
+        campaign:   row.dimensionValues[0].value,
+        medium:     row.dimensionValues[1].value,
+        revenue:    +Number(row.metricValues[0].value).toFixed(2),
+        sessions:   Number(row.metricValues[1].value),
+        key_events: Number(row.metricValues[2].value),
+      }));
+      return JSON.stringify(rows, null, 2);
+    }
+
     // ── Write: pause campaign ────────────────────────────────────────────────
     case 'pause_campaign': {
       const { campaign_id, campaign_name } = input;
@@ -373,12 +407,22 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name:        'get_ga4_product_revenue',
-    description: 'Get product-level ecommerce revenue from Google Analytics 4. Pascal Press (pp) only — books and packs tracked as ecommerce items. Do NOT call this for Excel Test Zone (etz) or HSC Copilot (hsc); those accounts sell subscriptions, not products, so this tool returns nothing useful for them.',
+    description: 'Get product-level ecommerce revenue from Google Analytics 4. Pascal Press (pp) only — returns books and packs with revenue, units purchased, and views. Use to cross-reference shopping ad spend with actual product sales. Do NOT call for ETZ or HSC.',
     input_schema: {
       type:       'object',
       properties: {
         date_range:  { type: 'string', enum: DATE_RANGE_ENUM },
         min_revenue: { type: 'number', description: 'Only return products with at least this revenue (AUD). Useful for filtering noise.' },
+      },
+    },
+  },
+  {
+    name:        'get_ga4_campaign_revenue',
+    description: 'Get GA4 revenue broken down by paid ad campaign (cpc medium only). Works for all accounts. Use this to cross-reference Google Ads spend with actual GA4 revenue per campaign and calculate true ROAS. Always call this alongside get_campaigns when the user asks about ROAS, revenue, or campaign performance — it gives the same view as the Finance tab Ad Campaigns section.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        date_range: { type: 'string', enum: DATE_RANGE_ENUM },
       },
     },
   },
@@ -459,27 +503,29 @@ export async function POST(req: NextRequest) {
     const accountName = ACCOUNT_NAMES[account] ?? account;
     const today       = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
 
-    const ga4Note = account === 'pp'
-      ? '**GA4 is the source of truth for revenue (Pascal Press).** Google Ads conversion numbers are unreliable — use get_ga4_product_revenue to cross-reference shopping spend with actual book/pack purchases. A ROAS below 2× is poor; above 4× is good.'
-      : '**For Excel Test Zone and HSC Copilot, do NOT call get_ga4_product_revenue** — it only works for Pascal Press ecommerce products and will return nothing. Analyse performance using Google Ads metrics only (spend, clicks, conversions reported by Google Ads). Revenue cross-referencing for ETZ/HSC is done separately in the Finance tab.';
+    const ppExtra = account === 'pp'
+      ? '\n- For Pascal Press shopping campaigns, also call get_ga4_product_revenue to see ROAS per individual book or pack title.'
+      : '\n- For this account, use get_ga4_campaign_revenue for all revenue data (do NOT call get_ga4_product_revenue — that is Pascal Press ecommerce only and returns nothing here).';
 
     const systemPrompt = `You are a Google Ads assistant for the Pascal Press team. You have full read and write access to the Google Ads account.
 
 **Currently managing:** ${accountName}
 **Today's date:** ${today}
-${ga4Note}
+
+**GA4 is the source of truth for revenue — Google Ads conversion numbers are unreliable.**
+- Always use get_ga4_campaign_revenue when the user asks about revenue, ROAS, or campaign performance. Call it alongside get_campaigns so you can show spend and GA4 revenue side by side.
+- ROAS = GA4 revenue ÷ Google Ads spend. Below 2× is poor; above 4× is good.${ppExtra}
 
 **How to approach analysis:**
-- Use get_campaigns for an account overview first
-- Use get_shopping_products for product-level shopping breakdowns (shopping campaigns)
-- Use get_search_terms to find wasted spend or negative keyword opportunities
-- A campaign with many clicks but zero conversions is a candidate for pausing or bid reduction
+- Start with get_campaigns + get_ga4_campaign_revenue together to build the spend vs revenue picture
+- Use get_shopping_products to drill into product-level spend
+- Use get_search_terms to find irrelevant queries and negative keyword opportunities
 
 **Before making changes:**
 - Confirm what you're about to do in plain language before calling a mutate tool
 - After a successful change, summarise what was done
 
-**Output format:** Use markdown with headers and bullet points for data summaries. Use ✅ for completed actions. Always include AUD amounts.`;
+**Output format:** Use markdown. When showing campaign performance, present a table: Campaign | Spend | GA4 Revenue | ROAS. Use ✅ for completed actions. Always show AUD amounts.`;
 
     const client     = new Anthropic();
     const apiMessages: Anthropic.MessageParam[] = [...messages];
