@@ -13,6 +13,7 @@ import EmailTab from '@/components/EmailTab';
 import OverviewTab from '@/components/OverviewTab';
 import ActionCentreTab from '@/components/ActionCentreTab';
 import ProductPerformanceTab from '@/components/ProductPerformanceTab';
+import AdsManagerTab from '@/components/AdsManagerTab';
 
 export default function Home() {
   // ── Campaign state ──
@@ -301,7 +302,7 @@ export default function Home() {
   const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
   const FMT = new Intl.NumberFormat('en-AU');
 
-  const isCampaignView = view !== 'finance' && view !== 'email' && view !== 'overview' && view !== 'action' && view !== 'products' && view !== 'systems';
+  const isCampaignView = view !== 'finance' && view !== 'email' && view !== 'overview' && view !== 'action' && view !== 'products' && view !== 'systems' && view !== 'ads' && view !== 'blake';
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -403,6 +404,18 @@ export default function Home() {
                   <polygon points="7,1 9,5.5 14,6 10.5,9.5 11.5,14 7,11.5 2.5,14 3.5,9.5 0,6 5,5.5"/>
                 </svg>
                 <span className="hidden sm:inline">Actions</span>
+              </button>
+              <button
+                onClick={() => setView('ads')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${view === 'ads' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                {/* Megaphone / Ads icon */}
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1.5 5H3.5V9H1.5z"/>
+                  <path d="M3.5 5L10.5 2V12L3.5 9z"/>
+                  <path d="M3.5 9V11.5"/>
+                </svg>
+                <span className="hidden sm:inline">Ads</span>
               </button>
             </div>
 
@@ -585,6 +598,9 @@ export default function Home() {
 
           {view === 'products' && <ProductPerformanceTab />}
 
+          {/* Ads Manager view */}
+          {view === 'ads' && <AdsManagerTab />}
+
           {/* Action Centre view */}
           {view === 'action' && (
             <ActionCentreTab
@@ -676,6 +692,10 @@ export default function Home() {
         <button onClick={() => setView('action')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'action' ? 'text-orange-500' : 'text-gray-400'}`}>
           <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="7,1 9,5.5 14,6 10.5,9.5 11.5,14 7,11.5 2.5,14 3.5,9.5 0,6 5,5.5"/></svg>
           <span className="text-[9px] font-medium leading-none mt-0.5">Actions</span>
+        </button>
+        <button onClick={() => setView('ads')} className={`flex flex-col items-center justify-center gap-0.5 py-2 flex-1 transition-colors ${view === 'ads' ? 'text-blue-600' : 'text-gray-400'}`}>
+          <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M1.5 5H3.5V9H1.5z"/><path d="M3.5 5L10.5 2V12L3.5 9z"/><path d="M3.5 9V11.5"/></svg>
+          <span className="text-[9px] font-medium leading-none mt-0.5">Ads</span>
         </button>
       </nav>
 

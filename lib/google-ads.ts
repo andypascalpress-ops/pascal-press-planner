@@ -395,8 +395,64 @@ export function buildConfig(brand: 'pp' | 'etz' | 'hsc'): GoogleAdsConfig {
   };
 }
 
-/** Returns true when ET
-Z has its own dedicated Google Ads sub-account */
+/** Returns true when ETZ has its own dedicated Google Ads sub-account */
 export function etzHasOwnAccount(): boolean {
   return !!process.env.GOOGLE_ADS_ETZ_CUSTOMER_ID;
+}
+
+// ─── Generic GAQL runner (for ads-chat route) ────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function runGaqlQuery(cfg: GoogleAdsConfig, query: string): Promise<any[]> {
+  const token = await getAccessToken(cfg);
+  const headers: Record<string, string> = {
+    Authorization:     `Bearer ${token}`,
+    'developer-token': cfg.developerToken,
+    'Content-Type':    'application/json',
+  };
+  if (cfg.loginCustomerId) headers['login-customer-id'] = cfg.loginCustomerId;
+
+  const url = `${GOOGLE_ADS_BASE}/customers/${cfg.customerId}/googleAds:search`;
+  const res  = await fetch(url, {
+    method: 'POST',
+    headers,
+    body:   JSON.stringify({ query }),
+    cache:  'no-store',
+  });
+  const data = await parseJsonOrThrow(res, `Google Ads GAQL`);
+  if (!res.ok) {
+    const msg = data?.error?.message
+      ?? data?.error?.details?.[0]?.errors?.[0]?.message
+      ?? JSON.stringify(data);
+    throw new Error(`Google Ads GAQL error (HTTP ${res.status}): ${msg}`);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (data.results ?? []) as any[];
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function runGaqlMutate(cfg: GoogleAdsConfig, resource: string, operations: unknown[]): Promise<any> {
+  const token = await getAccessToken(cfg);
+  const headers: Record<string, string> = {
+    Authorization:     `Bearer ${token}`,
+    'developer-token': cfg.developerToken,
+    'Content-Type':    'application/json',
+  };
+  if (cfg.loginCustomerId) headers['login-customer-id'] = cfg.loginCustomerId;
+
+  const url = `${GOOGLE_ADS_BASE}/customers/${cfg.customerId}/${resource}:mutate`;
+  const res  = await fetch(url, {
+    method: 'POST',
+    headers,
+    body:   JSON.stringify({ operations }),
+    cache:  'no-store',
+  });
+  const data = await parseJsonOrThrow(res, `Google Ads mutate (${resource})`);
+  if (!res.ok) {
+    const msg = data?.error?.message
+      ?? data?.error?.details?.[0]?.errors?.[0]?.message
+      ?? JSON.stringify(data);
+    throw new Error(`Google Ads mutate error (HTTP ${res.status}): ${msg}`);
+  }
+  return data;
 }
