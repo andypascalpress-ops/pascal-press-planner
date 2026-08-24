@@ -140,28 +140,48 @@ async function handleTool(name: string, input: any, account: string): Promise<st
           campaign.id,
           campaign.name,
           campaign.status,
+          campaign.advertising_channel_type,
           campaign.campaign_budget,
           campaign_budget.amount_micros,
           metrics.impressions,
           metrics.clicks,
           metrics.cost_micros,
-          metrics.conversions
+          metrics.conversions,
+          metrics.search_impression_share,
+          metrics.search_budget_lost_impression_share,
+          metrics.search_rank_lost_impression_share
         FROM campaign
         WHERE segments.date DURING ${dr}
         AND campaign.status != 'REMOVED'
         ORDER BY metrics.cost_micros DESC
         LIMIT 25
       `);
-      const campaigns = rows.map(r => ({
-        id:              String(r.campaign?.id ?? ''),
-        name:            r.campaign?.name ?? '',
-        status:          r.campaign?.status ?? '',
-        daily_budget:    +(Number(r.campaignBudget?.amountMicros ?? 0) / 1_000_000).toFixed(2),
-        impressions:     Number(r.metrics?.impressions ?? 0),
-        clicks:          Number(r.metrics?.clicks ?? 0),
-        cost_aud:        +(Number(r.metrics?.costMicros ?? 0) / 1_000_000).toFixed(2),
-        conversions:     +(Number(r.metrics?.conversions ?? 0)).toFixed(1),
-      }));
+      const campaigns = rows.map(r => {
+        const isSearch = r.campaign?.advertisingChannelType === 'SEARCH';
+        const imp_share = isSearch && r.metrics?.searchImpressionShare != null
+          ? +(Number(r.metrics.searchImpressionShare) * 100).toFixed(1)
+          : null;
+        const budget_lost = isSearch && r.metrics?.searchBudgetLostImpressionShare != null
+          ? +(Number(r.metrics.searchBudgetLostImpressionShare) * 100).toFixed(1)
+          : null;
+        const rank_lost = isSearch && r.metrics?.searchRankLostImpressionShare != null
+          ? +(Number(r.metrics.searchRankLostImpressionShare) * 100).toFixed(1)
+          : null;
+        return {
+          id:              String(r.campaign?.id ?? ''),
+          name:            r.campaign?.name ?? '',
+          status:          r.campaign?.status ?? '',
+          type:            r.campaign?.advertisingChannelType ?? '',
+          daily_budget:    +(Number(r.campaignBudget?.amountMicros ?? 0) / 1_000_000).toFixed(2),
+          impressions:     Number(r.metrics?.impressions ?? 0),
+          clicks:          Number(r.metrics?.clicks ?? 0),
+          cost_aud:        +(Number(r.metrics?.costMicros ?? 0) / 1_000_000).toFixed(2),
+          conversions:     +(Number(r.metrics?.conversions ?? 0)).toFixed(1),
+          impression_share_pct:      imp_share,
+          budget_lost_is_pct:        budget_lost,
+          rank_lost_is_pct:          rank_lost,
+        };
+      });
       return JSON.stringify(campaigns, null, 2);
     }
 
@@ -592,6 +612,174 @@ async function handleTool(name: string, input: any, account: string): Promise<st
       return `✅ Negative keyword "${keyword}" (${match_type ?? 'BROAD'} match) added to campaign "${campaign_name}".`;
     }
 
+    // ── Read: keyword performance ────────────────────────────────────────────
+    case 'get_keywords': {
+      const dr = gaqlDateRange(input.date_range);
+      const campaignFilter = input.campaign_id
+        ? `AND campaign.id = ${input.campaign_id}`
+        : '';
+      const limit = Math.min(Number(input.limit ?? 50), 200);
+      const rows = await runGaqlQuery(cfg, `
+        SELECT
+          campaign.id,
+          campaign.name,
+          ad_group.id,
+          ad_group.name,
+          ad_group_criterion.criterion_id,
+          ad_group_criterion.keyword.text,
+          ad_group_criterion.keyword.match_type,
+          ad_group_criterion.status,
+          ad_group_criterion.effective_cpc_bid_micros,
+          ad_group_criterion.quality_info.quality_score,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.cost_micros,
+          metrics.conversions,
+          metrics.average_cpc
+        FROM ad_group_criterion
+        WHERE ad_group_criterion.type = 'KEYWORD'
+        AND ad_group_criterion.status != 'REMOVED'
+        AND campaign.status != 'REMOVED'
+        ${campaignFilter}
+        ORDER BY metrics.cost_micros DESC
+        LIMIT ${limit}
+      `);
+      const keywords = rows.map(r => ({
+        campaign:      r.campaign?.name ?? '',
+        campaign_id:   String(r.campaign?.id ?? ''),
+        ad_group:      r.adGroup?.name ?? '',
+        ad_group_id:   String(r.adGroup?.id ?? ''),
+        criterion_id:  String(r.adGroupCriterion?.criterionId ?? ''),
+        keyword:       r.adGroupCriterion?.keyword?.text ?? '',
+        match_type:    r.adGroupCriterion?.keyword?.matchType ?? '',
+        status:        r.adGroupCriterion?.status ?? '',
+        quality_score: r.adGroupCriterion?.qualityInfo?.qualityScore ?? null,
+        bid_aud:       r.adGroupCriterion?.effectiveCpcBidMicros
+                         ? +(Number(r.adGroupCriterion.effectiveCpcBidMicros) / 1_000_000).toFixed(2)
+                         : null,
+        impressions:   Number(r.metrics?.impressions ?? 0),
+        clicks:        Number(r.metrics?.clicks ?? 0),
+        cost_aud:      +(Number(r.metrics?.costMicros ?? 0) / 1_000_000).toFixed(2),
+        conversions:   +(Number(r.metrics?.conversions ?? 0)).toFixed(1),
+        avg_cpc_aud:   r.metrics?.averageCpc
+                         ? +(Number(r.metrics.averageCpc) / 1_000_000).toFixed(2)
+                         : null,
+      }));
+      return JSON.stringify(keywords, null, 2);
+    }
+
+    // ── Write: update keyword CPC bid ────────────────────────────────────────
+    case 'update_keyword_bid': {
+      const { ad_group_id, criterion_id, keyword_text, new_bid_aud } = input;
+      const bidMicros = Math.round(Number(new_bid_aud) * 1_000_000);
+      await runGaqlMutate(cfg, 'adGroupCriteria', [{
+        updateMask: 'max_cpc_bid_micros',
+        update: {
+          resourceName:    `customers/${customerId}/adGroupCriteria/${ad_group_id}~${criterion_id}`,
+          maxCpcBidMicros: String(bidMicros),
+        },
+      }]);
+      return `✅ Keyword "${keyword_text}" bid updated to $${Number(new_bid_aud).toFixed(2)} CPC.`;
+    }
+
+    // ── Write: pause / enable a keyword ──────────────────────────────────────
+    case 'set_keyword_status': {
+      const { ad_group_id, criterion_id, keyword_text, status } = input;
+      await runGaqlMutate(cfg, 'adGroupCriteria', [{
+        updateMask: 'status',
+        update: {
+          resourceName: `customers/${customerId}/adGroupCriteria/${ad_group_id}~${criterion_id}`,
+          status,
+        },
+      }]);
+      const verb = status === 'ENABLED' ? 'enabled' : 'paused';
+      return `✅ Keyword "${keyword_text}" has been ${verb}.`;
+    }
+
+    // ── Write: bulk negative keywords ────────────────────────────────────────
+    case 'add_negative_keywords_bulk': {
+      const { campaign_id, campaign_name, keywords, match_type } = input;
+      const operations = (keywords as string[]).map(kw => ({
+        create: {
+          campaign: `customers/${customerId}/campaigns/${campaign_id}`,
+          keyword: {
+            text:      kw,
+            matchType: match_type ?? 'BROAD',
+          },
+          negative: true,
+        },
+      }));
+      await runGaqlMutate(cfg, 'campaignCriteria', operations);
+      const kwList = (keywords as string[]).map(k => `"${k}"`).join(', ');
+      return `✅ Added ${(keywords as string[]).length} negative keywords to "${campaign_name}": ${kwList}`;
+    }
+
+    // ── Read: period-over-period performance comparison ───────────────────────
+    case 'compare_performance': {
+      const p1 = gaqlDateRange(input.period1 ?? 'THIS_WEEK');
+      const p2 = gaqlDateRange(input.period2 ?? 'LAST_WEEK');
+
+      const campaignQuery = (dr: string) => runGaqlQuery(cfg, `
+        SELECT
+          campaign.id,
+          campaign.name,
+          campaign.status,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.cost_micros,
+          metrics.conversions
+        FROM campaign
+        WHERE segments.date DURING ${dr}
+        AND campaign.status != 'REMOVED'
+        ORDER BY metrics.cost_micros DESC
+        LIMIT 25
+      `);
+
+      const [rows1, rows2] = await Promise.all([campaignQuery(p1), campaignQuery(p2)]);
+
+      const toMap = (rows: any[]) => new Map(rows.map(r => [
+        String(r.campaign?.id ?? ''),
+        {
+          name:        r.campaign?.name ?? '',
+          cost:        Number(r.metrics?.costMicros ?? 0) / 1_000_000,
+          clicks:      Number(r.metrics?.clicks ?? 0),
+          impressions: Number(r.metrics?.impressions ?? 0),
+          conversions: Number(r.metrics?.conversions ?? 0),
+        },
+      ]));
+
+      const map1 = toMap(rows1);
+      const map2 = toMap(rows2);
+      const allIds = new Set([...map1.keys(), ...map2.keys()]);
+
+      const pct = (curr: number, prev: number) =>
+        prev === 0 ? (curr > 0 ? '+∞%' : '—') : `${curr >= prev ? '+' : ''}${(((curr - prev) / prev) * 100).toFixed(0)}%`;
+
+      const comparison = [...allIds].map(id => {
+        const a = map1.get(id) ?? { name: map2.get(id)?.name ?? id, cost: 0, clicks: 0, impressions: 0, conversions: 0 };
+        const b = map2.get(id) ?? { name: a.name, cost: 0, clicks: 0, impressions: 0, conversions: 0 };
+        return {
+          campaign:       a.name || b.name,
+          curr_spend:     +a.cost.toFixed(2),
+          prev_spend:     +b.cost.toFixed(2),
+          spend_change:   pct(a.cost, b.cost),
+          curr_clicks:    a.clicks,
+          prev_clicks:    b.clicks,
+          clicks_change:  pct(a.clicks, b.clicks),
+          curr_conv:      +a.conversions.toFixed(1),
+          prev_conv:      +b.conversions.toFixed(1),
+          conv_change:    pct(a.conversions, b.conversions),
+        };
+      }).sort((a, b) => b.curr_spend - a.curr_spend);
+
+      return JSON.stringify({
+        period1: input.period1 ?? 'THIS_WEEK',
+        period2: input.period2 ?? 'LAST_WEEK',
+        note:    'curr = period1, prev = period2',
+        campaigns: comparison,
+      }, null, 2);
+    }
+
     default:
       return `Unknown tool: ${name}`;
   }
@@ -696,7 +884,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name:        'add_negative_keyword',
-    description: 'Add a negative keyword to a campaign to stop ads showing for irrelevant searches.',
+    description: 'Add a single negative keyword to a campaign. For multiple negatives use add_negative_keywords_bulk instead.',
     input_schema: {
       type:       'object',
       properties: {
@@ -706,6 +894,71 @@ const TOOLS: Anthropic.Tool[] = [
         match_type:    { type: 'string', enum: ['BROAD', 'PHRASE', 'EXACT'], description: 'BROAD = any order, PHRASE = in order, EXACT = exact match.' },
       },
       required: ['campaign_id', 'campaign_name', 'keyword', 'match_type'],
+    },
+  },
+  {
+    name:        'add_negative_keywords_bulk',
+    description: 'Add multiple negative keywords to a campaign in one operation. After reviewing get_search_terms, identify all wasteful queries and block them at once. Much faster than adding one at a time.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        campaign_id:   { type: 'string', description: 'Numeric Google Ads campaign ID.' },
+        campaign_name: { type: 'string', description: 'Campaign name (for confirmation).' },
+        keywords:      { type: 'array', items: { type: 'string' }, description: 'List of keyword texts to add as negatives, e.g. ["free", "jobs", "salary"].' },
+        match_type:    { type: 'string', enum: ['BROAD', 'PHRASE', 'EXACT'], description: 'Match type for all negatives. Default BROAD.' },
+      },
+      required: ['campaign_id', 'campaign_name', 'keywords'],
+    },
+  },
+  {
+    name:        'get_keywords',
+    description: 'Get keyword-level performance including Quality Score, effective CPC bid, clicks, conversions and spend. Use to find low-QS keywords (score < 5), expensive keywords with no conversions, or bid optimisation opportunities.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        date_range:  { type: 'string', enum: DATE_RANGE_ENUM },
+        campaign_id: { type: 'string', description: 'Filter to one campaign. Leave blank for all.' },
+        limit:       { type: 'number', description: 'Max rows (default 50, max 200).' },
+      },
+    },
+  },
+  {
+    name:        'update_keyword_bid',
+    description: 'Update the max CPC bid on a specific keyword. Get ad_group_id and criterion_id from get_keywords first.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        ad_group_id:  { type: 'string', description: 'Ad group ID from get_keywords.' },
+        criterion_id: { type: 'string', description: 'Keyword criterion ID from get_keywords.' },
+        keyword_text: { type: 'string', description: 'Keyword text (for confirmation message).' },
+        new_bid_aud:  { type: 'number', description: 'New max CPC bid in AUD, e.g. 1.50.' },
+      },
+      required: ['ad_group_id', 'criterion_id', 'keyword_text', 'new_bid_aud'],
+    },
+  },
+  {
+    name:        'set_keyword_status',
+    description: 'Pause or enable a specific keyword within an ad group. Get ad_group_id and criterion_id from get_keywords first.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        ad_group_id:  { type: 'string', description: 'Ad group ID from get_keywords.' },
+        criterion_id: { type: 'string', description: 'Keyword criterion ID from get_keywords.' },
+        keyword_text: { type: 'string', description: 'Keyword text (for confirmation message).' },
+        status:       { type: 'string', enum: ['ENABLED', 'PAUSED'], description: 'New status.' },
+      },
+      required: ['ad_group_id', 'criterion_id', 'keyword_text', 'status'],
+    },
+  },
+  {
+    name:        'compare_performance',
+    description: 'Compare campaign performance between two periods to detect spend spikes, click drops, or conversion anomalies. Use for week-over-week or month-over-month health checks.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        period1: { type: 'string', enum: DATE_RANGE_ENUM, description: 'Current period (default THIS_WEEK).' },
+        period2: { type: 'string', enum: DATE_RANGE_ENUM, description: 'Comparison period (default LAST_WEEK).' },
+      },
     },
   },
   {
@@ -815,6 +1068,12 @@ export async function POST(req: NextRequest) {
 - Start with get_campaigns + get_ga4_campaign_revenue together to build the spend vs revenue picture
 - Use get_shopping_products to drill into product-level spend
 - Use get_search_terms to find irrelevant queries and negative keyword opportunities
+- Use get_keywords to view Quality Score, bids, and keyword-level spend — QS 1–3 = poor, 4–6 = average, 7–10 = good; flag QS < 5 as needing new ad copy or landing page work
+- Impression share (search campaigns only): impression_share_pct = % of eligible impressions won; budget_lost_is_pct = % lost due to budget running out; rank_lost_is_pct = % lost due to low ad rank. If budget_lost_is > rank_lost_is → increase budget. If rank_lost_is > budget_lost_is → improve QS or bids.
+- Use compare_performance (THIS_WEEK vs LAST_WEEK, or THIS_MONTH vs LAST_MONTH) to spot anomalies — flag any campaign with >30% spend change or >25% click drop
+
+**Negative keywords workflow:**
+- After get_search_terms, identify all irrelevant queries and call add_negative_keywords_bulk to block them all at once — do not add one at a time unless there's only one
 
 **Before making changes:**
 - Confirm what you're about to do in plain language before calling a mutate tool
