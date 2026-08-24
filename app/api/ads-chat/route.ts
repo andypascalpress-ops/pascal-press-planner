@@ -293,6 +293,237 @@ async function handleTool(name: string, input: any, account: string): Promise<st
       return JSON.stringify(rows, null, 2);
     }
 
+    // ── Write: create search campaign ───────────────────────────────────────
+    case 'create_search_campaign': {
+      const {
+        campaign_name, daily_budget_aud, headlines, descriptions,
+        final_url, keywords, match_type, geo_target_ids, bidding_strategy, target_cpa_aud,
+      } = input;
+
+      // 1. Budget
+      const budgetRes = await runGaqlMutate(cfg, 'campaignBudgets', [{
+        create: {
+          name:          `Budget — ${campaign_name}`,
+          amountMicros:  String(Math.round(daily_budget_aud * 1_000_000)),
+          deliveryMethod: 'STANDARD',
+        },
+      }]);
+      const budgetResource = budgetRes.results[0].resourceName as string;
+
+      // 2. Campaign
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const campaignBody: Record<string, any> = {
+        name:                    campaign_name,
+        status:                  'PAUSED',
+        advertisingChannelType:  'SEARCH',
+        campaignBudget:          budgetResource,
+        networkSettings: {
+          targetGoogleSearch:    true,
+          targetSearchNetwork:   false,
+          targetContentNetwork:  false,
+        },
+      };
+      if (bidding_strategy === 'TARGET_CPA' && target_cpa_aud) {
+        campaignBody.targetCpa = { targetCpaMicros: String(Math.round(target_cpa_aud * 1_000_000)) };
+      } else if (bidding_strategy === 'MAXIMIZE_CLICKS') {
+        campaignBody.maximizeClicks = {};
+      } else if (bidding_strategy === 'MANUAL_CPC') {
+        campaignBody.manualCpc = { enhancedCpcEnabled: true };
+      } else {
+        campaignBody.maximizeConversions = {};
+      }
+      const campaignRes = await runGaqlMutate(cfg, 'campaigns', [{ create: campaignBody }]);
+      const campaignResource = campaignRes.results[0].resourceName as string;
+      const campaignId = campaignResource.split('/').pop();
+
+      // 3. Geo targeting (default to Australia if not specified)
+      const geoIds: number[] = geo_target_ids?.length ? geo_target_ids : [2036];
+      await runGaqlMutate(cfg, 'campaignCriteria', geoIds.map((id: number) => ({
+        create: {
+          campaign: campaignResource,
+          location: { geoTargetConstant: `geoTargetConstants/${id}` },
+        },
+      })));
+
+      // 4. Ad group
+      const adGroupRes = await runGaqlMutate(cfg, 'adGroups', [{
+        create: {
+          name:          `${campaign_name} — Ad Group 1`,
+          campaign:      campaignResource,
+          status:        'ENABLED',
+          type:          'SEARCH_STANDARD',
+          cpcBidMicros:  '1000000',
+        },
+      }]);
+      const adGroupResource = adGroupRes.results[0].resourceName as string;
+
+      // 5. Responsive Search Ad
+      await runGaqlMutate(cfg, 'adGroupAds', [{
+        create: {
+          adGroup: adGroupResource,
+          status:  'ENABLED',
+          ad: {
+            finalUrls:          [final_url],
+            responsiveSearchAd: {
+              headlines:    (headlines as string[]).map(text => ({ text })),
+              descriptions: (descriptions as string[]).map(text => ({ text })),
+            },
+          },
+        },
+      }]);
+
+      // 6. Keywords
+      if (keywords?.length) {
+        await runGaqlMutate(cfg, 'adGroupCriteria', (keywords as string[]).map(kw => ({
+          create: {
+            adGroup:  adGroupResource,
+            status:   'ENABLED',
+            keyword:  { text: kw, matchType: match_type ?? 'PHRASE' },
+          },
+        })));
+      }
+
+      return `✅ Search campaign **"${campaign_name}"** created (ID: ${campaignId}).
+
+- Status: **PAUSED** — review in Google Ads before enabling
+- Daily budget: $${daily_budget_aud}/day
+- Bidding: ${bidding_strategy ?? 'MAXIMIZE_CONVERSIONS'}
+- ${(headlines as string[]).length} headlines · ${(descriptions as string[]).length} descriptions
+- ${(keywords as string[])?.length ?? 0} keywords (${match_type ?? 'PHRASE'} match)
+- Geo: ${geoIds.join(', ')} (2036 = Australia, 21471 = NSW)`;
+    }
+
+    // ── Write: create shopping campaign ─────────────────────────────────────
+    case 'create_shopping_campaign': {
+      const {
+        campaign_name, daily_budget_aud, merchant_center_id,
+        geo_target_ids, bidding_strategy,
+      } = input;
+
+      // 1. Budget
+      const budgetRes = await runGaqlMutate(cfg, 'campaignBudgets', [{
+        create: {
+          name:          `Budget — ${campaign_name}`,
+          amountMicros:  String(Math.round(daily_budget_aud * 1_000_000)),
+          deliveryMethod: 'STANDARD',
+        },
+      }]);
+      const budgetResource = budgetRes.results[0].resourceName as string;
+
+      // 2. Campaign
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const campaignBody: Record<string, any> = {
+        name:                   campaign_name,
+        status:                 'PAUSED',
+        advertisingChannelType: 'SHOPPING',
+        campaignBudget:         budgetResource,
+        shoppingSetting: {
+          merchantId:       Number(merchant_center_id),
+          salesCountry:     'AU',
+          campaignPriority: 0,
+          enableLocal:      false,
+        },
+      };
+      if (bidding_strategy === 'MAXIMIZE_CLICKS') {
+        campaignBody.maximizeClicks = {};
+      } else {
+        campaignBody.maximizeConversionValue = {};
+      }
+      const campaignRes = await runGaqlMutate(cfg, 'campaigns', [{ create: campaignBody }]);
+      const campaignResource = campaignRes.results[0].resourceName as string;
+      const campaignId = campaignResource.split('/').pop();
+
+      // 3. Geo targeting
+      const geoIds: number[] = geo_target_ids?.length ? geo_target_ids : [2036];
+      await runGaqlMutate(cfg, 'campaignCriteria', geoIds.map((id: number) => ({
+        create: {
+          campaign: campaignResource,
+          location: { geoTargetConstant: `geoTargetConstants/${id}` },
+        },
+      })));
+
+      // 4. Ad group
+      const adGroupRes = await runGaqlMutate(cfg, 'adGroups', [{
+        create: {
+          name:     `${campaign_name} — Ad Group 1`,
+          campaign: campaignResource,
+          status:   'ENABLED',
+          type:     'SHOPPING_PRODUCT_ADS',
+        },
+      }]);
+      const adGroupResource = adGroupRes.results[0].resourceName as string;
+
+      // 5. Product ad
+      await runGaqlMutate(cfg, 'adGroupAds', [{
+        create: {
+          adGroup: adGroupResource,
+          status:  'ENABLED',
+          ad:      { shoppingProductAd: {} },
+        },
+      }]);
+
+      return `✅ Shopping campaign **"${campaign_name}"** created (ID: ${campaignId}).
+
+- Status: **PAUSED** — review in Google Ads before enabling
+- Daily budget: $${daily_budget_aud}/day
+- Merchant Center ID: ${merchant_center_id}
+- Bidding: ${bidding_strategy ?? 'MAXIMIZE_CONVERSION_VALUE'}
+- Ad group: "${campaign_name} — Ad Group 1" (all products)`;
+    }
+
+    // ── Write: add sitelink asset ────────────────────────────────────────────
+    case 'add_sitelink': {
+      const { campaign_id, campaign_name, link_text, final_url, description1, description2 } = input;
+
+      // 1. Create the asset
+      const assetRes = await runGaqlMutate(cfg, 'assets', [{
+        create: {
+          name:          `Sitelink — ${link_text}`,
+          sitelinkAsset: {
+            linkText:     link_text,
+            finalUrls:    [final_url],
+            description1: description1 ?? '',
+            description2: description2 ?? '',
+          },
+        },
+      }]);
+      const assetResource = assetRes.results[0].resourceName as string;
+
+      // 2. Link to campaign
+      await runGaqlMutate(cfg, 'campaignAssets', [{
+        create: {
+          asset:     assetResource,
+          campaign:  `customers/${customerId}/campaigns/${campaign_id}`,
+          fieldType: 'SITELINK',
+        },
+      }]);
+
+      return `✅ Sitelink **"${link_text}"** → ${final_url} added to campaign "${campaign_name}".`;
+    }
+
+    // ── Write: add callout asset ─────────────────────────────────────────────
+    case 'add_callout': {
+      const { campaign_id, campaign_name, callout_text } = input;
+
+      const assetRes = await runGaqlMutate(cfg, 'assets', [{
+        create: {
+          name:          `Callout — ${callout_text}`,
+          calloutAsset:  { calloutText: callout_text },
+        },
+      }]);
+      const assetResource = assetRes.results[0].resourceName as string;
+
+      await runGaqlMutate(cfg, 'campaignAssets', [{
+        create: {
+          asset:     assetResource,
+          campaign:  `customers/${customerId}/campaigns/${campaign_id}`,
+          fieldType: 'CALLOUT',
+        },
+      }]);
+
+      return `✅ Callout **"${callout_text}"** added to campaign "${campaign_name}".`;
+    }
+
     // ── Write: pause campaign ────────────────────────────────────────────────
     case 'pause_campaign': {
       const { campaign_id, campaign_name } = input;
@@ -477,6 +708,70 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['campaign_id', 'campaign_name', 'keyword', 'match_type'],
     },
   },
+  {
+    name:        'create_search_campaign',
+    description: 'Create a complete Google Search campaign including budget, campaign, ad group, responsive search ad, and keywords. Always start campaigns as PAUSED so the user can review before going live. Gather all required info from the user before calling this tool.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        campaign_name:     { type: 'string', description: 'Campaign name, e.g. "PP_Search_Brand_FY27".' },
+        daily_budget_aud:  { type: 'number', description: 'Daily budget in AUD, e.g. 20 for $20/day.' },
+        headlines:         { type: 'array', items: { type: 'string' }, description: 'RSA headlines — minimum 3, maximum 15. Each max 30 characters.' },
+        descriptions:      { type: 'array', items: { type: 'string' }, description: 'RSA descriptions — minimum 2, maximum 4. Each max 90 characters.' },
+        final_url:         { type: 'string', description: 'Landing page URL, e.g. "https://pascalpress.com.au".' },
+        keywords:          { type: 'array', items: { type: 'string' }, description: 'Keywords to target, e.g. ["pascal press books", "hsc study guides"].' },
+        match_type:        { type: 'string', enum: ['BROAD', 'PHRASE', 'EXACT'], description: 'Match type for all keywords. Default PHRASE.' },
+        bidding_strategy:  { type: 'string', enum: ['MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CLICKS', 'MANUAL_CPC', 'TARGET_CPA'], description: 'Bidding strategy. Default MAXIMIZE_CONVERSIONS.' },
+        target_cpa_aud:    { type: 'number', description: 'Target CPA in AUD — only used when bidding_strategy is TARGET_CPA.' },
+        geo_target_ids:    { type: 'array', items: { type: 'number' }, description: 'Google Ads geo target constant IDs. Common: 2036 = Australia, 21471 = NSW, 21473 = VIC, 21474 = QLD. Default [2036].' },
+      },
+      required: ['campaign_name', 'daily_budget_aud', 'headlines', 'descriptions', 'final_url', 'keywords'],
+    },
+  },
+  {
+    name:        'create_shopping_campaign',
+    description: 'Create a Google Shopping campaign including budget, campaign, ad group, and product ad. Requires a Google Merchant Center ID. Starts PAUSED for review.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        campaign_name:      { type: 'string', description: 'Campaign name, e.g. "PP_Shopping_Books_FY27".' },
+        daily_budget_aud:   { type: 'number', description: 'Daily budget in AUD.' },
+        merchant_center_id: { type: 'string', description: 'Google Merchant Center account ID (ask the user if unsure).' },
+        bidding_strategy:   { type: 'string', enum: ['MAXIMIZE_CONVERSION_VALUE', 'MAXIMIZE_CLICKS'], description: 'Default MAXIMIZE_CONVERSION_VALUE.' },
+        geo_target_ids:     { type: 'array', items: { type: 'number' }, description: 'Geo target IDs. Default [2036] = Australia.' },
+      },
+      required: ['campaign_name', 'daily_budget_aud', 'merchant_center_id'],
+    },
+  },
+  {
+    name:        'add_sitelink',
+    description: 'Add a sitelink extension to a campaign. Sitelinks show additional links below the main ad.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        campaign_id:   { type: 'string', description: 'Numeric campaign ID.' },
+        campaign_name: { type: 'string', description: 'Campaign name for confirmation.' },
+        link_text:     { type: 'string', description: 'Link anchor text, max 25 characters, e.g. "Free Trial".' },
+        final_url:     { type: 'string', description: 'URL the sitelink points to.' },
+        description1:  { type: 'string', description: 'Optional first description line, max 35 characters.' },
+        description2:  { type: 'string', description: 'Optional second description line, max 35 characters.' },
+      },
+      required: ['campaign_id', 'campaign_name', 'link_text', 'final_url'],
+    },
+  },
+  {
+    name:        'add_callout',
+    description: 'Add a callout extension to a campaign. Callouts are short snippets of text that appear with ads highlighting features or offers, e.g. "Free Shipping", "HSC Experts", "Est. 1990".',
+    input_schema: {
+      type:       'object',
+      properties: {
+        campaign_id:   { type: 'string', description: 'Numeric campaign ID.' },
+        campaign_name: { type: 'string', description: 'Campaign name for confirmation.' },
+        callout_text:  { type: 'string', description: 'Callout text, max 25 characters.' },
+      },
+      required: ['campaign_id', 'campaign_name', 'callout_text'],
+    },
+  },
 ];
 
 // ─── Account display names ────────────────────────────────────────────────────
@@ -525,14 +820,18 @@ export async function POST(req: NextRequest) {
 - Confirm what you're about to do in plain language before calling a mutate tool
 - After a successful change, summarise what was done
 
+**Creating campaigns:** Gather all required details from the user before calling create_search_campaign or create_shopping_campaign. Always confirm the full details back to the user ("Here's what I'm about to create: …") and wait for a yes before calling the create tool. New campaigns are always created PAUSED.
+
+**Adding assets:** Use add_sitelink and add_callout to add extensions to existing campaigns. Get the campaign ID first via get_campaigns if needed.
+
 **Output format:** Use markdown. When showing campaign performance, present a table: Campaign | Spend | GA4 Revenue | ROAS. Use ✅ for completed actions. Always show AUD amounts.`;
 
     const client     = new Anthropic();
     const apiMessages: Anthropic.MessageParam[] = [...messages];
     let   finalText  = '';
 
-    // Agentic loop — up to 5 turns to allow multi-step operations (e.g. get budget resource → update it)
-    for (let turn = 0; turn < 5; turn++) {
+    // Agentic loop — up to 8 turns (campaign creation needs budget + campaign + geo + adGroup + ad + keywords)
+    for (let turn = 0; turn < 8; turn++) {
       const response = await client.messages.create({
         model:      'claude-sonnet-4-6',
         max_tokens: 2000,
