@@ -43,10 +43,9 @@ const SUGGESTIONS: Record<Account, string[]> = {
   ],
 };
 
-// ─── Simple markdown renderer ──────────────────────────────────────────────────
+// ─── Markdown renderer (supports tables, headers, bullets, bold, code) ──────────
 
 function InlineText({ text }: { text: string }) {
-  // Split on **bold** and `code` spans
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
   return (
     <>
@@ -56,7 +55,7 @@ function InlineText({ text }: { text: string }) {
         }
         if (part.startsWith('`') && part.endsWith('`')) {
           return (
-            <code key={i} className="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono text-gray-700">
+            <code key={i} className="bg-blue-50 border border-blue-100 px-1 py-0.5 rounded text-xs font-mono text-blue-800">
               {part.slice(1, -1)}
             </code>
           );
@@ -67,28 +66,98 @@ function InlineText({ text }: { text: string }) {
   );
 }
 
+/** Parse a markdown table row: "| A | B | C |" → ["A", "B", "C"] */
+function parseTableRow(line: string): string[] {
+  return line.split('|').slice(1, -1).map(c => c.trim());
+}
+
+/** True if every cell in the row is a separator like "---" or ":---:" */
+function isSeparatorRow(line: string): boolean {
+  const cells = line.split('|').slice(1, -1).map(c => c.trim());
+  return cells.length > 0 && cells.every(c => /^:?-+:?$/.test(c));
+}
+
+function TableBlock({ lines }: { lines: string[] }) {
+  const nonSeparator = lines.filter(l => !isSeparatorRow(l));
+  if (nonSeparator.length === 0) return null;
+
+  const [headerLine, ...dataLines] = nonSeparator;
+  const headers = parseTableRow(headerLine);
+  const rows    = dataLines.map(parseTableRow);
+
+  return (
+    <div className="overflow-x-auto my-2 rounded-lg border border-gray-200 shadow-sm">
+      <table className="w-full text-xs border-collapse">
+        <thead>
+          <tr className="bg-gray-100 border-b border-gray-200">
+            {headers.map((h, i) => (
+              <th
+                key={i}
+                className="px-3 py-2 text-left font-semibold text-gray-700 whitespace-nowrap"
+              >
+                <InlineText text={h} />
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, ri) => (
+            <tr
+              key={ri}
+              className={`border-b border-gray-100 last:border-0 ${
+                ri % 2 === 0 ? 'bg-white' : 'bg-gray-50'
+              }`}
+            >
+              {headers.map((_, ci) => (
+                <td key={ci} className="px-3 py-2 text-gray-700 align-top">
+                  <InlineText text={row[ci] ?? ''} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function MarkdownContent({ text }: { text: string }) {
-  const lines = text.split('\n');
+  const lines  = text.split('\n');
   const result: React.ReactNode[] = [];
   const bullets: string[] = [];
+  let   i = 0;
 
   const flushBullets = (key: string) => {
-    if (bullets.length) {
-      result.push(
-        <ul key={`ul-${key}`} className="list-disc ml-5 space-y-0.5 my-1">
-          {bullets.map((b, i) => (
-            <li key={i} className="leading-snug">
-              <InlineText text={b} />
-            </li>
-          ))}
-        </ul>,
-      );
-      bullets.length = 0;
-    }
+    if (!bullets.length) return;
+    result.push(
+      <ul key={`ul-${key}`} className="list-disc ml-5 space-y-0.5 my-1">
+        {bullets.map((b, j) => (
+          <li key={j} className="leading-snug">
+            <InlineText text={b} />
+          </li>
+        ))}
+      </ul>,
+    );
+    bullets.length = 0;
   };
 
-  lines.forEach((line, i) => {
-    const k = String(i);
+  while (i < lines.length) {
+    const line = lines[i];
+    const k    = String(i);
+
+    // ── Table block ──
+    if (line.trim().startsWith('|')) {
+      flushBullets(k);
+      const tableLines: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith('|')) {
+        tableLines.push(lines[i]);
+        i++;
+      }
+      result.push(<TableBlock key={`tbl-${k}`} lines={tableLines} />);
+      continue;
+    }
+
+    // ── Headers ──
     if (/^### /.test(line)) {
       flushBullets(k);
       result.push(
@@ -110,17 +179,26 @@ function MarkdownContent({ text }: { text: string }) {
           <InlineText text={line.slice(2)} />
         </h1>,
       );
+
+    // ── Bullets ──
     } else if (/^[-•] /.test(line)) {
       bullets.push(line.slice(2));
+
+    // ── Numbered list (treat as bullet for now) ──
     } else if (/^\d+\. /.test(line)) {
-      // Numbered list item — collect inline, flush as ordered list when block ends
       bullets.push(line.replace(/^\d+\. /, ''));
-    } else if (line === '---') {
+
+    // ── Horizontal rule ──
+    } else if (line.trim() === '---') {
       flushBullets(k);
       result.push(<hr key={k} className="border-gray-200 my-2" />);
+
+    // ── Blank line ──
     } else if (line.trim() === '') {
       flushBullets(k);
-      result.push(<div key={k} className="h-1.5" />);
+      if (result.length > 0) result.push(<div key={k} className="h-1" />);
+
+    // ── Plain paragraph ──
     } else {
       flushBullets(k);
       result.push(
@@ -129,9 +207,11 @@ function MarkdownContent({ text }: { text: string }) {
         </p>,
       );
     }
-  });
-  flushBullets('end');
 
+    i++;
+  }
+
+  flushBullets('end');
   return <div className="text-sm space-y-0.5">{result}</div>;
 }
 
