@@ -388,33 +388,15 @@ async function handleTool(name: string, input: any, account: string): Promise<st
     // ── Read: GA4 full ecommerce (all accounts, item + category level) ───────
     case 'get_ga4_ecommerce': {
       const { startDate, endDate } = ga4DateRange(input.date_range);
-      const byCategory     = input.group_by === 'category';
-      const byCampaign     = input.include_campaign === true;
-      const sessionMedium  = input.session_medium as string | undefined; // e.g. 'cpc', 'organic'
-      const campaignFilter = input.campaign_name  as string | undefined; // e.g. 'Success One Shopping'
+      const byCategory    = input.group_by === 'category';
+      const sessionMedium = input.session_medium as string | undefined; // e.g. 'cpc', 'organic'
 
-      // Build dimensions
-      const dims: { name: string }[] = [];
-      if (byCampaign) dims.push({ name: 'sessionCampaignName' });
-      if (byCategory) {
-        dims.push({ name: 'itemCategory' });
-      } else {
-        dims.push({ name: 'itemName' }, { name: 'itemId' }, { name: 'itemCategory' });
-      }
-
-      // Build dimension filter (AND of optional filters)
-      const filterExpressions: unknown[] = [];
-      if (sessionMedium) {
-        filterExpressions.push({ filter: { fieldName: 'sessionMedium', stringFilter: { matchType: 'EXACT', value: sessionMedium } } });
-      }
-      if (campaignFilter) {
-        filterExpressions.push({ filter: { fieldName: 'sessionCampaignName', stringFilter: { matchType: 'CONTAINS', value: campaignFilter } } });
-      }
-      const dimensionFilter = filterExpressions.length === 1
-        ? filterExpressions[0]
-        : filterExpressions.length > 1
-          ? { andGroup: { expressions: filterExpressions } }
-          : undefined;
+      // NOTE: GA4 Data API does NOT allow mixing item-scoped dimensions (itemName, itemCategory)
+      // with session-scoped dimensions (sessionCampaignName) in a single runReport call.
+      // For campaign attribution use get_ga4_campaign_revenue; for item detail use this tool.
+      const dims: { name: string }[] = byCategory
+        ? [{ name: 'itemCategory' }]
+        : [{ name: 'itemName' }, { name: 'itemId' }, { name: 'itemCategory' }];
 
       const reportReq: Record<string, unknown> = {
         dimensions: dims,
@@ -429,32 +411,40 @@ async function handleTool(name: string, input: any, account: string): Promise<st
         orderBys:   [{ metric: { metricName: 'itemRevenue' }, desc: true }],
         limit:      input.limit ?? 100,
       };
-      if (dimensionFilter) reportReq.dimensionFilter = dimensionFilter;
+      if (sessionMedium) {
+        reportReq.dimensionFilter = {
+          filter: { fieldName: 'sessionMedium', stringFilter: { matchType: 'EXACT', value: sessionMedium } },
+        };
+      }
 
       const report = await runGA4Report(account, reportReq);
       if (!report.rows?.length) {
-        return JSON.stringify({ note: 'No ecommerce item data found for the given filters. If filtering by cpc, check that the GA4 property has ecommerce tracking enabled. ETZ/HSC use event-based revenue (not item tracking) — use get_ga4_campaign_revenue instead.', date_range: input.date_range, session_medium: sessionMedium ?? 'all' });
+        return JSON.stringify({ note: 'No ecommerce item data found for the given filters. If filtering by cpc, ensure GA4 ecommerce tracking is enabled. ETZ/HSC use event-based revenue (not item tracking) — use get_ga4_campaign_revenue instead.', date_range: input.date_range, session_medium: sessionMedium ?? 'all' });
       }
 
       const rows = (report.rows ?? []).map(row => {
-        let di = 0;
-        const result: Record<string, unknown> = {};
-        if (byCampaign)  result.campaign     = row.dimensionValues[di++].value;
         if (byCategory) {
-          result.category = row.dimensionValues[di++].value;
-        } else {
-          result.name     = row.dimensionValues[di++].value;
-          result.item_id  = row.dimensionValues[di++].value;
-          result.category = row.dimensionValues[di++].value;
+          return {
+            category:     row.dimensionValues[0].value,
+            revenue_aud:  +Number(row.metricValues[0].value).toFixed(2),
+            purchased:    Number(row.metricValues[1].value),
+            viewed:       Number(row.metricValues[2].value),
+            add_to_carts: Number(row.metricValues[3].value),
+            checkouts:    Number(row.metricValues[4].value),
+          };
         }
-        result.revenue_aud  = +Number(row.metricValues[0].value).toFixed(2);
-        result.purchased    = Number(row.metricValues[1].value);
-        result.viewed       = Number(row.metricValues[2].value);
-        result.add_to_carts = Number(row.metricValues[3].value);
-        result.checkouts    = Number(row.metricValues[4].value);
-        return result;
+        return {
+          name:         row.dimensionValues[0].value,
+          item_id:      row.dimensionValues[1].value,
+          category:     row.dimensionValues[2].value,
+          revenue_aud:  +Number(row.metricValues[0].value).toFixed(2),
+          purchased:    Number(row.metricValues[1].value),
+          viewed:       Number(row.metricValues[2].value),
+          add_to_carts: Number(row.metricValues[3].value),
+          checkouts:    Number(row.metricValues[4].value),
+        };
       });
-      return JSON.stringify({ session_medium: sessionMedium ?? 'all', campaign_filter: campaignFilter ?? 'all', rows }, null, 2);
+      return JSON.stringify({ session_medium: sessionMedium ?? 'all', rows }, null, 2);
     }
 
     // ── Read: GA4 conversion / key events breakdown ──────────────────────────
@@ -1376,16 +1366,14 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name:        'get_ga4_ecommerce',
-    description: 'Get ecommerce item performance from GA4: revenue, units purchased, views, add-to-carts, and checkouts per product or category. Works for Pascal Press (book/pack titles). For ETZ/HSC which use subscription revenue, this may return empty — use get_ga4_campaign_revenue instead. Supports filtering by session_medium (e.g. "cpc" for paid traffic only) and by specific campaign_name. Use include_campaign=true to break down item revenue by campaign.',
+    description: 'Get ecommerce item performance from GA4: revenue, units purchased, views, add-to-carts, and checkouts per product or category. Works for Pascal Press (book/pack titles). For ETZ/HSC which use subscription revenue, this may return empty — use get_ga4_campaign_revenue instead. Supports filtering by session_medium (e.g. "cpc" for paid traffic only). NOTE: GA4 does not allow item dimensions and campaign dimensions in the same query — use get_ga4_campaign_revenue for per-campaign totals.',
     input_schema: {
       type:       'object',
       properties: {
-        date_range:       { type: 'string', enum: DATE_RANGE_ENUM },
-        group_by:         { type: 'string', enum: ['item', 'category'], description: 'Group by individual item (default) or by category.' },
-        session_medium:   { type: 'string', description: 'Filter to a specific traffic medium. Use "cpc" to see only paid-ad-attributed ecommerce. Omit for all traffic.' },
-        include_campaign: { type: 'boolean', description: 'Add sessionCampaignName as a leading dimension to see item revenue broken down by campaign.' },
-        campaign_name:    { type: 'string', description: 'Filter to a specific campaign name (partial match). Use with session_medium="cpc" for deep-dive attribution.' },
-        limit:            { type: 'number', description: 'Max rows (default 100).' },
+        date_range:     { type: 'string', enum: DATE_RANGE_ENUM },
+        group_by:       { type: 'string', enum: ['item', 'category'], description: 'Group by individual item (default) or by category.' },
+        session_medium: { type: 'string', description: 'Filter to a specific traffic medium. Use "cpc" to see only paid-ad-attributed ecommerce. Omit for all traffic combined.' },
+        limit:          { type: 'number', description: 'Max rows (default 100).' },
       },
     },
   },
@@ -1790,8 +1778,8 @@ export async function POST(req: NextRequest) {
 - Use get_ga4_traffic_sources to see revenue across ALL channels — not just paid.
 - Use get_ga4_ecommerce for item/category level ecommerce data (purchases, views, add-to-carts). Pascal Press has full ecommerce tracking; ETZ/HSC use event revenue so this may return empty for them.
   - IMPORTANT: When the user asks about ecommerce sales from paid ads, ALWAYS pass session_medium="cpc" so you only see paid-traffic-attributed purchases — never report all-traffic combined as if it were paid.
-  - To attribute item revenue to a specific campaign, pass include_campaign=true and optionally campaign_name="<name>".
-  - If you need both item-level and campaign-level attribution at once, call get_ga4_ecommerce with session_medium="cpc" and include_campaign=true.
+  - GA4 LIMITATION: item-scoped dimensions (itemName, itemCategory) and session-scoped dimensions (sessionCampaignName) CANNOT be combined in one query — the API will error. Do NOT attempt this combination.
+  - To answer "which products did Campaign X sell?": call get_ga4_ecommerce with session_medium="cpc" for the item list (all paid campaigns combined), AND call get_ga4_campaign_revenue for the campaign's total revenue. Cross-reference both to give a complete picture. Be transparent that GA4 cannot break item revenue down by individual campaign.
 - Use get_ga4_conversions to see what conversion events are firing and how often.
 - Use get_ga4_landing_pages to see how ad landing pages are performing.${ppExtra}
 
