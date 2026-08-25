@@ -109,9 +109,22 @@ function gaqlDateRange(key?: string): string {
 function ga4DateRange(key?: string): { startDate: string; endDate: string } {
   const now = new Date();
   switch (key) {
-    case 'TODAY':       return { startDate: 'today', endDate: 'today' };
-    case 'YESTERDAY':   return { startDate: 'yesterday', endDate: 'yesterday' };
-    case 'LAST_30_DAYS':return { startDate: '30daysAgo', endDate: 'today' };
+    case 'TODAY':        return { startDate: 'today', endDate: 'today' };
+    case 'YESTERDAY':    return { startDate: 'yesterday', endDate: 'yesterday' };
+    case 'LAST_7_DAYS':  return { startDate: '7daysAgo', endDate: 'today' };
+    case 'LAST_30_DAYS': return { startDate: '30daysAgo', endDate: 'today' };
+    case 'THIS_WEEK': {
+      const d = new Date(now); const diff = d.getDay() === 0 ? 6 : d.getDay() - 1;
+      const mon = new Date(d); mon.setDate(d.getDate() - diff); mon.setHours(0,0,0,0);
+      return { startDate: mon.toISOString().slice(0, 10), endDate: 'today' };
+    }
+    case 'LAST_WEEK': {
+      const d = new Date(now); const diff = d.getDay() === 0 ? 6 : d.getDay() - 1;
+      const thisMon = new Date(d); thisMon.setDate(d.getDate() - diff);
+      const lastMon = new Date(thisMon); lastMon.setDate(thisMon.getDate() - 7);
+      const lastSun = new Date(thisMon); lastSun.setDate(thisMon.getDate() - 1);
+      return { startDate: lastMon.toISOString().slice(0, 10), endDate: lastSun.toISOString().slice(0, 10) };
+    }
     case 'LAST_MONTH': {
       const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const last  = new Date(now.getFullYear(), now.getMonth(), 0);
@@ -309,6 +322,163 @@ async function handleTool(name: string, input: any, account: string): Promise<st
         revenue:    +Number(row.metricValues[0].value).toFixed(2),
         sessions:   Number(row.metricValues[1].value),
         key_events: Number(row.metricValues[2].value),
+      }));
+      return JSON.stringify(rows, null, 2);
+    }
+
+    // ── Read: GA4 site overview ──────────────────────────────────────────────
+    case 'get_ga4_overview': {
+      const { startDate, endDate } = ga4DateRange(input.date_range);
+      const report = await runGA4Report(account, {
+        metrics: [
+          { name: 'sessions' },
+          { name: 'totalUsers' },
+          { name: 'newUsers' },
+          { name: 'totalRevenue' },
+          { name: 'keyEvents' },
+          { name: 'engagementRate' },
+          { name: 'averageSessionDuration' },
+          { name: 'bounceRate' },
+        ],
+        dateRanges: [{ startDate, endDate }],
+      });
+      const r = report.rows?.[0];
+      if (!r) return JSON.stringify({ note: 'No data for this period', date_range: input.date_range });
+      return JSON.stringify({
+        date_range:              input.date_range ?? 'THIS_MONTH',
+        sessions:                Number(r.metricValues[0].value),
+        total_users:             Number(r.metricValues[1].value),
+        new_users:               Number(r.metricValues[2].value),
+        total_revenue_aud:       +Number(r.metricValues[3].value).toFixed(2),
+        key_events:              Number(r.metricValues[4].value),
+        engagement_rate_pct:     +(Number(r.metricValues[5].value) * 100).toFixed(1),
+        avg_session_duration_sec: +Number(r.metricValues[6].value).toFixed(0),
+        bounce_rate_pct:         +(Number(r.metricValues[7].value) * 100).toFixed(1),
+      });
+    }
+
+    // ── Read: GA4 traffic sources ────────────────────────────────────────────
+    case 'get_ga4_traffic_sources': {
+      const { startDate, endDate } = ga4DateRange(input.date_range);
+      const report = await runGA4Report(account, {
+        dimensions: [{ name: 'sessionSource' }, { name: 'sessionMedium' }],
+        metrics: [
+          { name: 'sessions' },
+          { name: 'totalRevenue' },
+          { name: 'keyEvents' },
+          { name: 'totalUsers' },
+          { name: 'bounceRate' },
+        ],
+        dateRanges: [{ startDate, endDate }],
+        orderBys:   [{ metric: { metricName: 'sessions' }, desc: true }],
+        limit:      50,
+      });
+      const rows = (report.rows ?? []).map(row => ({
+        source:          row.dimensionValues[0].value,
+        medium:          row.dimensionValues[1].value,
+        sessions:        Number(row.metricValues[0].value),
+        revenue_aud:     +Number(row.metricValues[1].value).toFixed(2),
+        key_events:      Number(row.metricValues[2].value),
+        users:           Number(row.metricValues[3].value),
+        bounce_rate_pct: +(Number(row.metricValues[4].value) * 100).toFixed(1),
+      }));
+      return JSON.stringify(rows, null, 2);
+    }
+
+    // ── Read: GA4 full ecommerce (all accounts, item + category level) ───────
+    case 'get_ga4_ecommerce': {
+      const { startDate, endDate } = ga4DateRange(input.date_range);
+      const byCategory = input.group_by === 'category';
+      const dims = byCategory
+        ? [{ name: 'itemCategory' }]
+        : [{ name: 'itemName' }, { name: 'itemId' }, { name: 'itemCategory' }];
+      const report = await runGA4Report(account, {
+        dimensions: dims,
+        metrics: [
+          { name: 'itemRevenue' },
+          { name: 'itemsPurchased' },
+          { name: 'itemsViewed' },
+          { name: 'addToCarts' },
+          { name: 'checkouts' },
+        ],
+        dateRanges: [{ startDate, endDate }],
+        orderBys:   [{ metric: { metricName: 'itemRevenue' }, desc: true }],
+        limit:      input.limit ?? 100,
+      });
+      if (!report.rows?.length) {
+        return JSON.stringify({ note: 'No ecommerce item data found. This account may use event-based revenue tracking rather than ecommerce items.', date_range: input.date_range });
+      }
+      const rows = (report.rows ?? []).map(row => {
+        if (byCategory) {
+          return {
+            category:       row.dimensionValues[0].value,
+            revenue_aud:    +Number(row.metricValues[0].value).toFixed(2),
+            purchased:      Number(row.metricValues[1].value),
+            viewed:         Number(row.metricValues[2].value),
+            add_to_carts:   Number(row.metricValues[3].value),
+            checkouts:      Number(row.metricValues[4].value),
+          };
+        }
+        return {
+          name:           row.dimensionValues[0].value,
+          item_id:        row.dimensionValues[1].value,
+          category:       row.dimensionValues[2].value,
+          revenue_aud:    +Number(row.metricValues[0].value).toFixed(2),
+          purchased:      Number(row.metricValues[1].value),
+          viewed:         Number(row.metricValues[2].value),
+          add_to_carts:   Number(row.metricValues[3].value),
+          checkouts:      Number(row.metricValues[4].value),
+        };
+      });
+      return JSON.stringify(rows, null, 2);
+    }
+
+    // ── Read: GA4 conversion / key events breakdown ──────────────────────────
+    case 'get_ga4_conversions': {
+      const { startDate, endDate } = ga4DateRange(input.date_range);
+      const report = await runGA4Report(account, {
+        dimensions: [{ name: 'eventName' }],
+        metrics:    [{ name: 'keyEvents' }, { name: 'totalRevenue' }],
+        dateRanges: [{ startDate, endDate }],
+        orderBys:   [{ metric: { metricName: 'keyEvents' }, desc: true }],
+        limit:      50,
+      });
+      const rows = (report.rows ?? [])
+        .filter(row => Number(row.metricValues[0].value) > 0)
+        .map(row => ({
+          event_name:  row.dimensionValues[0].value,
+          key_events:  Number(row.metricValues[0].value),
+          revenue_aud: +Number(row.metricValues[1].value).toFixed(2),
+        }));
+      return JSON.stringify(rows, null, 2);
+    }
+
+    // ── Read: GA4 landing pages ──────────────────────────────────────────────
+    case 'get_ga4_landing_pages': {
+      const { startDate, endDate } = ga4DateRange(input.date_range);
+      const limit = Math.min(Number(input.limit ?? 25), 50);
+      const report = await runGA4Report(account, {
+        dimensions: [{ name: 'landingPage' }],
+        metrics: [
+          { name: 'sessions' },
+          { name: 'totalRevenue' },
+          { name: 'keyEvents' },
+          { name: 'bounceRate' },
+          { name: 'engagementRate' },
+          { name: 'totalUsers' },
+        ],
+        dateRanges: [{ startDate, endDate }],
+        orderBys:   [{ metric: { metricName: 'sessions' }, desc: true }],
+        limit,
+      });
+      const rows = (report.rows ?? []).map(row => ({
+        page:            row.dimensionValues[0].value,
+        sessions:        Number(row.metricValues[0].value),
+        revenue_aud:     +Number(row.metricValues[1].value).toFixed(2),
+        key_events:      Number(row.metricValues[2].value),
+        bounce_rate_pct: +(Number(row.metricValues[3].value) * 100).toFixed(1),
+        engagement_pct:  +(Number(row.metricValues[4].value) * 100).toFixed(1),
+        users:           Number(row.metricValues[5].value),
       }));
       return JSON.stringify(rows, null, 2);
     }
@@ -1102,7 +1272,7 @@ async function handleTool(name: string, input: any, account: string): Promise<st
 
 // ─── Claude tools definition ──────────────────────────────────────────────────
 
-const DATE_RANGE_ENUM = ['TODAY', 'YESTERDAY', 'THIS_WEEK', 'LAST_WEEK', 'THIS_MONTH', 'LAST_MONTH', 'LAST_30_DAYS'];
+const DATE_RANGE_ENUM = ['TODAY', 'YESTERDAY', 'THIS_WEEK', 'LAST_WEEK', 'LAST_7_DAYS', 'THIS_MONTH', 'LAST_MONTH', 'LAST_30_DAYS'];
 
 const TOOLS: Anthropic.Tool[] = [
   {
@@ -1157,6 +1327,59 @@ const TOOLS: Anthropic.Tool[] = [
       type:       'object',
       properties: {
         date_range: { type: 'string', enum: DATE_RANGE_ENUM },
+      },
+    },
+  },
+  {
+    name:        'get_ga4_overview',
+    description: 'Get a high-level GA4 summary: sessions, users, revenue, engagement rate, bounce rate, avg session duration. Use as the starting point for any GA4 question or to give a quick health check on the website.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        date_range: { type: 'string', enum: DATE_RANGE_ENUM, description: 'Reporting period. Default THIS_MONTH.' },
+      },
+    },
+  },
+  {
+    name:        'get_ga4_traffic_sources',
+    description: 'Break down website sessions, revenue and conversions by source/medium (e.g. google/cpc, google/organic, direct/none, email/newsletter). Use to see where revenue is coming from across ALL channels, not just paid ads.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        date_range: { type: 'string', enum: DATE_RANGE_ENUM },
+      },
+    },
+  },
+  {
+    name:        'get_ga4_ecommerce',
+    description: 'Get ecommerce item performance from GA4: revenue, units purchased, views, add-to-carts, and checkouts per product or category. Works for Pascal Press (book/pack titles). For ETZ/HSC which use subscription revenue, this may return empty — use get_ga4_campaign_revenue instead.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        date_range: { type: 'string', enum: DATE_RANGE_ENUM },
+        group_by:   { type: 'string', enum: ['item', 'category'], description: 'Group by individual item (default) or by category.' },
+        limit:      { type: 'number', description: 'Max rows (default 100).' },
+      },
+    },
+  },
+  {
+    name:        'get_ga4_conversions',
+    description: 'List all GA4 conversion (key event) counts by event name. Use to see which events are firing — purchases, form submissions, sign-ups, trials — and how many times.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        date_range: { type: 'string', enum: DATE_RANGE_ENUM },
+      },
+    },
+  },
+  {
+    name:        'get_ga4_landing_pages',
+    description: 'Top landing pages by sessions with revenue, conversions, bounce rate and engagement rate. Use to find which pages ads are landing on and how they perform.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        date_range: { type: 'string', enum: DATE_RANGE_ENUM },
+        limit:      { type: 'number', description: 'Max rows (default 25, max 50).' },
       },
     },
   },
@@ -1534,8 +1757,13 @@ export async function POST(req: NextRequest) {
 **Today's date:** ${today}
 
 **GA4 is the source of truth for revenue — Google Ads conversion numbers are unreliable.**
-- Always use get_ga4_campaign_revenue when the user asks about revenue, ROAS, or campaign performance. Call it alongside get_campaigns so you can show spend and GA4 revenue side by side.
-- ROAS = GA4 revenue ÷ Google Ads spend. Below 2× is poor; above 4× is good.${ppExtra}
+- ROAS = GA4 revenue ÷ Google Ads spend. Below 2× is poor; above 4× is good.
+- Always call get_ga4_campaign_revenue alongside get_campaigns when the user asks about ROAS or campaign performance.
+- Use get_ga4_overview for a site health check (sessions, revenue, engagement, bounce rate).
+- Use get_ga4_traffic_sources to see revenue across ALL channels — not just paid.
+- Use get_ga4_ecommerce for item/category level ecommerce data (purchases, views, add-to-carts). Pascal Press has full ecommerce tracking; ETZ/HSC use event revenue so this may return empty for them.
+- Use get_ga4_conversions to see what conversion events are firing and how often.
+- Use get_ga4_landing_pages to see how ad landing pages are performing.${ppExtra}
 
 **How to approach analysis:**
 - Start with get_campaigns + get_ga4_campaign_revenue together to build the spend vs revenue picture
