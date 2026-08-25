@@ -612,6 +612,58 @@ async function handleTool(name: string, input: any, account: string): Promise<st
       return `✅ Negative keyword "${keyword}" (${match_type ?? 'BROAD'} match) added to campaign "${campaign_name}".`;
     }
 
+    // ── Read: ad groups ──────────────────────────────────────────────────────
+    case 'get_ad_groups': {
+      const dr = gaqlDateRange(input.date_range);
+      const campaignFilter = input.campaign_id
+        ? `AND campaign.id = ${input.campaign_id}`
+        : '';
+      const rows = await runGaqlQuery(cfg, `
+        SELECT
+          campaign.id,
+          campaign.name,
+          ad_group.id,
+          ad_group.name,
+          ad_group.status,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.cost_micros,
+          metrics.conversions
+        FROM ad_group
+        WHERE ad_group.status != 'REMOVED'
+        AND campaign.status != 'REMOVED'
+        ${campaignFilter}
+        ORDER BY metrics.cost_micros DESC
+        LIMIT 50
+      `);
+      const adGroups = rows.map(r => ({
+        campaign:     r.campaign?.name ?? '',
+        campaign_id:  String(r.campaign?.id ?? ''),
+        ad_group_id:  String(r.adGroup?.id ?? ''),
+        ad_group:     r.adGroup?.name ?? '',
+        status:       r.adGroup?.status ?? '',
+        impressions:  Number(r.metrics?.impressions ?? 0),
+        clicks:       Number(r.metrics?.clicks ?? 0),
+        cost_aud:     +(Number(r.metrics?.costMicros ?? 0) / 1_000_000).toFixed(2),
+        conversions:  +(Number(r.metrics?.conversions ?? 0)).toFixed(1),
+      }));
+      return JSON.stringify(adGroups, null, 2);
+    }
+
+    // ── Write: pause / enable an ad group ────────────────────────────────────
+    case 'set_ad_group_status': {
+      const { ad_group_id, ad_group_name, status } = input;
+      await runGaqlMutate(cfg, 'adGroups', [{
+        updateMask: 'status',
+        update: {
+          resourceName: `customers/${customerId}/adGroups/${ad_group_id}`,
+          status,
+        },
+      }]);
+      const verb = status === 'ENABLED' ? 'enabled' : 'paused';
+      return `✅ Ad group "${ad_group_name}" (ID: ${ad_group_id}) has been ${verb}.`;
+    }
+
     // ── Read: keyword performance ────────────────────────────────────────────
     case 'get_keywords': {
       const dr = gaqlDateRange(input.date_range);
@@ -911,6 +963,30 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name:        'get_ad_groups',
+    description: 'List all ad groups with their IDs, status, and performance metrics. Use this to get the ad_group_id needed to pause, enable, or drill into ad groups.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        date_range:  { type: 'string', enum: DATE_RANGE_ENUM },
+        campaign_id: { type: 'string', description: 'Filter to one campaign. Leave blank for all.' },
+      },
+    },
+  },
+  {
+    name:        'set_ad_group_status',
+    description: 'Pause or enable a specific ad group. Get the ad_group_id from get_ad_groups first.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        ad_group_id:   { type: 'string', description: 'Numeric ad group ID from get_ad_groups.' },
+        ad_group_name: { type: 'string', description: 'Ad group name for the confirmation message.' },
+        status:        { type: 'string', enum: ['ENABLED', 'PAUSED'], description: 'New status.' },
+      },
+      required: ['ad_group_id', 'ad_group_name', 'status'],
+    },
+  },
+  {
     name:        'get_keywords',
     description: 'Get keyword-level performance including Quality Score, effective CPC bid, clicks, conversions and spend. Use to find low-QS keywords (score < 5), expensive keywords with no conversions, or bid optimisation opportunities.',
     input_schema: {
@@ -1078,6 +1154,7 @@ export async function POST(req: NextRequest) {
 **Before making changes:**
 - Confirm what you're about to do in plain language before calling a mutate tool
 - After a successful change, summarise what was done
+- To pause or enable an ad group: call get_ad_groups first to get the ad_group_id, then call set_ad_group_status
 
 **Creating campaigns:** Gather all required details from the user before calling create_search_campaign or create_shopping_campaign. Always confirm the full details back to the user ("Here's what I'm about to create: …") and wait for a yes before calling the create tool. New campaigns are always created PAUSED.
 
