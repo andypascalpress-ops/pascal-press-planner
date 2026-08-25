@@ -612,6 +612,269 @@ async function handleTool(name: string, input: any, account: string): Promise<st
       return `✅ Negative keyword "${keyword}" (${match_type ?? 'BROAD'} match) added to campaign "${campaign_name}".`;
     }
 
+    // ── Read: RSA ads ────────────────────────────────────────────────────────
+    case 'get_ads': {
+      const dr = gaqlDateRange(input.date_range);
+      const campaignFilter = input.campaign_id
+        ? `AND campaign.id = ${input.campaign_id}`
+        : '';
+      const adGroupFilter = input.ad_group_id
+        ? `AND ad_group.id = ${input.ad_group_id}`
+        : '';
+      const rows = await runGaqlQuery(cfg, `
+        SELECT
+          campaign.id,
+          campaign.name,
+          ad_group.id,
+          ad_group.name,
+          ad_group_ad.ad.id,
+          ad_group_ad.ad.type,
+          ad_group_ad.status,
+          ad_group_ad.ad.final_urls,
+          ad_group_ad.ad.responsive_search_ad.headlines,
+          ad_group_ad.ad.responsive_search_ad.descriptions,
+          ad_group_ad.ad.responsive_search_ad.path1,
+          ad_group_ad.ad.responsive_search_ad.path2,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.cost_micros,
+          metrics.conversions
+        FROM ad_group_ad
+        WHERE ad_group_ad.ad.type = 'RESPONSIVE_SEARCH_AD'
+        AND ad_group_ad.status != 'REMOVED'
+        AND campaign.status != 'REMOVED'
+        AND segments.date DURING ${dr}
+        ${campaignFilter}
+        ${adGroupFilter}
+        ORDER BY metrics.cost_micros DESC
+        LIMIT 25
+      `);
+      const ads = rows.map(r => {
+        const rsa = r.adGroupAd?.ad?.responsiveSearchAd ?? {};
+        return {
+          ad_id:        String(r.adGroupAd?.ad?.id ?? ''),
+          campaign:     r.campaign?.name ?? '',
+          campaign_id:  String(r.campaign?.id ?? ''),
+          ad_group:     r.adGroup?.name ?? '',
+          ad_group_id:  String(r.adGroup?.id ?? ''),
+          status:       r.adGroupAd?.status ?? '',
+          final_url:    (r.adGroupAd?.ad?.finalUrls ?? [])[0] ?? '',
+          path1:        rsa.path1 ?? '',
+          path2:        rsa.path2 ?? '',
+          headlines:    (rsa.headlines ?? []).map((h: any) => h.text),
+          descriptions: (rsa.descriptions ?? []).map((d: any) => d.text),
+          impressions:  Number(r.metrics?.impressions ?? 0),
+          clicks:       Number(r.metrics?.clicks ?? 0),
+          cost_aud:     +(Number(r.metrics?.costMicros ?? 0) / 1_000_000).toFixed(2),
+          conversions:  +(Number(r.metrics?.conversions ?? 0)).toFixed(1),
+        };
+      });
+      return JSON.stringify(ads, null, 2);
+    }
+
+    // ── Write: update RSA headlines/descriptions ──────────────────────────────
+    case 'update_rsa': {
+      const { ad_group_id, ad_id, ad_name, headlines, descriptions, final_url } = input;
+      const updatePayload: any = {
+        resourceName: `customers/${customerId}/adGroupAds/${ad_group_id}~${ad_id}`,
+        ad: {
+          responsiveSearchAd: {
+            headlines:    (headlines as string[]).map(t => ({ text: t })),
+            descriptions: (descriptions as string[]).map(t => ({ text: t })),
+          },
+        },
+      };
+      if (final_url) updatePayload.ad.finalUrls = [final_url];
+      const masks = ['ad.responsive_search_ad.headlines', 'ad.responsive_search_ad.descriptions'];
+      if (final_url) masks.push('ad.final_urls');
+      await runGaqlMutate(cfg, 'adGroupAds', [{
+        updateMask: masks.join(','),
+        update:     updatePayload,
+      }]);
+      return `✅ RSA "${ad_name ?? ad_id}" updated with ${(headlines as string[]).length} headlines and ${(descriptions as string[]).length} descriptions. Changes take effect after Google review (usually minutes).`;
+    }
+
+    // ── Write: create RSA in existing ad group ────────────────────────────────
+    case 'create_rsa': {
+      const { ad_group_id, ad_group_name, headlines, descriptions, final_url, path1, path2 } = input;
+      const rsa: any = {
+        headlines:    (headlines as string[]).map(t => ({ text: t })),
+        descriptions: (descriptions as string[]).map(t => ({ text: t })),
+      };
+      if (path1) rsa.path1 = path1;
+      if (path2) rsa.path2 = path2;
+      const result = await runGaqlMutate(cfg, 'adGroupAds', [{
+        create: {
+          adGroup: `customers/${customerId}/adGroups/${ad_group_id}`,
+          status:  'PAUSED',
+          ad: {
+            finalUrls:          [final_url],
+            responsiveSearchAd: rsa,
+          },
+        },
+      }]);
+      return `✅ New RSA created in ad group "${ad_group_name}" — started PAUSED. Resource: ${result?.results?.[0]?.resourceName ?? 'created'}. Enable it when ready.`;
+    }
+
+    // ── Write: add keywords to existing ad group ──────────────────────────────
+    case 'add_keywords': {
+      const { ad_group_id, ad_group_name, keywords, match_type } = input;
+      const operations = (keywords as string[]).map(kw => ({
+        create: {
+          adGroup:  `customers/${customerId}/adGroups/${ad_group_id}`,
+          status:   'ENABLED',
+          keyword: {
+            text:      kw,
+            matchType: match_type ?? 'PHRASE',
+          },
+        },
+      }));
+      await runGaqlMutate(cfg, 'adGroupCriteria', operations);
+      const kwList = (keywords as string[]).map(k => `"${k}"`).join(', ');
+      return `✅ Added ${(keywords as string[]).length} keywords (${match_type ?? 'PHRASE'} match) to ad group "${ad_group_name}": ${kwList}`;
+    }
+
+    // ── Write: permanently remove a campaign ─────────────────────────────────
+    case 'remove_campaign': {
+      const { campaign_id, campaign_name } = input;
+      await runGaqlMutate(cfg, 'campaigns', [{
+        updateMask: 'status',
+        update: {
+          resourceName: `customers/${customerId}/campaigns/${campaign_id}`,
+          status: 'REMOVED',
+        },
+      }]);
+      return `✅ Campaign "${campaign_name}" (ID: ${campaign_id}) has been permanently removed. This cannot be undone.`;
+    }
+
+    // ── Write: create ad group in existing campaign ───────────────────────────
+    case 'create_ad_group': {
+      const { campaign_id, campaign_name, ad_group_name, ad_group_type } = input;
+      const result = await runGaqlMutate(cfg, 'adGroups', [{
+        create: {
+          name:     ad_group_name,
+          campaign: `customers/${customerId}/campaigns/${campaign_id}`,
+          status:   'ENABLED',
+          type:     ad_group_type ?? 'SEARCH_STANDARD',
+        },
+      }]);
+      const resourceName = result?.results?.[0]?.resourceName ?? '';
+      const newAdGroupId = resourceName.split('/').pop() ?? '';
+      return `✅ Ad group "${ad_group_name}" created in campaign "${campaign_name}". Ad group ID: ${newAdGroupId}. You can now add keywords and create RSA ads in it.`;
+    }
+
+    // ── Read: assets (extensions) on a campaign ───────────────────────────────
+    case 'get_assets': {
+      const { campaign_id } = input;
+      const rows = await runGaqlQuery(cfg, `
+        SELECT
+          asset.id,
+          asset.type,
+          asset.name,
+          asset.sitelink_asset.link_text,
+          asset.sitelink_asset.final_urls,
+          asset.sitelink_asset.description1,
+          asset.sitelink_asset.description2,
+          asset.callout_asset.callout_text,
+          asset.structured_snippet_asset.header,
+          asset.structured_snippet_asset.values,
+          campaign_asset.field_type,
+          campaign_asset.status
+        FROM campaign_asset
+        WHERE campaign.id = ${campaign_id}
+        AND campaign_asset.status != 'REMOVED'
+      `);
+      const assets = rows.map(r => {
+        const base: any = {
+          asset_id:   String(r.asset?.id ?? ''),
+          type:       r.asset?.type ?? '',
+          field_type: r.campaignAsset?.fieldType ?? '',
+          status:     r.campaignAsset?.status ?? '',
+        };
+        if (r.asset?.sitelinkAsset) {
+          base.link_text    = r.asset.sitelinkAsset.linkText ?? '';
+          base.final_url    = (r.asset.sitelinkAsset.finalUrls ?? [])[0] ?? '';
+          base.description1 = r.asset.sitelinkAsset.description1 ?? '';
+          base.description2 = r.asset.sitelinkAsset.description2 ?? '';
+        }
+        if (r.asset?.calloutAsset) {
+          base.callout_text = r.asset.calloutAsset.calloutText ?? '';
+        }
+        if (r.asset?.structuredSnippetAsset) {
+          base.header = r.asset.structuredSnippetAsset.header ?? '';
+          base.values = r.asset.structuredSnippetAsset.values ?? [];
+        }
+        return base;
+      });
+      return JSON.stringify(assets, null, 2);
+    }
+
+    // ── Write: remove asset from campaign ────────────────────────────────────
+    case 'remove_asset': {
+      const { campaign_id, campaign_name, asset_id, field_type } = input;
+      await runGaqlMutate(cfg, 'campaignAssets', [{
+        remove: `customers/${customerId}/campaignAssets/${campaign_id}~${asset_id}~${field_type}`,
+      }]);
+      return `✅ Asset (ID: ${asset_id}, type: ${field_type}) removed from campaign "${campaign_name}".`;
+    }
+
+    // ── Write: add structured snippet ────────────────────────────────────────
+    case 'add_structured_snippet': {
+      const { campaign_id, campaign_name, header, values } = input;
+      const assetResult = await runGaqlMutate(cfg, 'assets', [{
+        create: {
+          structuredSnippetAsset: {
+            header: header,
+            values: values as string[],
+          },
+        },
+      }]);
+      const assetResource = assetResult?.results?.[0]?.resourceName;
+      if (!assetResource) return '❌ Failed to create structured snippet asset.';
+      await runGaqlMutate(cfg, 'campaignAssets', [{
+        create: {
+          campaign:  `customers/${customerId}/campaigns/${campaign_id}`,
+          asset:     assetResource,
+          fieldType: 'STRUCTURED_SNIPPET',
+        },
+      }]);
+      return `✅ Structured snippet added to campaign "${campaign_name}": "${header}" — ${(values as string[]).join(', ')}`;
+    }
+
+    // ── Read: device performance ─────────────────────────────────────────────
+    case 'get_device_performance': {
+      const dr = gaqlDateRange(input.date_range);
+      const rows = await runGaqlQuery(cfg, `
+        SELECT
+          campaign.id,
+          campaign.name,
+          segments.device,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.cost_micros,
+          metrics.conversions
+        FROM campaign
+        WHERE segments.date DURING ${dr}
+        AND campaign.status != 'REMOVED'
+        ORDER BY metrics.cost_micros DESC
+        LIMIT 150
+      `);
+      const byDevice: Record<string, any[]> = {};
+      for (const r of rows) {
+        const device = r.segments?.device ?? 'UNKNOWN';
+        if (!byDevice[device]) byDevice[device] = [];
+        byDevice[device].push({
+          campaign:    r.campaign?.name ?? '',
+          campaign_id: String(r.campaign?.id ?? ''),
+          impressions: Number(r.metrics?.impressions ?? 0),
+          clicks:      Number(r.metrics?.clicks ?? 0),
+          cost_aud:    +(Number(r.metrics?.costMicros ?? 0) / 1_000_000).toFixed(2),
+          conversions: +(Number(r.metrics?.conversions ?? 0)).toFixed(1),
+        });
+      }
+      return JSON.stringify(byDevice, null, 2);
+    }
+
     // ── Read: ad groups ──────────────────────────────────────────────────────
     case 'get_ad_groups': {
       const dr = gaqlDateRange(input.date_range);
@@ -963,6 +1226,140 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name:        'get_ads',
+    description: 'Get all responsive search ads (RSAs) with their headlines, descriptions, final URL and performance. Use before editing ad copy or to audit what ads are running.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        date_range:  { type: 'string', enum: DATE_RANGE_ENUM },
+        campaign_id: { type: 'string', description: 'Filter to one campaign. Leave blank for all.' },
+        ad_group_id: { type: 'string', description: 'Filter to one ad group. Leave blank for all.' },
+      },
+    },
+  },
+  {
+    name:        'update_rsa',
+    description: 'Update the headlines and/or descriptions of an existing RSA. You MUST provide the full new list of headlines and descriptions (replaces everything). Get ad_id and ad_group_id from get_ads first. Changes go through Google review but typically take effect within minutes.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        ad_group_id:  { type: 'string', description: 'Ad group ID from get_ads.' },
+        ad_id:        { type: 'string', description: 'Ad ID from get_ads.' },
+        ad_name:      { type: 'string', description: 'Ad description for confirmation message.' },
+        headlines:    { type: 'array', items: { type: 'string' }, description: 'Complete list of headlines (3–15). Max 30 chars each.' },
+        descriptions: { type: 'array', items: { type: 'string' }, description: 'Complete list of descriptions (2–4). Max 90 chars each.' },
+        final_url:    { type: 'string', description: 'Landing page URL — only provide if changing it.' },
+      },
+      required: ['ad_group_id', 'ad_id', 'headlines', 'descriptions'],
+    },
+  },
+  {
+    name:        'create_rsa',
+    description: 'Create a new responsive search ad in an existing ad group. Always starts PAUSED. Get ad_group_id from get_ad_groups. Confirm full ad details with the user before calling.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        ad_group_id:   { type: 'string', description: 'Ad group ID from get_ad_groups.' },
+        ad_group_name: { type: 'string', description: 'Ad group name for confirmation.' },
+        headlines:     { type: 'array', items: { type: 'string' }, description: 'RSA headlines — 3 to 15, max 30 chars each.' },
+        descriptions:  { type: 'array', items: { type: 'string' }, description: 'RSA descriptions — 2 to 4, max 90 chars each.' },
+        final_url:     { type: 'string', description: 'Landing page URL.' },
+        path1:         { type: 'string', description: 'Optional URL path 1, e.g. "books".' },
+        path2:         { type: 'string', description: 'Optional URL path 2, e.g. "year-12".' },
+      },
+      required: ['ad_group_id', 'ad_group_name', 'headlines', 'descriptions', 'final_url'],
+    },
+  },
+  {
+    name:        'add_keywords',
+    description: 'Add one or more keywords to an existing ad group. Get ad_group_id from get_ad_groups or get_keywords.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        ad_group_id:   { type: 'string', description: 'Ad group ID to add keywords to.' },
+        ad_group_name: { type: 'string', description: 'Ad group name for confirmation.' },
+        keywords:      { type: 'array', items: { type: 'string' }, description: 'Keyword texts to add, e.g. ["pascal press maths", "year 12 books"].' },
+        match_type:    { type: 'string', enum: ['BROAD', 'PHRASE', 'EXACT'], description: 'Match type for all keywords. Default PHRASE.' },
+      },
+      required: ['ad_group_id', 'ad_group_name', 'keywords'],
+    },
+  },
+  {
+    name:        'remove_campaign',
+    description: 'PERMANENTLY DELETE a campaign. This is irreversible — the campaign and all its data will be removed. Only call after the user explicitly confirms they want to permanently delete, not just pause.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        campaign_id:   { type: 'string', description: 'Numeric Google Ads campaign ID.' },
+        campaign_name: { type: 'string', description: 'Campaign name for confirmation.' },
+      },
+      required: ['campaign_id', 'campaign_name'],
+    },
+  },
+  {
+    name:        'create_ad_group',
+    description: 'Create a new ad group within an existing campaign. Returns the new ad_group_id so you can immediately add keywords or create an RSA in it.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        campaign_id:    { type: 'string', description: 'Campaign ID to create the ad group in.' },
+        campaign_name:  { type: 'string', description: 'Campaign name for confirmation.' },
+        ad_group_name:  { type: 'string', description: 'Name for the new ad group.' },
+        ad_group_type:  { type: 'string', enum: ['SEARCH_STANDARD', 'SHOPPING_PRODUCT_ADS'], description: 'Ad group type. Default SEARCH_STANDARD.' },
+      },
+      required: ['campaign_id', 'campaign_name', 'ad_group_name'],
+    },
+  },
+  {
+    name:        'get_assets',
+    description: 'List all assets (sitelinks, callouts, structured snippets) attached to a campaign. Use before adding new assets to avoid duplicates, or to get asset_id and field_type needed for remove_asset.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        campaign_id: { type: 'string', description: 'Campaign ID to list assets for.' },
+      },
+      required: ['campaign_id'],
+    },
+  },
+  {
+    name:        'remove_asset',
+    description: 'Remove (detach) an asset from a campaign. Get asset_id and field_type from get_assets first. This detaches it from the campaign but does not delete the underlying asset.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        campaign_id:   { type: 'string', description: 'Campaign ID.' },
+        campaign_name: { type: 'string', description: 'Campaign name for confirmation.' },
+        asset_id:      { type: 'string', description: 'Asset ID from get_assets.' },
+        field_type:    { type: 'string', enum: ['SITELINK', 'CALLOUT', 'STRUCTURED_SNIPPET'], description: 'Asset type from get_assets.' },
+      },
+      required: ['campaign_id', 'campaign_name', 'asset_id', 'field_type'],
+    },
+  },
+  {
+    name:        'add_structured_snippet',
+    description: 'Add a structured snippet extension to a campaign. Structured snippets highlight features using a header category and a list of values, e.g. header="Subjects", values=["Maths","English","Science"].',
+    input_schema: {
+      type:       'object',
+      properties: {
+        campaign_id:   { type: 'string', description: 'Campaign ID.' },
+        campaign_name: { type: 'string', description: 'Campaign name for confirmation.' },
+        header:        { type: 'string', description: 'Snippet header — must be a Google-approved category, e.g. "Subjects", "Types", "Courses", "Brands", "Services".' },
+        values:        { type: 'array', items: { type: 'string' }, description: 'List of 3–10 values, e.g. ["Maths", "English", "Science"]. Max 25 chars each.' },
+      },
+      required: ['campaign_id', 'campaign_name', 'header', 'values'],
+    },
+  },
+  {
+    name:        'get_device_performance',
+    description: 'Break down campaign performance by device: DESKTOP, MOBILE, TABLET. Use to identify if mobile has poor ROAS and should have a bid adjustment, or if spend is wasted on a particular device.',
+    input_schema: {
+      type:       'object',
+      properties: {
+        date_range: { type: 'string', enum: DATE_RANGE_ENUM },
+      },
+    },
+  },
+  {
     name:        'get_ad_groups',
     description: 'List all ad groups with their IDs, status, and performance metrics. Use this to get the ad_group_id needed to pause, enable, or drill into ad groups.',
     input_schema: {
@@ -1158,7 +1555,15 @@ export async function POST(req: NextRequest) {
 
 **Creating campaigns:** Gather all required details from the user before calling create_search_campaign or create_shopping_campaign. Always confirm the full details back to the user ("Here's what I'm about to create: …") and wait for a yes before calling the create tool. New campaigns are always created PAUSED.
 
-**Adding assets:** Use add_sitelink and add_callout to add extensions to existing campaigns. Get the campaign ID first via get_campaigns if needed.
+**Creating ad groups and ads:** Use create_ad_group to add a new ad group to an existing campaign. Use create_rsa to create a new responsive search ad — always starts PAUSED. To add keywords to an existing ad group use add_keywords. Confirm all details before creating.
+
+**Viewing and editing ads:** Call get_ads to see current RSA headlines, descriptions and performance before suggesting edits. When updating copy with update_rsa, provide the COMPLETE list of headlines and descriptions (it replaces everything). Always confirm the new copy with the user before calling update_rsa.
+
+**Asset management:** Call get_assets to see what sitelinks, callouts and structured snippets are already on a campaign before adding more (avoids duplicates). Use remove_asset with the asset_id and field_type from get_assets to detach an extension. Use add_structured_snippet for snippet extensions with a header + values list.
+
+**Removing campaigns:** Before calling remove_campaign, warn the user explicitly that this is PERMANENT and irreversible. Only call it after they confirm they want to delete, not just pause. Pausing is almost always the better choice.
+
+**Device performance:** Use get_device_performance to break down ROAS by DESKTOP, MOBILE, TABLET. If mobile has poor ROAS, recommend a negative bid adjustment (e.g. -30%) rather than pausing — that preserves mobile traffic at lower cost.
 
 **Recommending new campaigns for better ROAS:**
 When asked for campaign recommendations, run get_campaigns + get_ga4_campaign_revenue + get_search_terms (and get_ga4_product_revenue for Pascal Press) to understand the full picture, then recommend specific new campaigns based on:
@@ -1175,8 +1580,8 @@ For each recommendation output: **Campaign name | Type | Suggested budget | Targ
     const apiMessages: Anthropic.MessageParam[] = [...messages];
     let   finalText  = '';
 
-    // Agentic loop — up to 8 turns (campaign creation needs budget + campaign + geo + adGroup + ad + keywords)
-    for (let turn = 0; turn < 8; turn++) {
+    // Agentic loop — up to 10 turns (complex operations need multiple sequential API calls)
+    for (let turn = 0; turn < 10; turn++) {
       const response = await client.messages.create({
         model:      'claude-sonnet-4-6',
         max_tokens: 2000,
