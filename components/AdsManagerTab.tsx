@@ -12,10 +12,10 @@ import { ChatMessage } from '@/lib/types';
 
 type Account = 'pp' | 'etz' | 'hsc';
 
-const ACCOUNTS: { id: Account; label: string; sub: string; color: string; dot: string }[] = [
-  { id: 'pp',  label: 'Pascal Press',    sub: '246-104-2966', color: 'bg-blue-100 text-blue-700',   dot: 'bg-blue-500' },
-  { id: 'etz', label: 'Excel Test Zone', sub: '893-408-4207', color: 'bg-green-100 text-green-700', dot: 'bg-green-500' },
-  { id: 'hsc', label: 'HSC Copilot',     sub: '140-426-6935', color: 'bg-purple-100 text-purple-700', dot: 'bg-purple-500' },
+const ACCOUNTS: { id: Account; label: string; short: string; sub: string; color: string; dot: string }[] = [
+  { id: 'pp',  label: 'Pascal Press',    short: 'PP',  sub: '246-104-2966', color: 'bg-blue-100 text-blue-700',     dot: 'bg-blue-500' },
+  { id: 'etz', label: 'Excel Test Zone', short: 'ETZ', sub: '893-408-4207', color: 'bg-green-100 text-green-700',   dot: 'bg-green-500' },
+  { id: 'hsc', label: 'HSC Copilot',     short: 'HSC', sub: '140-426-6935', color: 'bg-purple-100 text-purple-700', dot: 'bg-purple-500' },
 ];
 
 // ─── Conversation history (localStorage) ──────────────────────────────────────
@@ -182,15 +182,22 @@ export default function AdsManagerTab() {
   const [loading,     setLoading]     = useState(false);
   const [error,       setError]       = useState('');
   const [savedConvs,  setSavedConvs]  = useState<SavedConversation[]>([]);
-  const [sidebarOpen, setSidebarOpen] = useState(true); // visible by default
+  const [sidebarOpen, setSidebarOpen] = useState(false); // set after mount based on screen size
+  const [isMobile,    setIsMobile]    = useState(false);
 
   const bottomRef     = useRef<HTMLDivElement>(null);
   const inputRef      = useRef<HTMLTextAreaElement>(null);
   const currentConvId = useRef<string | null>(null);
 
-  // Load history on mount
+  // Load history + set mobile state on mount
   useEffect(() => {
     setSavedConvs(loadFromStorage());
+    const mobile = window.innerWidth < 768;
+    setIsMobile(mobile);
+    setSidebarOpen(!mobile); // open by default on desktop only
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
 
   // Reset when switching account
@@ -251,6 +258,7 @@ export default function AdsManagerTab() {
     setError('');
     setInput('');
     currentConvId.current = conv.id;
+    if (isMobile) setSidebarOpen(false); // close drawer on mobile after selecting
   };
 
   const deleteConversation = (id: string, e: React.MouseEvent) => {
@@ -312,10 +320,24 @@ export default function AdsManagerTab() {
   // ─── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-full bg-white overflow-hidden">
+    <div className="relative flex h-full bg-white overflow-hidden">
+
+      {/* ── Mobile backdrop ────────────────────────────────────────────────── */}
+      {isMobile && sidebarOpen && (
+        <div
+          className="absolute inset-0 z-40 bg-black/40"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
       {/* ── History sidebar ────────────────────────────────────────────────── */}
-      <div className={`flex-shrink-0 flex flex-col border-r border-gray-200 bg-gray-50 transition-all duration-200 ${sidebarOpen ? 'w-60' : 'w-0 overflow-hidden'}`}>
+      <div className={`
+        flex flex-col border-r border-gray-200 bg-gray-50 transition-all duration-200
+        ${isMobile
+          ? `absolute inset-y-0 left-0 z-50 shadow-2xl ${sidebarOpen ? 'w-72' : 'w-0 overflow-hidden'}`
+          : `flex-shrink-0 ${sidebarOpen ? 'w-60' : 'w-0 overflow-hidden'}`
+        }
+      `}>
         {/* Sidebar header */}
         <div className="flex items-center justify-between px-3 pt-4 pb-2">
           <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">History</span>
@@ -414,11 +436,12 @@ export default function AdsManagerTab() {
                 <button
                   key={acc.id}
                   onClick={() => setAccount(acc.id)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
+                  className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
                     account === acc.id ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  {acc.label}
+                  <span className="hidden sm:inline">{acc.label}</span>
+                  <span className="sm:hidden">{acc.short}</span>
                 </button>
               ))}
             </div>
@@ -426,7 +449,7 @@ export default function AdsManagerTab() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+        <div className="flex-1 overflow-y-auto px-3 sm:px-5 py-4 space-y-4">
           {messages.length === 0 && !loading && (
             <div className="max-w-2xl mx-auto space-y-4 pt-4">
               <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-800">
@@ -502,11 +525,11 @@ export default function AdsManagerTab() {
         </div>
 
         {/* Input */}
-        <div className="border-t border-gray-200 bg-white px-5 py-3 flex-shrink-0">
-          <div className="flex gap-3 items-end">
+        <div className="border-t border-gray-200 bg-white px-3 sm:px-5 py-3 flex-shrink-0">
+          <div className="flex gap-2 sm:gap-3 items-end">
             <textarea
               ref={inputRef}
-              rows={2}
+              rows={isMobile ? 1 : 2}
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
