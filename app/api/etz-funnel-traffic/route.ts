@@ -22,7 +22,8 @@ export async function GET(req: NextRequest) {
   const endDayNum   = isCurrentMonth ? Math.min(lastDay, now.getDate()) : lastDay;
   const endDate     = `${year}-${mon}-${String(endDayNum).padStart(2, '0')}`;
 
-  const mainSiteOnly = req.nextUrl.searchParams.get('mainSiteOnly') === 'true';
-  const data = await fetchEtzFunnelTraffic(startDate, endDate, mainSiteOnly);
+  const mainSiteOnly        = req.nextUrl.searchParams.get('mainSiteOnly')        === 'true';
+  const excludeLoginLanding = req.nextUrl.searchParams.get('excludeLoginLanding') === 'true';
+  const data = await fetchEtzFunnelTraffic(startDate, endDate, mainSiteOnly, excludeLoginLanding);
   return NextResponse.json({ month, ...data });
 }

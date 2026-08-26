@@ -779,9 +779,10 @@ export interface EtzFunnelTrafficData {
 }
 
 export async function fetchEtzFunnelTraffic(
-  startDate:    string,
-  endDate:      string,
-  mainSiteOnly: boolean = false,
+  startDate:           string,
+  endDate:             string,
+  mainSiteOnly:        boolean = false,
+  excludeLoginLanding: boolean = false,
 ): Promise<EtzFunnelTrafficData> {
   const empty: EtzFunnelTrafficData = { totalSessions: 0, totalNewUsers: 0, byChannel: [], connected: false };
   if (!isETZConnected()) return empty;
@@ -789,23 +790,43 @@ export async function fetchEtzFunnelTraffic(
   try {
     const accessToken = await getAccessToken();
 
-    // When mainSiteOnly=true (used by the New Users acquisition view), restrict to
-    // exceltestzone.com.au and www.exceltestzone.com.au only — excludes blog,
-    // learning, app subdomains so new-visitor counts reflect only marketing site traffic.
-    const mainSiteFilter = mainSiteOnly ? {
-      orGroup: {
-        expressions: [
-          { filter: { fieldName: 'hostname', stringFilter: { matchType: 'EXACT', value: 'exceltestzone.com.au'     } } },
-          { filter: { fieldName: 'hostname', stringFilter: { matchType: 'EXACT', value: 'www.exceltestzone.com.au' } } },
-        ],
+    // When mainSiteOnly=true, restrict to exceltestzone.com.au only (excludes subdomains).
+    const hostnameExpressions = mainSiteOnly ? [
+      { filter: { fieldName: 'hostname', stringFilter: { matchType: 'EXACT', value: 'exceltestzone.com.au'     } } },
+      { filter: { fieldName: 'hostname', stringFilter: { matchType: 'EXACT', value: 'www.exceltestzone.com.au' } } },
+    ] : null;
+
+    // When excludeLoginLanding=true, drop sessions where the first page was a login page.
+    // This removes existing school students who bookmark the login URL directly,
+    // so the funnel only counts genuine new prospects discovering the product.
+    const loginExcludeFilter = excludeLoginLanding ? {
+      notExpression: {
+        filter: { fieldName: 'landingPage', stringFilter: { matchType: 'CONTAINS', value: '/login' } },
       },
-    } : undefined;
+    } : null;
+
+    // Build the combined dimension filter
+    let dimensionFilter: object | undefined;
+    if (hostnameExpressions && loginExcludeFilter) {
+      dimensionFilter = {
+        andGroup: {
+          expressions: [
+            { orGroup: { expressions: hostnameExpressions } },
+            loginExcludeFilter,
+          ],
+        },
+      };
+    } else if (hostnameExpressions) {
+      dimensionFilter = { orGroup: { expressions: hostnameExpressions } };
+    } else if (loginExcludeFilter) {
+      dimensionFilter = loginExcludeFilter;
+    }
 
     const data = await runReportOnProperty(accessToken, GA4_ETZ_BASE, {
       dateRanges:      [{ startDate, endDate }],
       dimensions:      [{ name: 'sessionDefaultChannelGroup' }],
       metrics:         [{ name: 'sessions' }, { name: 'newUsers' }],
-      ...(mainSiteFilter ? { dimensionFilter: mainSiteFilter } : {}),
+      ...(dimensionFilter ? { dimensionFilter } : {}),
       orderBys:        [{ metric: { metricName: 'sessions' }, desc: true }],
       limit: 20,
     });
