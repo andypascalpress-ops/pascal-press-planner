@@ -1153,11 +1153,13 @@ interface CouponRow {
 interface PPCouponsResponse {
   connected:            boolean;
   coupons:              CouponRow[];
-  totalUses:            number;
+  totalUses:            number;        // BC all-time uses (not date-filtered)
   totalComputedSavings: number;
-  totalGaRevenue:       number;
+  totalGaRevenue:       number;        // GA4 revenue for the selected range
+  totalGaTransactions:  number;        // GA4 orders for the selected range
   hasPercentageCoupons: boolean;
   gaConnected:          boolean;
+  range:                string;
   error?:               string;
 }
 
@@ -2810,6 +2812,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [siteConversion,   setSiteConversion  ] = useState<WebsiteConversionResponse | null>(null);
   const [channelRevenue,   setChannelRevenue  ] = useState<ChannelRevenueResponse | null>(null);
   const [coupons,          setCoupons         ] = useState<PPCouponsResponse | null>(null);
+  const [couponRange,      setCouponRange     ] = useState<'today' | '7d' | '30d' | 'all'>('all');
   const [loadingCoupons,   setLoadingCoupons  ] = useState(false);
 
   // Persist month choice so remounts (tab switches) don't snap back to default
@@ -2973,13 +2976,18 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
       .catch(() => setEtzTrend(null))
       .finally(() => setLoadingEtzTrend(false));
 
+  }, []);
+
+  // Re-fetch coupons whenever the date range filter changes
+  useEffect(() => {
     setLoadingCoupons(true);
-    fetch('/api/pp-coupons')
+    setCoupons(null);
+    fetch(`/api/pp-coupons?range=${couponRange}`)
       .then(r => r.json())
       .then((data: PPCouponsResponse) => setCoupons(data))
       .catch(() => setCoupons(null))
       .finally(() => setLoadingCoupons(false));
-  }, []);
+  }, [couponRange]);
 
   useEffect(() => {
     setLoadingHistory(true);
@@ -3552,23 +3560,52 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
               <div>
-                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
-                  Pascal Press &middot; Coupon Code Usage
+                <div>
+                  <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                    Pascal Press &middot; Coupon Code Usage
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    {couponRange === 'all'   ? 'All time'      :
+                     couponRange === 'today' ? 'Today'         :
+                     couponRange === '7d'    ? 'Last 7 days'   :
+                                              'Last 30 days'}
+                    {' · '}GA4 revenue · top 25 by uses
+                  </div>
                 </div>
-                <div className="text-xs text-gray-400 mt-0.5">BigCommerce · all-time · top 25 by uses</div>
+                {/* Date range filter buttons */}
+                <div className="flex items-center gap-1">
+                  {(['today', '7d', '30d', 'all'] as const).map(r => (
+                    <button
+                      key={r}
+                      onClick={() => setCouponRange(r)}
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-lg border transition-colors ${
+                        couponRange === r
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      {r === 'today' ? 'Today' : r === '7d' ? '7d' : r === '30d' ? '30d' : 'All'}
+                    </button>
+                  ))}
+                </div>
               </div>
               {coupons?.connected && (
-                <div className="flex items-center gap-4 text-right">
+                <div className="flex items-center gap-4 text-right px-5 pb-3">
                   <div>
-                    <div className="text-xs text-gray-500">Total uses</div>
+                    <div className="text-xs text-gray-500">Uses (all-time · BC)</div>
                     <div className="text-base font-bold text-gray-900 tabular-nums">{coupons.totalUses.toLocaleString()}</div>
                   </div>
                   {coupons.gaConnected && coupons.totalGaRevenue > 0 && (
                     <div>
-                      <div className="text-xs text-gray-500">Revenue generated (GA4)</div>
+                      <div className="text-xs text-gray-500">
+                        Revenue · GA4{couponRange !== 'all' ? ` · ${couponRange === 'today' ? 'today' : couponRange === '7d' ? 'last 7d' : 'last 30d'}` : ''}
+                      </div>
                       <div className="text-base font-bold text-emerald-600 tabular-nums">
                         {AUD.format(coupons.totalGaRevenue)}
                       </div>
+                      {coupons.totalGaTransactions > 0 && (
+                        <div className="text-xs text-gray-400">{coupons.totalGaTransactions.toLocaleString()} orders</div>
+                      )}
                     </div>
                   )}
                   {coupons.totalComputedSavings > 0 && (
@@ -3592,7 +3629,9 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
                 {coupons?.error ?? 'BigCommerce not connected'}
               </div>
             ) : coupons.coupons.length === 0 ? (
-              <div className="px-5 py-4 text-sm text-gray-400">No coupons have been used yet.</div>
+              <div className="px-5 py-4 text-sm text-gray-400">
+                {couponRange === 'all' ? 'No coupons have been used yet.' : `No coupon activity found for this period.`}
+              </div>
             ) : (
               <>
                 <div className="overflow-x-auto">
@@ -3602,10 +3641,12 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
                         <th className="text-left px-5 py-2.5 font-semibold">Code</th>
                         <th className="text-left px-3 py-2.5 font-semibold">Name / Description</th>
                         <th className="text-left px-3 py-2.5 font-semibold">Discount</th>
-                        <th className="text-right px-3 py-2.5 font-semibold">Uses</th>
+                        <th className="text-right px-3 py-2.5 font-semibold">Uses (all-time)</th>
                         <th className="text-right px-3 py-2.5 font-semibold">Max</th>
                         {coupons?.gaConnected && (
-                          <th className="text-right px-3 py-2.5 font-semibold text-emerald-700">Revenue (GA4)</th>
+                          <th className="text-right px-3 py-2.5 font-semibold text-emerald-700">
+                            Revenue (GA4{couponRange !== 'all' ? ` · ${couponRange === 'today' ? 'today' : couponRange === '7d' ? '7d' : '30d'}` : ''})
+                          </th>
                         )}
                         <th className="text-right px-3 py-2.5 font-semibold">Savings (BC)</th>
                         <th className="text-right px-5 py-2.5 font-semibold">Status</th>

@@ -1,5 +1,5 @@
 /**
- * GET /api/pp-coupons
+ * GET /api/pp-coupons?range=today|7d|30d|all
  *
  * Returns Pascal Press BigCommerce coupon usage statistics —
  * top codes by number of uses, with discount type, savings impact,
@@ -7,9 +7,11 @@
  *
  * BigCommerce coupons API:
  *   GET /v2/coupons?limit=250&page=N
+ *   NOTE: BC's coupon endpoint only exposes all-time `num_uses` — there is no
+ *   date filter on the coupon list API. The `numUses` field is always all-time.
  *
  * GA4 revenue: orderCoupon dimension → purchaseRevenue + transactions
- *   (all-time, Pascal Press property)
+ *   Date-filtered according to the `range` query param.
  *
  * Env: BIGCOMMERCE_STORE_HASH, BIGCOMMERCE_ACCESS_TOKEN
  *      + standard GA4 env vars (GOOGLE_ANALYTICS_SERVICE_ACCOUNT_JSON or OAuth)
@@ -18,10 +20,21 @@
  * "gaRevenue" (GA4) is the actual order revenue on sessions that used the coupon.
  */
 import { NextResponse } from 'next/server';
+import { NextRequest }  from 'next/server';
 import { fetchCouponRevenue } from '@/lib/google-analytics';
 
-// Cache for 30 minutes — coupon usage doesn't change by the second
-export const revalidate = 1800;
+// Must be dynamic so query params are respected
+export const dynamic = 'force-dynamic';
+
+/** Map `range` param → GA4 startDate / endDate strings */
+function rangeToDates(range: string): { startDate: string; endDate: string } {
+  switch (range) {
+    case 'today': return { startDate: 'today',      endDate: 'today'      };
+    case '7d':    return { startDate: '7daysAgo',   endDate: 'today'      };
+    case '30d':   return { startDate: '30daysAgo',  endDate: 'today'      };
+    default:      return { startDate: '2020-01-01', endDate: 'today'      }; // all-time
+  }
+}
 
 const STORE_HASH   = process.env.BIGCOMMERCE_STORE_HASH   ?? '';
 const ACCESS_TOKEN = process.env.BIGCOMMERCE_ACCESS_TOKEN ?? '';
@@ -72,10 +85,12 @@ export interface PPCouponsResponse {
   connected:            boolean;
   coupons:              CouponRow[];
   totalUses:            number;
-  totalComputedSavings: number;       // sum of flat-rate savings (BC)
-  totalGaRevenue:       number;       // sum of GA4 revenue across coupon-attributed orders
+  totalComputedSavings: number;       // sum of flat-rate savings (BC) — always all-time
+  totalGaRevenue:       number;       // sum of GA4 revenue for the selected date range
+  totalGaTransactions:  number;       // sum of GA4 transactions for the selected date range
   hasPercentageCoupons: boolean;      // true → some BC savings figures are unknown
   gaConnected:          boolean;      // whether GA4 revenue data is available
+  range:                string;       // the range param that was used
   error?:               string;
 }
 
@@ -113,7 +128,9 @@ function computeSavings(type: string, amount: string, numUses: number): number |
 
 // ─── Route handler ────────────────────────────────────────────────────────────
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const range = req.nextUrl.searchParams.get('range') ?? 'all';
+  const { startDate, endDate } = rangeToDates(range);
   if (!STORE_HASH || !ACCESS_TOKEN) {
     return NextResponse.json({
       connected:            false,
@@ -121,8 +138,10 @@ export async function GET() {
       totalUses:            0,
       totalComputedSavings: 0,
       totalGaRevenue:       0,
+      totalGaTransactions:  0,
       hasPercentageCoupons: false,
       gaConnected:          false,
+      range,
       error: 'BIGCOMMERCE_STORE_HASH / BIGCOMMERCE_ACCESS_TOKEN not configured',
     } satisfies PPCouponsResponse);
   }
@@ -151,8 +170,8 @@ export async function GET() {
         return allCoupons;
       })(),
 
-      // GA4: revenue by orderCoupon dimension (all-time)
-      fetchCouponRevenue('2020-01-01', 'today'),
+      // GA4: revenue by orderCoupon dimension, date-filtered by range param
+      fetchCouponRevenue(startDate, endDate),
     ]);
 
     // Build a lookup map: UPPERCASE coupon code → GA4 row
@@ -186,11 +205,13 @@ export async function GET() {
     const totalUses            = coupons.reduce((s, c) => s + c.numUses, 0);
     const totalComputedSavings = coupons.reduce((s, c) => s + (c.totalSavings ?? 0), 0);
     const totalGaRevenue       = coupons.reduce((s, c) => s + (c.gaRevenue ?? 0), 0);
+    const totalGaTransactions  = coupons.reduce((s, c) => s + (c.gaTransactions ?? 0), 0);
     const hasPercentageCoupons = coupons.some(c => c.totalSavings === null);
 
     console.log(
-      `[pp-coupons] ${bcResult.length} total BC, ${coupons.length} used, ` +
-      `${totalUses} uses, GA4 revenue $${totalGaRevenue.toFixed(2)} (connected=${gaResult.connected})`,
+      `[pp-coupons] range=${range}, ${bcResult.length} total BC, ${coupons.length} used, ` +
+      `${totalUses} uses (all-time BC), GA4 revenue $${totalGaRevenue.toFixed(2)}, ` +
+      `GA4 txns ${totalGaTransactions} (connected=${gaResult.connected})`,
     );
 
     return NextResponse.json({
@@ -199,8 +220,10 @@ export async function GET() {
       totalUses,
       totalComputedSavings,
       totalGaRevenue:       Math.round(totalGaRevenue * 100) / 100,
+      totalGaTransactions,
       hasPercentageCoupons,
       gaConnected: gaResult.connected,
+      range,
     } satisfies PPCouponsResponse);
 
   } catch (e) {
@@ -211,8 +234,10 @@ export async function GET() {
       totalUses:            0,
       totalComputedSavings: 0,
       totalGaRevenue:       0,
+      totalGaTransactions:  0,
       hasPercentageCoupons: false,
       gaConnected:          false,
+      range,
       error: e instanceof Error ? e.message : 'Unknown error',
     } satisfies PPCouponsResponse);
   }
