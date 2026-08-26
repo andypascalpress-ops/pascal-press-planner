@@ -1430,15 +1430,11 @@ function EtzTrialsFullView({
   const isAcq       = etzSubView === 'acquisition';
   const isProspects = etzSubView === 'prospects';
 
-  // Stage 3: Prospects tab uses HubSpot data filtered to exclude OFFLINE (school imports)
-  const trialsAll      = data?.trialsStarted ?? 0;
-  const prospectsRaw   = prospectsTrialData?.prospectsTrials;
-  const offlineTrials  = prospectsTrialData?.offlineTrials ?? 0;
-  const hsSourceData   = prospectsTrialData?.hasSourceData ?? false;
-  // Use prospectsTrials when in prospects view and data is available; fall back to all trials
-  const trials = isProspects
-    ? (prospectsRaw ?? trialsAll)
-    : trialsAll;
+  // Stage 3: HubSpot $0 trials are already genuine individual prospects.
+  // Schools buy paid subscriptions (amount > $0) which are excluded from the $0 filter.
+  // So trialsStarted is accurate for all views — no further filtering needed.
+  const trialsAll = data?.trialsStarted ?? 0;
+  const trials    = trialsAll;
 
   // Stage 1 traffic source per tab
   const acqTraffic = mainSiteTraffic ?? traffic;  // New Users + Prospects both use main-site only
@@ -1672,7 +1668,7 @@ function EtzTrialsFullView({
           <span className="text-xs text-gray-400">HubSpot</span>
         </div>
         <div className="px-5 py-4">
-          {loading || (isProspects && loadingProspectsTrials) ? (
+          {loading ? (
             <p className="text-sm text-gray-400">Loading…</p>
           ) : (
             <div className="flex items-center gap-8 flex-wrap">
@@ -1680,14 +1676,10 @@ function EtzTrialsFullView({
                 <div className="text-4xl font-extrabold text-gray-900 tabular-nums">
                   {trials.toLocaleString()}
                 </div>
-                <div className="text-sm text-gray-500 mt-0.5">
-                  {isProspects ? 'genuine prospect trials' : 'trials started'}
-                </div>
-                {isProspects && prospectsTrialData && (
+                <div className="text-sm text-gray-500 mt-0.5">trials started</div>
+                {isProspects && (
                   <div className="text-xs text-gray-400 mt-1">
-                    {hsSourceData
-                      ? `${offlineTrials} school import${offlineTrials !== 1 ? 's' : ''} excluded · ${trialsAll} total`
-                      : `${trialsAll} total · source data not yet on deals`}
+                    schools use paid subscriptions · $0 trials are individual prospects
                   </div>
                 )}
               </div>
