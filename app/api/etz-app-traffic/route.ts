@@ -36,6 +36,7 @@ export async function GET(req: NextRequest) {
   const endDayNum = isCurrentMonth ? Math.min(lastDay, now.getDate()) : lastDay;
   const endDate = `${year}-${mon}-${String(endDayNum).padStart(2, '0')}`;
 
-  const data = await fetchEtzAppTraffic(startDate, endDate);
+  const excludeLoginLanding = req.nextUrl.searchParams.get('excludeLoginLanding') === 'true';
+  const data = await fetchEtzAppTraffic(startDate, endDate, excludeLoginLanding);
   return NextResponse.json({ month, ...data });
 }

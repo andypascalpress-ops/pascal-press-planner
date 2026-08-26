@@ -887,8 +887,9 @@ export interface EtzAppTrafficData {
 }
 
 export async function fetchEtzAppTraffic(
-  startDate: string,
-  endDate:   string,
+  startDate:           string,
+  endDate:             string,
+  excludeLoginLanding: boolean = false,
 ): Promise<EtzAppTrafficData> {
   const empty: EtzAppTrafficData = {
     totalSessions: 0, totalNewUsers: 0, fromMainSite: 0,
@@ -903,13 +904,29 @@ export async function fetchEtzAppTraffic(
     const dataSource  = GA4_ETZ_APP_BASE ? 'app-property' : 'hostname-filter';
     if (!baseUrl) return empty;
 
-    // Dimension filter: only needed when falling back to the main ETZ property
-    const dimensionFilter = GA4_ETZ_APP_BASE ? undefined : {
+    // Hostname filter: only needed when falling back to the main ETZ property
+    const hostnameFilter = GA4_ETZ_APP_BASE ? null : {
       filter: {
         fieldName: 'hostname',
         stringFilter: { matchType: 'EXACT', value: 'app.exceltestzone.com.au' },
       },
     };
+
+    // Login exclusion filter: removes sessions where the first page was /login
+    // (school students who bookmark the login URL directly are not new prospects)
+    const loginExcludeFilter = excludeLoginLanding ? {
+      notExpression: {
+        filter: { fieldName: 'landingPage', stringFilter: { matchType: 'CONTAINS', value: '/login' } },
+      },
+    } : null;
+
+    // Combine filters into a single dimensionFilter expression
+    const filterExpressions = [hostnameFilter, loginExcludeFilter].filter(Boolean);
+    const dimensionFilter = filterExpressions.length === 0
+      ? undefined
+      : filterExpressions.length === 1
+        ? filterExpressions[0]
+        : { andGroup: { expressions: filterExpressions } };
 
     // 1. Total sessions (and new users) on the app site
     const totalsBody: Record<string, unknown> = {
@@ -928,6 +945,12 @@ export async function fetchEtzAppTraffic(
     if (totalSessions === 0) return empty; // no data found
 
     // 2. Sessions that came from exceltestzone.com.au (click-throughs from main site)
+    const refSourceFilter = {
+      filter: {
+        fieldName: 'sessionSource',
+        stringFilter: { matchType: 'CONTAINS', value: 'exceltestzone.com.au' },
+      },
+    };
     const refBody: Record<string, unknown> = {
       dateRanges: [{ startDate, endDate }],
       dimensions: [{ name: 'sessionSource' }],
@@ -935,13 +958,8 @@ export async function fetchEtzAppTraffic(
       dimensionFilter: {
         andGroup: {
           expressions: [
-            ...(dimensionFilter ? [dimensionFilter] : []),
-            {
-              filter: {
-                fieldName: 'sessionSource',
-                stringFilter: { matchType: 'CONTAINS', value: 'exceltestzone.com.au' },
-              },
-            },
+            ...(filterExpressions.length > 0 ? filterExpressions : []),
+            refSourceFilter,
           ],
         },
       },

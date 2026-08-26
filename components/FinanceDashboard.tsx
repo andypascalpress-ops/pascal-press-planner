@@ -1361,8 +1361,8 @@ function EtzTrialsFullView({
   loadingTraffic,
   mainSiteTraffic,
   loadingMainSiteTraffic,
-  prospectsTraffic,
-  loadingProspectsTraffic,
+  prospectsAppTraffic,
+  loadingProspectsApp,
   appTraffic,
   loadingAppTraffic,
   trend,
@@ -1380,8 +1380,8 @@ function EtzTrialsFullView({
   loadingTraffic:          boolean;
   mainSiteTraffic:         EtzFunnelTrafficResponse | null;
   loadingMainSiteTraffic:  boolean;
-  prospectsTraffic:        EtzFunnelTrafficResponse | null;
-  loadingProspectsTraffic: boolean;
+  prospectsAppTraffic:     EtzAppTrafficResponse | null;
+  loadingProspectsApp:     boolean;
   appTraffic:              EtzAppTrafficResponse | null;
   loadingAppTraffic:       boolean;
   trend:                   EtzTrendResponse | null;
@@ -1427,32 +1427,34 @@ function EtzTrialsFullView({
 
   // ── Sub-view tabs ────────────────────────────────────────────────────────
   const [etzSubView, setEtzSubView] = useState<'all' | 'acquisition' | 'prospects'>('all');
-  const isAcq        = etzSubView === 'acquisition';
-  const isProspects  = etzSubView === 'prospects';
+  const isAcq       = etzSubView === 'acquisition';
+  const isProspects = etzSubView === 'prospects';
 
-  // New users: use hostname-filtered data (exceltestzone.com.au only)
-  const acqTraffic       = mainSiteTraffic ?? traffic;
-  // Prospects: main site new users who did NOT land on a login page
-  const prospectsBase    = prospectsTraffic ?? acqTraffic;
+  // Stage 1 traffic source per tab
+  const acqTraffic = mainSiteTraffic ?? traffic;  // New Users + Prospects both use main-site only
+  const newUsers   = acqTraffic?.totalNewUsers ?? 0;
 
-  const activeTraffic = isProspects ? prospectsBase : isAcq ? acqTraffic : null;
-  const newUsers      = (isProspects ? prospectsBase : acqTraffic)?.totalNewUsers ?? 0;
-  const newAppUsers   = appTraffic?.totalNewUsers ?? 0;
+  // Stage 2: Prospects uses app traffic filtered to exclude direct /login sessions
+  const activeAppTraffic = isProspects ? (prospectsAppTraffic ?? appTraffic) : appTraffic;
+  const newAppUsers      = activeAppTraffic?.totalNewUsers ?? 0;
+  const appSessions2     = activeAppTraffic?.totalSessions ?? 0;
 
   // Swap headline figures based on active tab
   const s1      = (isAcq || isProspects) ? newUsers    : sessions;
   const s2      = (isAcq || isProspects) ? newAppUsers : appSessions;
-  const s1Label = isProspects ? 'new visitors (excl. direct login)' : isAcq ? 'new visitors' : 'sessions';
-  const s2Label = (isAcq || isProspects) ? 'new app visitors' : 'app sessions';
+  const s1Label = (isAcq || isProspects) ? 'new visitors'  : 'sessions';
+  const s2Label = isProspects ? 'new app visitors (excl. direct login)'
+                : isAcq      ? 'new app visitors'
+                :              'app sessions';
 
-  // Conversion rates for new-user views (denominators use new users)
-  const acqAppClickRate = newUsers > 0 && appTraffic?.connected ? (newAppUsers / newUsers) * 100 : null;
-  const acqAppTrialRate = newAppUsers > 0 && appTraffic?.connected ? (trials / newAppUsers) * 100 : null;
+  // Conversion rates for new-user views
+  const acqAppClickRate = newUsers > 0 && activeAppTraffic?.connected ? (newAppUsers / newUsers) * 100 : null;
+  const acqAppTrialRate = newAppUsers > 0 && activeAppTraffic?.connected ? (trials / newAppUsers) * 100 : null;
   const acqOverallRate  = newUsers > 0 && stripeConnected ? (orders / newUsers) * 100 : null;
 
-  // Channel bar recalculated from newUsers when in new-user views
-  const channelData = ((isAcq || isProspects) && activeTraffic)
-    ? activeTraffic.byChannel.map(ch => ({
+  // Channel bar
+  const channelData = ((isAcq || isProspects) && acqTraffic)
+    ? acqTraffic.byChannel.map(ch => ({
         ...ch,
         displayCount: ch.newUsers,
         pct: newUsers > 0 ? Math.round((ch.newUsers / newUsers) * 100) : 0,
@@ -2817,8 +2819,10 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [loadingEtzTraffic,    setLoadingEtzTraffic   ] = useState(false);
   const [etzMainSiteTraffic,   setEtzMainSiteTraffic  ] = useState<EtzFunnelTrafficResponse | null>(null);
   const [loadingMainSiteTraffic, setLoadingMainSiteTraffic] = useState(false);
-  const [etzProspectsTraffic,  setEtzProspectsTraffic ] = useState<EtzFunnelTrafficResponse | null>(null);
+  const [etzProspectsTraffic,    setEtzProspectsTraffic   ] = useState<EtzFunnelTrafficResponse | null>(null);
   const [loadingProspectsTraffic, setLoadingProspectsTraffic] = useState(false);
+  const [etzProspectsAppTraffic,  setEtzProspectsAppTraffic] = useState<EtzAppTrafficResponse | null>(null);
+  const [loadingProspectsApp,     setLoadingProspectsApp   ] = useState(false);
   const [etzAppTraffic,        setEtzAppTraffic       ] = useState<EtzAppTrafficResponse | null>(null);
   const [loadingEtzAppTraffic, setLoadingEtzAppTraffic] = useState(false);
   const [etzTrend,             setEtzTrend            ] = useState<EtzTrendResponse | null>(null);
@@ -2854,6 +2858,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
     setEtzTraffic(null);
     setEtzMainSiteTraffic(null);
     setEtzProspectsTraffic(null);
+    setEtzProspectsAppTraffic(null);
     setEtzAppTraffic(null);
     setEtzSources(null);
     setSiteConversion(null);
@@ -2939,15 +2944,16 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
       .catch((e) => { if (e?.name !== 'AbortError') setEtzMainSiteTraffic(null); })
       .finally(() => { if (!signal.aborted) setLoadingMainSiteTraffic(false); });
 
-    // Prospects: main site new users who did NOT land on a login page
-    setLoadingProspectsTraffic(true);
-    fetch('/api/etz-funnel-traffic?month=' + month + '&mainSiteOnly=true&excludeLoginLanding=true', { signal })
+    // Prospects: app traffic excluding sessions that landed directly on /login
+    // (school students go to app.exceltestzone.com.au/login — not genuine new prospects)
+    setLoadingProspectsApp(true);
+    fetch('/api/etz-app-traffic?month=' + month + '&excludeLoginLanding=true', { signal })
       .then(r => r.json())
-      .then((data: EtzFunnelTrafficResponse) => {
-        if (!signal.aborted) setEtzProspectsTraffic(data);
+      .then((data: EtzAppTrafficResponse) => {
+        if (!signal.aborted) setEtzProspectsAppTraffic(data);
       })
-      .catch((e) => { if (e?.name !== 'AbortError') setEtzProspectsTraffic(null); })
-      .finally(() => { if (!signal.aborted) setLoadingProspectsTraffic(false); });
+      .catch((e) => { if (e?.name !== 'AbortError') setEtzProspectsAppTraffic(null); })
+      .finally(() => { if (!signal.aborted) setLoadingProspectsApp(false); });
 
     setLoadingEtzAppTraffic(true);
     fetch('/api/etz-app-traffic?month=' + month, { signal })
@@ -3221,8 +3227,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             loadingTraffic={loadingEtzTraffic}
             mainSiteTraffic={etzMainSiteTraffic}
             loadingMainSiteTraffic={loadingMainSiteTraffic}
-            prospectsTraffic={etzProspectsTraffic}
-            loadingProspectsTraffic={loadingProspectsTraffic}
+            prospectsAppTraffic={etzProspectsAppTraffic}
+            loadingProspectsApp={loadingProspectsApp}
             appTraffic={etzAppTraffic}
             loadingAppTraffic={loadingEtzAppTraffic}
             trend={etzTrend}
