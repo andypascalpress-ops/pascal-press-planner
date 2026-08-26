@@ -176,14 +176,16 @@ function MarkdownContent({ text }: { text: string }) {
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export default function AdsManagerTab() {
-  const [account,     setAccount]     = useState<Account>('pp');
-  const [messages,    setMessages]    = useState<ChatMessage[]>([]);
-  const [input,       setInput]       = useState('');
-  const [loading,     setLoading]     = useState(false);
-  const [error,       setError]       = useState('');
-  const [savedConvs,  setSavedConvs]  = useState<SavedConversation[]>([]);
-  const [sidebarOpen, setSidebarOpen] = useState(false); // set after mount based on screen size
-  const [isMobile,    setIsMobile]    = useState(false);
+  const [account,      setAccount]     = useState<Account>('pp');
+  const [messages,     setMessages]    = useState<ChatMessage[]>([]);
+  const [input,        setInput]       = useState('');
+  const [loading,      setLoading]     = useState(false);
+  const [error,        setError]       = useState('');
+  const [savedConvs,   setSavedConvs]  = useState<SavedConversation[]>([]);
+  const [sidebarOpen,  setSidebarOpen] = useState(false); // set after mount based on screen size
+  const [isMobile,     setIsMobile]    = useState(false);
+  // Session-level Claude API spend (resets when page refreshes; accumulates across turns in one session)
+  const [sessionCost,  setSessionCost] = useState(0); // USD
 
   const bottomRef     = useRef<HTMLDivElement>(null);
   const inputRef      = useRef<HTMLTextAreaElement>(null);
@@ -302,6 +304,8 @@ export default function AdsManagerTab() {
       const next = [...history, assistantMsg];
       setMessages(next);
       persistConversation(next);
+      // Accumulate session Claude API spend
+      if (data.usage?.cost_usd) setSessionCost(prev => prev + data.usage.cost_usd);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setMessages(prev => prev.slice(0, -1));
@@ -429,6 +433,23 @@ export default function AdsManagerTab() {
               <h1 className="text-sm font-semibold text-gray-900 leading-none">Google Ads Manager</h1>
               <p className="text-xs text-gray-500 mt-0.5 hidden sm:block">Analyse &amp; manage campaigns with Claude</p>
             </div>
+
+            {/* Session Claude API spend badge */}
+            {sessionCost > 0 && (
+              <a
+                href="https://console.anthropic.com/settings/billing"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Session Claude API spend — click to view balance in Anthropic Console"
+                className="flex items-center gap-1 px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium flex-shrink-0 hover:bg-amber-100 transition-colors"
+              >
+                <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm.75 10.5h-1.5v-1.5h1.5v1.5zm0-3h-1.5V4.5h1.5V8.5z"/>
+                </svg>
+                <span className="hidden sm:inline">Session: </span>
+                <span>${sessionCost < 0.01 ? '<$0.01' : `$${sessionCost.toFixed(2)}`}</span>
+              </a>
+            )}
 
             {/* Account selector */}
             <div className="flex gap-1 bg-gray-100 rounded-lg p-1 flex-shrink-0">

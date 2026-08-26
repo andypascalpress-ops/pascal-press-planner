@@ -1826,6 +1826,12 @@ For each recommendation output: **Campaign name | Type | Suggested budget | Targ
     const apiMessages: Anthropic.MessageParam[] = [...messages];
     let   finalText  = '';
 
+    // Track token usage across all agentic turns for cost display
+    // Pricing: claude-sonnet-4-6 = $3/M input, $15/M output
+    let totalInputTokens  = 0;
+    let totalOutputTokens = 0;
+    let totalCacheRead    = 0;
+
     // Agentic loop — up to 10 turns (complex operations need multiple sequential API calls)
     for (let turn = 0; turn < 10; turn++) {
       const response = await client.messages.create({
@@ -1835,6 +1841,11 @@ For each recommendation output: **Campaign name | Type | Suggested budget | Targ
         tools:      TOOLS,
         messages:   apiMessages,
       });
+
+      // Accumulate token usage from every turn
+      totalInputTokens  += response.usage.input_tokens;
+      totalOutputTokens += response.usage.output_tokens;
+      totalCacheRead    += (response.usage as Record<string, number>).cache_read_input_tokens ?? 0;
 
       if (response.stop_reason === 'end_turn') {
         finalText = response.content
@@ -1876,7 +1887,18 @@ For each recommendation output: **Campaign name | Type | Suggested budget | Targ
       break;
     }
 
-    return NextResponse.json({ reply: finalText || '(No response)' });
+    // Calculate cost in USD (claude-sonnet-4-6 pricing)
+    // Input: $3/M, Output: $15/M, Cache read: $0.30/M
+    const costUsd = (totalInputTokens * 3 + totalOutputTokens * 15 + totalCacheRead * 0.3) / 1_000_000;
+
+    return NextResponse.json({
+      reply: finalText || '(No response)',
+      usage: {
+        input_tokens:  totalInputTokens,
+        output_tokens: totalOutputTokens,
+        cost_usd:      +costUsd.toFixed(6),
+      },
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[ads-chat]', message);
