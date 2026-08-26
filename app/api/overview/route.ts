@@ -223,10 +223,12 @@ export async function GET(request: Request) {
   const hscBudget   = MONTHLY_GOOGLE_BUDGETS['Excel HSC Copilot'] ?? 0;
   const blakeBudget = MONTHLY_GOOGLE_BUDGETS['Blake Education']   ?? 0;
 
-  const ppRoas    = ppSpend    > 0 ? Math.round((ppRevenue    / ppSpend)    * 10) / 10 : 0;
-  const etzRoas   = etzSpend   > 0 ? Math.round((etzRevenue   / etzSpend)   * 10) / 10 : 0;
-  const hscRoas   = hscSpend   > 0 ? Math.round((hscRevenue   / hscSpend)   * 10) / 10 : 0;
-  const blakeRoas = blakeSpend > 0 ? Math.round((blakeRevenue / blakeSpend) * 10) / 10 : 0;
+  // ROAS uses total spend (Google + Meta + ChatGPT) so the number reflects
+  // all paid channels, not just Google Ads alone.
+  const ppRoas    = ppTotalSpend    > 0 ? Math.round((ppRevenue    / ppTotalSpend)    * 10) / 10 : 0;
+  const etzRoas   = etzTotalSpend   > 0 ? Math.round((etzRevenue   / etzTotalSpend)   * 10) / 10 : 0;
+  const hscRoas   = hscSpend        > 0 ? Math.round((hscRevenue   / hscSpend)        * 10) / 10 : 0;
+  const blakeRoas = blakeSpend      > 0 ? Math.round((blakeRevenue / blakeSpend)      * 10) / 10 : 0;
   const totalSpend   = ppTotalSpend + etzTotalSpend + hscSpend + blakeSpend;
   const totalRevenue = ppRevenue + etzRevenue + hscRevenue + blakeRevenue;
   const combinedRoas = totalSpend > 0

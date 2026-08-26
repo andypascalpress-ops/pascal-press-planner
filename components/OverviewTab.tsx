@@ -675,8 +675,10 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
             <p className={`text-lg font-bold ${roasColor(data.roas)}`}>
               {data.roas > 0 ? `${data.roas}x` : <span className="text-gray-400 text-sm">—</span>}
             </p>
-            {data.spend > 0 && (
-              <p className="text-xs text-gray-400">{AUD.format(data.spend)} Google</p>
+            {(data.totalSpend ?? data.spend) > 0 && (
+              <p className="text-xs text-gray-400">
+                {AUD.format(data.totalSpend ?? data.spend)} total spend
+              </p>
             )}
           </div>
         )}
