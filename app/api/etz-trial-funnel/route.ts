@@ -1,5 +1,5 @@
 /**
- * GET /api/etz-trial-funnel?month=YYYY-MM
+ * GET /api/etz-trial-funnel?month=YYYY-MM[&prospectsOnly=true]
  *
  * Counts ETZ free trials the same way the team does manually in HubSpot:
  *   Deals → Excel Test Zone pipeline → Amount = $0 → created this month
@@ -8,16 +8,21 @@
  * When a trial converts, the deal amount is updated (> $0) so it falls out of this filter.
  * This is simpler and more accurate than tracking stage changes.
  *
+ * prospectsOnly=true: additionally fetches hs_analytics_source on each deal and
+ * excludes any deal where source = 'OFFLINE' (bulk school imports created via import/API).
+ * Returns prospectsTrials, offlineTrials, hasSourceData alongside trialsStarted.
+ *
  * trialsStarted    – $0 deals in ETZ pipeline created this month
  * currentlyOnTrial – deals in Active Trial stage right now (all-time snapshot)
+ * prospectsTrials  – trialsStarted minus OFFLINE source deals (prospectsOnly=true only)
+ * offlineTrials    – count of OFFLINE source deals (prospectsOnly=true only)
+ * hasSourceData    – whether hs_analytics_source is populated on deals
  *
  * Required env var: HUBSPOT_CRM_TOKEN (ExcelTestZoneSync legacy app)
  */
 import { NextResponse } from 'next/server';
 
 // Cache per month-URL for 30 minutes.
-// Prevents live HubSpot search calls on every page load.
-// On cache miss (first load or post-expiry) the route runs once, then serves from cache.
 export const revalidate = 1800;
 
 const HS_BASE  = 'https://api.hubapi.com';
@@ -63,6 +68,41 @@ async function hsCount(filterGroups: { filters: object[] }[]): Promise<number> {
   return 0;
 }
 
+/** Fetch all deals matching filter, returning selected properties. Used for prospectsOnly mode. */
+async function hsFetchAllDeals(
+  filterGroups: { filters: object[] }[],
+  properties: string[],
+): Promise<Record<string, string | null>[]> {
+  const results: Record<string, string | null>[] = [];
+  let after: string | undefined;
+  do {
+    const body: Record<string, unknown> = { filterGroups, properties, limit: 100 };
+    if (after) body.after = after;
+
+    let res = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
+      method: 'POST', headers: hsHeaders(),
+      body: JSON.stringify(body), cache: 'no-store',
+    });
+    if (res.status === 429) {
+      await delay(1100);
+      res = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
+        method: 'POST', headers: hsHeaders(),
+        body: JSON.stringify(body), cache: 'no-store',
+      });
+    }
+    if (!res.ok) {
+      const body2 = await res.text().catch(() => '');
+      throw new Error(`HubSpot search → ${res.status}: ${body2.slice(0, 200)}`);
+    }
+
+    const json = await res.json();
+    for (const r of (json.results ?? [])) results.push(r.properties ?? {});
+    after = json.paging?.next?.after as string | undefined;
+    if (after) await delay(250);
+  } while (after);
+  return results;
+}
+
 function monthToEpochRange(month: string) {
   const [y, m] = month.split('-').map(Number);
   return {
@@ -80,6 +120,7 @@ export async function GET(request: Request) {
   const now   = new Date();
   const month = searchParams.get('month')
     ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const prospectsOnly = searchParams.get('prospectsOnly') === 'true';
 
   try {
     const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -108,25 +149,66 @@ export async function GET(request: Request) {
 
     // ── 2. Date range ─────────────────────────────────────────────────────
     const { startMs, endMs } = monthToEpochRange(month);
-    const createdThisMonth = [
+    const thisMonthFilters = [
       { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
       { propertyName: 'createdate', operator: 'LT',  value: String(endMs)   },
+      { propertyName: 'pipeline',   operator: 'EQ',  value: etzPipeline.id  },
+      { propertyName: 'amount',     operator: 'EQ',  value: '0'             },
     ];
 
-    // ── 3. Trials started this month ──────────────────────────────────────
-    // Same logic as the team's manual check:
-    //   Deals → Excel Test Zone → Amount = $0 → created this month
-    // Free trials are always $0; paid conversions update the amount to > $0.
-    const trialsStarted = await hsCount([{
-      filters: [
-        ...createdThisMonth,
-        { propertyName: 'pipeline',  operator: 'EQ', value: etzPipeline.id },
-        { propertyName: 'amount',    operator: 'EQ', value: '0'            },
-      ],
-    }]);
+    // ── 3. Currently on trial (shared between both modes) ─────────────────
+    // Fetch after main count to spread out HubSpot API calls.
+
+    // ── 4a. Fast count mode (default — no prospectsOnly param) ───────────
+    if (!prospectsOnly) {
+      const trialsStarted = await hsCount([{ filters: thisMonthFilters }]);
+      await delay(300);
+
+      const currentlyOnTrial = trialStage
+        ? await hsCount([{ filters: [{ propertyName: 'dealstage', operator: 'EQ', value: trialStage.id }] }])
+        : 0;
+
+      return NextResponse.json({
+        month,
+        trialsStarted,
+        currentlyOnTrial,
+        _meta: {
+          pipeline:     etzPipeline.label,
+          pipelineId:   etzPipeline.id,
+          trialStage:   trialStage?.label  ?? null,
+          trialStageId: trialStage?.id     ?? null,
+          paidStage:    paidStage?.label   ?? null,
+          paidStageId:  paidStage?.id      ?? null,
+          method:       'amount=0 in ETZ pipeline (matches team manual check)',
+        },
+      });
+    }
+
+    // ── 4b. Prospects mode: fetch deals with source properties ────────────
+    // Fetches all $0 ETZ deals for the month with hs_analytics_source,
+    // then excludes OFFLINE deals (school bulk imports) in code.
+    const deals = await hsFetchAllDeals(
+      [{ filters: thisMonthFilters }],
+      ['hs_analytics_source', 'hs_latest_source'],
+    );
+
+    const trialsStarted = deals.length;
+    let offlineTrials = 0;
+    let hasSourceData = false;
+
+    for (const deal of deals) {
+      // Prefer hs_analytics_source (first touch), fall back to latest
+      const src = deal['hs_analytics_source'] || deal['hs_latest_source'];
+      if (src) hasSourceData = true;
+      if (src === 'OFFLINE') offlineTrials++;
+    }
+
+    // If source data isn't on deals at all, don't subtract anything
+    // (all deals show as no-source, not OFFLINE)
+    const prospectsTrials = trialsStarted - offlineTrials;
+
     await delay(300);
 
-    // ── 4. Currently on trial (all-time snapshot) ─────────────────────────
     const currentlyOnTrial = trialStage
       ? await hsCount([{ filters: [{ propertyName: 'dealstage', operator: 'EQ', value: trialStage.id }] }])
       : 0;
@@ -134,6 +216,9 @@ export async function GET(request: Request) {
     return NextResponse.json({
       month,
       trialsStarted,
+      prospectsTrials,
+      offlineTrials,
+      hasSourceData,
       currentlyOnTrial,
       _meta: {
         pipeline:     etzPipeline.label,
@@ -142,7 +227,10 @@ export async function GET(request: Request) {
         trialStageId: trialStage?.id     ?? null,
         paidStage:    paidStage?.label   ?? null,
         paidStageId:  paidStage?.id      ?? null,
-        method:       'amount=0 in ETZ pipeline (matches team manual check)',
+        method:       'prospectsOnly: amount=0 ETZ deals, OFFLINE source excluded',
+        note: hasSourceData
+          ? `${offlineTrials} OFFLINE (school import) deals excluded — ${prospectsTrials} genuine prospects`
+          : 'Source data not on deals — showing all $0 trials (no OFFLINE filtering applied). Consider a HubSpot workflow to copy hs_analytics_source from Contact to Deal.',
       },
     });
 

@@ -1078,8 +1078,12 @@ interface EtzTrialFunnelResponse {
   month:            string;
   trialsStarted:    number;
   currentlyOnTrial: number;
+  // prospectsOnly=true extras:
+  prospectsTrials?: number;
+  offlineTrials?:   number;
+  hasSourceData?:   boolean;
   error?:           string;
-  _meta?:           { pipeline: string; trialStage: string; trialStageId: string };
+  _meta?:           { pipeline: string; trialStage: string; trialStageId: string; note?: string };
 }
 
 interface EtzAppTrafficResponse {
@@ -1363,6 +1367,8 @@ function EtzTrialsFullView({
   loadingMainSiteTraffic,
   prospectsAppTraffic,
   loadingProspectsApp,
+  prospectsTrialData,
+  loadingProspectsTrials,
   appTraffic,
   loadingAppTraffic,
   trend,
@@ -1382,6 +1388,8 @@ function EtzTrialsFullView({
   loadingMainSiteTraffic:  boolean;
   prospectsAppTraffic:     EtzAppTrafficResponse | null;
   loadingProspectsApp:     boolean;
+  prospectsTrialData:      EtzTrialFunnelResponse | null;
+  loadingProspectsTrials:  boolean;
   appTraffic:              EtzAppTrafficResponse | null;
   loadingAppTraffic:       boolean;
   trend:                   EtzTrendResponse | null;
@@ -1412,15 +1420,7 @@ function EtzTrialsFullView({
   const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
   const sessions    = traffic?.totalSessions      ?? 0;
   const appSessions = appTraffic?.totalSessions   ?? 0;
-  const trials      = data?.trialsStarted         ?? 0;
   const orders      = stripeOrders;
-
-  // Conversion rates: prefer app sessions → trial rate when we have app data
-  const appClickRate  = sessions > 0 && appTraffic?.connected ? (appSessions / sessions) * 100 : null;
-  const appTrialRate  = appSessions > 0 && appTraffic?.connected ? (trials / appSessions) * 100 : null;
-  const trialRate     = sessions > 0 && !appTraffic?.connected ? (trials / sessions) * 100 : null;
-  const convRate      = trials > 0 && stripeConnected ? (orders / trials) * 100 : null;
-  const overallRate   = sessions > 0 && stripeConnected ? (orders / sessions) * 100 : null;
 
   const funnelReady   = !loading && !loadingTraffic && data != null;
   const hasAppStage   = appTraffic?.connected === true;
@@ -1430,6 +1430,16 @@ function EtzTrialsFullView({
   const isAcq       = etzSubView === 'acquisition';
   const isProspects = etzSubView === 'prospects';
 
+  // Stage 3: Prospects tab uses HubSpot data filtered to exclude OFFLINE (school imports)
+  const trialsAll      = data?.trialsStarted ?? 0;
+  const prospectsRaw   = prospectsTrialData?.prospectsTrials;
+  const offlineTrials  = prospectsTrialData?.offlineTrials ?? 0;
+  const hsSourceData   = prospectsTrialData?.hasSourceData ?? false;
+  // Use prospectsTrials when in prospects view and data is available; fall back to all trials
+  const trials = isProspects
+    ? (prospectsRaw ?? trialsAll)
+    : trialsAll;
+
   // Stage 1 traffic source per tab
   const acqTraffic = mainSiteTraffic ?? traffic;  // New Users + Prospects both use main-site only
   const newUsers   = acqTraffic?.totalNewUsers ?? 0;
@@ -1438,6 +1448,13 @@ function EtzTrialsFullView({
   const activeAppTraffic = isProspects ? (prospectsAppTraffic ?? appTraffic) : appTraffic;
   const newAppUsers      = activeAppTraffic?.totalNewUsers ?? 0;
   const appSessions2     = activeAppTraffic?.totalSessions ?? 0;
+
+  // Conversion rates: prefer app sessions → trial rate when we have app data
+  const appClickRate  = sessions > 0 && appTraffic?.connected ? (appSessions / sessions) * 100 : null;
+  const appTrialRate  = appSessions > 0 && appTraffic?.connected ? (trials / appSessions) * 100 : null;
+  const trialRate     = sessions > 0 && !appTraffic?.connected ? (trials / sessions) * 100 : null;
+  const convRate      = trials > 0 && stripeConnected ? (orders / trials) * 100 : null;
+  const overallRate   = sessions > 0 && stripeConnected ? (orders / sessions) * 100 : null;
 
   // Swap headline figures based on active tab
   const s1      = (isAcq || isProspects) ? newUsers    : sessions;
@@ -1496,7 +1513,7 @@ function EtzTrialsFullView({
             <button
               key={v}
               onClick={() => setEtzSubView(v)}
-              title={v === 'prospects' ? 'New visitors who did not land on the login page — excludes existing school students logging in directly' : undefined}
+              title={v === 'prospects' ? 'Genuine new prospects: new visitors who did not land directly on /login (Stage 2) + HubSpot trials excluding school bulk imports (Stage 3)' : undefined}
               className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
                 etzSubView === v
                   ? 'bg-white text-gray-900 shadow-sm'
@@ -1655,15 +1672,24 @@ function EtzTrialsFullView({
           <span className="text-xs text-gray-400">HubSpot</span>
         </div>
         <div className="px-5 py-4">
-          {loading ? (
+          {loading || (isProspects && loadingProspectsTrials) ? (
             <p className="text-sm text-gray-400">Loading…</p>
           ) : (
-            <div className="flex items-center gap-8">
+            <div className="flex items-center gap-8 flex-wrap">
               <div>
                 <div className="text-4xl font-extrabold text-gray-900 tabular-nums">
                   {trials.toLocaleString()}
                 </div>
-                <div className="text-sm text-gray-500 mt-0.5">trials started</div>
+                <div className="text-sm text-gray-500 mt-0.5">
+                  {isProspects ? 'genuine prospect trials' : 'trials started'}
+                </div>
+                {isProspects && prospectsTrialData && (
+                  <div className="text-xs text-gray-400 mt-1">
+                    {hsSourceData
+                      ? `${offlineTrials} school import${offlineTrials !== 1 ? 's' : ''} excluded · ${trialsAll} total`
+                      : `${trialsAll} total · source data not yet on deals`}
+                  </div>
+                )}
               </div>
               {(isAcq ? acqAppTrialRate : appTrialRate) != null && (
                 <div>
@@ -2823,6 +2849,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [loadingProspectsTraffic, setLoadingProspectsTraffic] = useState(false);
   const [etzProspectsAppTraffic,  setEtzProspectsAppTraffic] = useState<EtzAppTrafficResponse | null>(null);
   const [loadingProspectsApp,     setLoadingProspectsApp   ] = useState(false);
+  const [etzProspectsTrials,      setEtzProspectsTrials    ] = useState<EtzTrialFunnelResponse | null>(null);
+  const [loadingProspectsTrials,  setLoadingProspectsTrials] = useState(false);
   const [etzAppTraffic,        setEtzAppTraffic       ] = useState<EtzAppTrafficResponse | null>(null);
   const [loadingEtzAppTraffic, setLoadingEtzAppTraffic] = useState(false);
   const [etzTrend,             setEtzTrend            ] = useState<EtzTrendResponse | null>(null);
@@ -2859,6 +2887,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
     setEtzMainSiteTraffic(null);
     setEtzProspectsTraffic(null);
     setEtzProspectsAppTraffic(null);
+    setEtzProspectsTrials(null);
     setEtzAppTraffic(null);
     setEtzSources(null);
     setSiteConversion(null);
@@ -2954,6 +2983,16 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
       })
       .catch((e) => { if (e?.name !== 'AbortError') setEtzProspectsAppTraffic(null); })
       .finally(() => { if (!signal.aborted) setLoadingProspectsApp(false); });
+
+    // Prospects: trial count from HubSpot excluding OFFLINE source (school bulk imports)
+    setLoadingProspectsTrials(true);
+    fetch('/api/etz-trial-funnel?month=' + month + '&prospectsOnly=true', { signal })
+      .then(r => r.json())
+      .then((data: EtzTrialFunnelResponse) => {
+        if (!signal.aborted) setEtzProspectsTrials(data);
+      })
+      .catch((e) => { if (e?.name !== 'AbortError') setEtzProspectsTrials(null); })
+      .finally(() => { if (!signal.aborted) setLoadingProspectsTrials(false); });
 
     setLoadingEtzAppTraffic(true);
     fetch('/api/etz-app-traffic?month=' + month, { signal })
@@ -3229,6 +3268,8 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             loadingMainSiteTraffic={loadingMainSiteTraffic}
             prospectsAppTraffic={etzProspectsAppTraffic}
             loadingProspectsApp={loadingProspectsApp}
+            prospectsTrialData={etzProspectsTrials}
+            loadingProspectsTrials={loadingProspectsTrials}
             appTraffic={etzAppTraffic}
             loadingAppTraffic={loadingEtzAppTraffic}
             trend={etzTrend}
