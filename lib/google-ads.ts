@@ -449,10 +449,20 @@ export async function runGaqlMutate(cfg: GoogleAdsConfig, resource: string, oper
   });
   const data = await parseJsonOrThrow(res, `Google Ads mutate (${resource})`);
   if (!res.ok) {
-    const msg = data?.error?.message
-      ?? data?.error?.details?.[0]?.errors?.[0]?.message
-      ?? JSON.stringify(data);
-    throw new Error(`Google Ads mutate error (HTTP ${res.status}): ${msg}`);
+    // Extract the richest available error from GoogleAdsFailure structure.
+    // data.error.details[] can contain a {errors: [{errorCode, message, location}]} object.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adsErrors: any[] = data?.error?.details?.flatMap((d: any) => d?.errors ?? []) ?? [];
+    let msg: string;
+    if (adsErrors.length) {
+      msg = adsErrors.map((e: any) => {
+        const code = e?.errorCode ? Object.entries(e.errorCode).map(([k, v]) => `${k}: ${v}`).join(', ') : '';
+        return code ? `${e?.message ?? ''} [${code}]` : (e?.message ?? JSON.stringify(e));
+      }).join('; ');
+    } else {
+      msg = data?.error?.message ?? JSON.stringify(data);
+    }
+    throw new Error(`Google Ads API error (HTTP ${res.status}) on ${resource}: ${msg}`);
   }
   return data;
 }

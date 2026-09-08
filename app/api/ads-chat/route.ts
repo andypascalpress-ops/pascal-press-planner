@@ -529,12 +529,13 @@ async function handleTool(name: string, input: any, account: string): Promise<st
       };
       if (bidding_strategy === 'TARGET_CPA' && target_cpa_aud) {
         campaignBody.targetCpa = { targetCpaMicros: String(Math.round(target_cpa_aud * 1_000_000)) };
+      } else if (bidding_strategy === 'MAXIMIZE_CONVERSIONS') {
+        campaignBody.maximizeConversions = {};
       } else if (bidding_strategy === 'MAXIMIZE_CLICKS') {
         campaignBody.maximizeClicks = {};
-      } else if (bidding_strategy === 'MANUAL_CPC') {
-        campaignBody.manualCpc = { enhancedCpcEnabled: true };
       } else {
-        campaignBody.maximizeConversions = {};
+        // Default: Manual CPC — works on every account regardless of conversion tracking setup
+        campaignBody.manualCpc = { enhancedCpcEnabled: false };
       }
       const campaignRes = await runGaqlMutate(cfg, 'campaigns', [{ create: campaignBody }]);
       const campaignResource = campaignRes.results[0].resourceName as string;
@@ -623,7 +624,7 @@ async function handleTool(name: string, input: any, account: string): Promise<st
         campaignBudget:         budgetResource,
         shoppingSetting: {
           merchantId:       Number(merchant_center_id),
-          salesCountry:     'AU',
+          feedLabel:        'AU',          // replaces deprecated salesCountry (v14+)
           campaignPriority: 0,
           enableLocal:      false,
         },
@@ -1685,7 +1686,7 @@ const TOOLS: Anthropic.Tool[] = [
         final_url:         { type: 'string', description: 'Landing page URL, e.g. "https://pascalpress.com.au".' },
         keywords:          { type: 'array', items: { type: 'string' }, description: 'Keywords to target, e.g. ["pascal press books", "hsc study guides"].' },
         match_type:        { type: 'string', enum: ['BROAD', 'PHRASE', 'EXACT'], description: 'Match type for all keywords. Default PHRASE.' },
-        bidding_strategy:  { type: 'string', enum: ['MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CLICKS', 'MANUAL_CPC', 'TARGET_CPA'], description: 'Bidding strategy. Default MAXIMIZE_CONVERSIONS.' },
+        bidding_strategy:  { type: 'string', enum: ['MANUAL_CPC', 'MAXIMIZE_CLICKS', 'MAXIMIZE_CONVERSIONS', 'TARGET_CPA'], description: 'Bidding strategy. Default MANUAL_CPC (safe on all accounts). Only use MAXIMIZE_CONVERSIONS if conversion tracking is confirmed active.' },
         target_cpa_aud:    { type: 'number', description: 'Target CPA in AUD — only used when bidding_strategy is TARGET_CPA.' },
         geo_target_ids:    { type: 'array', items: { type: 'number' }, description: 'Google Ads geo target constant IDs. Common: 2036 = Australia, 21471 = NSW, 21473 = VIC, 21474 = QLD. Default [2036].' },
       },
@@ -1800,6 +1801,9 @@ export async function POST(req: NextRequest) {
 - To pause or enable an ad group: call get_ad_groups first to get the ad_group_id, then call set_ad_group_status
 
 **Creating campaigns:** Gather all required details from the user before calling create_search_campaign or create_shopping_campaign. Always confirm the full details back to the user ("Here's what I'm about to create: …") and wait for a yes before calling the create tool. New campaigns are always created PAUSED.
+- Default bidding strategy for new Search campaigns: MANUAL_CPC (safe on all accounts; only use MAXIMIZE_CONVERSIONS if the user confirms conversion tracking is active on the account).
+- Default bidding strategy for new Shopping campaigns: MAXIMIZE_CLICKS (safe on all accounts; MAXIMIZE_CONVERSION_VALUE requires conversion tracking).
+- If a campaign creation fails with a bidding-strategy error, retry with MANUAL_CPC (Search) or MAXIMIZE_CLICKS (Shopping) and inform the user.
 
 **Creating ad groups and ads:** Use create_ad_group to add a new ad group to an existing campaign. Use create_rsa to create a new responsive search ad — always starts PAUSED. To add keywords to an existing ad group use add_keywords. Confirm all details before creating.
 
