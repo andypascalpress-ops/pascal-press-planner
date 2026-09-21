@@ -579,18 +579,13 @@ function PPAbandonedCartCard() {
   );
 }
 
-interface HubSpotBrandStats {
-  newContacts: number;
-  optOuts:     number;
-}
-
 interface HubSpotSubscriberData {
   connected: boolean;
-  total:     HubSpotBrandStats;
-  pp:        HubSpotBrandStats;
-  etz:       HubSpotBrandStats;
-  hsc:       HubSpotBrandStats;
-  blake:     HubSpotBrandStats;
+  total:     number;
+  pp:        number;
+  etz:       number;
+  hsc:       number;
+  blake:     number;
 }
 
 function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers }: {
@@ -599,7 +594,7 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers }: {
   dayPct: number;
   isMonthly: boolean;
   onNavigate: () => void;
-  subscribers?: HubSpotBrandStats | null;
+  subscribers?: number | null;
 }) {
   const tagColor =
     name === 'Pascal Press' ? 'bg-blue-100 text-blue-700'
@@ -776,22 +771,12 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers }: {
         </div>
       )}
 
-      {/* HubSpot subscriber stats */}
-      {subscribers && (
-        <div className="flex items-center gap-4 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
+      {/* HubSpot new contacts this month */}
+      {subscribers != null && (
+        <div className="flex items-center gap-3 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
           <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wide shrink-0">HubSpot</span>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-semibold text-emerald-600">
-              +{subscribers.newContacts.toLocaleString()}
-            </span>
-            <span className="text-[11px] text-gray-400">new</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-semibold text-red-500">
-              -{subscribers.optOuts.toLocaleString()}
-            </span>
-            <span className="text-[11px] text-gray-400">unsubscribed</span>
-          </div>
+          <span className="text-[11px] font-semibold text-emerald-600">+{subscribers.toLocaleString()}</span>
+          <span className="text-[11px] text-gray-400">new contacts</span>
         </div>
       )}
 
@@ -1036,7 +1021,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
       const subMonth = overview?.month ?? new Date().toISOString().slice(0, 7);
       fetch(`/api/hubspot-subscribers?month=${subMonth}`)
         .then(r => r.ok ? r.json() : null)
-        .then((d: HubSpotSubscriberData | null) => { if (d?.connected) setHsData(d); })
+        .then((d: HubSpotSubscriberData | null) => { if (d?.connected) setHsData(d); })  // eslint-disable-line @typescript-eslint/no-explicit-any
         .catch(() => {});
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load overview');
