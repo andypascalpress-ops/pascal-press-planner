@@ -29,7 +29,9 @@ export async function GET() {
   const pipelines = (pipelinesData.results ?? []) as { id: string; label: string; stages: { id: string; label: string }[] }[];
 
   const hscPipeline = pipelines.find(p =>
-    p.label.toLowerCase().includes('hsc') || p.label.toLowerCase().includes('copilot')
+    p.label.toLowerCase().includes('hsc') ||
+    p.label.toLowerCase().includes('copilot') ||
+    p.label.toLowerCase().includes('ehc')
   );
 
   if (!hscPipeline) {
