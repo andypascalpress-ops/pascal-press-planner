@@ -579,12 +579,19 @@ function PPAbandonedCartCard() {
   );
 }
 
-function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
+interface HubSpotSubscriberData {
+  newContacts: number;
+  optOuts:     number;
+  connected:   boolean;
+}
+
+function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers }: {
   name: string;
   data: BrandData;
   dayPct: number;
   isMonthly: boolean;
   onNavigate: () => void;
+  subscribers?: HubSpotSubscriberData | null;
 }) {
   const tagColor =
     name === 'Pascal Press' ? 'bg-blue-100 text-blue-700'
@@ -758,6 +765,25 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate }: {
           {data.conversion.reason && (
             <p className="text-xs text-indigo-800/80 mt-1.5 leading-snug">{data.conversion.reason}</p>
           )}
+        </div>
+      )}
+
+      {/* HubSpot subscriber stats */}
+      {subscribers?.connected && (
+        <div className="flex items-center gap-4 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
+          <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wide shrink-0">HubSpot</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-semibold text-emerald-600">
+              +{subscribers.newContacts.toLocaleString()}
+            </span>
+            <span className="text-[11px] text-gray-400">new</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-semibold text-red-500">
+              -{subscribers.optOuts.toLocaleString()}
+            </span>
+            <span className="text-[11px] text-gray-400">unsubscribed</span>
+          </div>
         </div>
       )}
 
@@ -973,9 +999,10 @@ interface OverviewTabProps {
 }
 
 export default function OverviewTab({ onNavigate }: OverviewTabProps) {
-  const [data,       setData]       = useState<OverviewData | null>(null);
-  const [loading,    setLoading]    = useState(true);
-  const [error,      setError]      = useState('');
+  const [data,        setData]        = useState<OverviewData | null>(null);
+  const [loading,     setLoading]     = useState(true);
+  const [error,       setError]       = useState('');
+  const [subscribers, setSubscribers] = useState<HubSpotSubscriberData | null>(null);
 
   type DateRange = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth';
   const RANGE_OPTIONS: { key: DateRange; label: string }[] = [
@@ -994,7 +1021,15 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
     try {
       const res = await fetch(`/api/overview?range=${dateRange}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setData(await res.json());
+      const overview = await res.json();
+      setData(overview);
+
+      // Fetch HubSpot subscriber data for the same month (fire-and-forget, non-blocking)
+      const subMonth = overview?.month ?? new Date().toISOString().slice(0, 7);
+      fetch(`/api/hubspot-subscribers?month=${subMonth}`)
+        .then(r => r.ok ? r.json() : null)
+        .then((d: HubSpotSubscriberData | null) => { if (d?.connected) setSubscribers(d); })
+        .catch(() => {});
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load overview');
     } finally {
@@ -1100,11 +1135,11 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
 
         {/* ── Brand cards ── */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <BrandCard name="Pascal Press"      data={pp}  dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
-          <BrandCard name="Excel Test Zone"   data={etz} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
-          <BrandCard name="Excel HSC Copilot" data={hsc} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
+          <BrandCard name="Pascal Press"      data={pp}    dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={subscribers} />
+          <BrandCard name="Excel Test Zone"   data={etz}   dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={subscribers} />
+          <BrandCard name="Excel HSC Copilot" data={hsc}   dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={subscribers} />
           {blake && (
-            <BrandCard name="Blake Education" data={blake} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} />
+            <BrandCard name="Blake Education" data={blake} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={subscribers} />
           )}
           {blake && <BlakeExtraCard />}
         </div>
