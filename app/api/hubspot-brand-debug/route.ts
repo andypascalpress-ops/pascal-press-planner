@@ -2,10 +2,10 @@
  * GET /api/hubspot-brand-debug
  *
  * Diagnostic endpoint to inspect HubSpot account structure for brand segmentation.
- * Fetches:
+ * Returns STRUCTURAL data only (no PII — no contact records, no email addresses):
  *   1. Email subscription type definitions (each brand may have its own list)
- *   2. Contact custom properties (looking for brand/product identifiers)
- *   3. A few sample contacts to see which properties are populated
+ *   2. Contact property names/labels that may indicate brand (filtered list, no values)
+ *   3. Counts of contacts per unique value for candidate brand properties
  *
  * Not cached — remove after figuring out brand segmentation approach.
  */
@@ -31,65 +31,74 @@ async function hsGet(path: string) {
   return res.json();
 }
 
+/**
+ * Count contacts where a given property equals a specific value.
+ * Returns a count only — no contact data.
+ */
+async function countContactsByProp(propertyName: string, value: string): Promise<number> {
+  const res = await fetch(`${HS_BASE}/crm/v3/objects/contacts/search`, {
+    method: 'POST',
+    headers: hsHeaders(),
+    cache: 'no-store',
+    body: JSON.stringify({
+      filterGroups: [{ filters: [{ propertyName, operator: 'EQ', value }] }],
+      limit: 1,
+      properties: ['createdate'],
+    }),
+  });
+  if (!res.ok) return -1;
+  const json = await res.json();
+  return json.total ?? 0;
+}
+
 export async function GET() {
   if (!process.env.HUBSPOT_CRM_TOKEN && !process.env.HUBSPOT_API_KEY) {
     return NextResponse.json({ error: 'No HubSpot token configured' }, { status: 500 });
   }
 
-  const [subscriptionDefs, contactProps, sampleContacts] = await Promise.allSettled([
+  const [subscriptionDefs, contactProps] = await Promise.allSettled([
     // 1. Email subscription types — if each brand has its own, we can count per-type
     hsGet('/communication-preferences/v3/definitions'),
 
     // 2. All contact properties — filter to custom ones that might indicate brand
     hsGet('/crm/v3/properties/contacts?limit=500'),
-
-    // 3. Sample of 5 recent contacts with all their properties
-    fetch(`${HS_BASE}/crm/v3/objects/contacts/search`, {
-      method: 'POST',
-      headers: hsHeaders(),
-      cache: 'no-store',
-      body: JSON.stringify({
-        filterGroups: [],
-        sorts: [{ propertyName: 'createdate', direction: 'DESCENDING' }],
-        limit: 5,
-        properties: [
-          'email', 'createdate', 'lifecyclestage',
-          'hs_email_optout', 'hs_email_domain',
-          'brand', 'product', 'product_interest', 'associated_brand',
-          'hs_analytics_source', 'hs_analytics_source_data_1', 'hs_analytics_source_data_2',
-          'hs_latest_source', 'hs_latest_source_data_1',
-          'hs_analytics_first_referrer', 'hs_analytics_last_referrer',
-          'website', 'company',
-        ],
-      }),
-    }).then(r => r.json()),
   ]);
 
-  // Extract just the interesting contact properties (custom ones and brand-relevant ones)
-  const BRAND_KEYWORDS = ['brand', 'product', 'source', 'site', 'website', 'domain', 'store', 'list'];
-  let customProps: { name: string; label: string; type: string; groupName: string }[] = [];
+  // Extract just property names/labels (no values) for brand-relevant properties
+  const BRAND_KEYWORDS = ['brand', 'product', 'source', 'site', 'website', 'domain', 'store', 'list', 'signup'];
+  let customProps: { name: string; label: string; type: string; groupName: string; options?: { label: string; value: string }[] }[] = [];
   if (contactProps.status === 'fulfilled' && !('error' in contactProps.value)) {
     const props = (contactProps.value.results ?? []) as {
       name: string; label: string; type: string; groupName: string; calculated: boolean;
+      options?: { label: string; value: string }[];
     }[];
     customProps = props.filter(p =>
       !p.calculated &&
-      (BRAND_KEYWORDS.some(kw => p.name.toLowerCase().includes(kw) || p.label.toLowerCase().includes(kw)) ||
-       p.groupName === 'contactinformation' && !p.name.startsWith('hs_'))
-    ).map(({ name, label, type, groupName }) => ({ name, label, type, groupName }));
+      BRAND_KEYWORDS.some(kw => p.name.toLowerCase().includes(kw) || p.label.toLowerCase().includes(kw))
+    ).map(({ name, label, type, groupName, options }) => ({
+      name, label, type, groupName,
+      ...(options?.length ? { options: options.map(o => ({ label: o.label, value: o.value })) } : {}),
+    }));
+  }
+
+  // Check counts for known brand-value candidates (structural counts only, no PII)
+  const brandCandidates = ['pascal press', 'excel test zone', 'etz', 'hsc', 'blake', 'pp'];
+  const propCandidates = customProps.filter(p => p.type === 'enumeration' || p.type === 'string').slice(0, 3);
+
+  const candidateCounts: Record<string, Record<string, number>> = {};
+  for (const prop of propCandidates) {
+    candidateCounts[prop.name] = {};
+    for (const val of brandCandidates) {
+      const count = await countContactsByProp(prop.name, val);
+      if (count > 0) candidateCounts[prop.name]![val] = count;
+    }
   }
 
   return NextResponse.json({
-    subscriptionDefs: subscriptionDefs.status === 'fulfilled' ? subscriptionDefs.value : { error: subscriptionDefs.reason?.message },
-    customBrandProps: customProps,
-    sampleContacts: sampleContacts.status === 'fulfilled' ? {
-      total: sampleContacts.value.total,
-      results: (sampleContacts.value.results ?? []).map((c: { id: string; properties: Record<string, string | null> }) => ({
-        id: c.id,
-        properties: Object.fromEntries(
-          Object.entries(c.properties).filter(([, v]) => v != null && v !== '')
-        ),
-      })),
-    } : { error: (sampleContacts as PromiseRejectedResult).reason?.message },
+    subscriptionDefs: subscriptionDefs.status === 'fulfilled'
+      ? subscriptionDefs.value
+      : { error: (subscriptionDefs as PromiseRejectedResult).reason?.message },
+    brandRelatedProperties: customProps,
+    candidateCounts,
   });
 }
