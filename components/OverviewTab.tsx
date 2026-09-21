@@ -579,10 +579,18 @@ function PPAbandonedCartCard() {
   );
 }
 
-interface HubSpotSubscriberData {
+interface HubSpotBrandStats {
   newContacts: number;
   optOuts:     number;
-  connected:   boolean;
+}
+
+interface HubSpotSubscriberData {
+  connected: boolean;
+  total:     HubSpotBrandStats;
+  pp:        HubSpotBrandStats;
+  etz:       HubSpotBrandStats;
+  hsc:       HubSpotBrandStats;
+  blake:     HubSpotBrandStats;
 }
 
 function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers }: {
@@ -591,7 +599,7 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers }: {
   dayPct: number;
   isMonthly: boolean;
   onNavigate: () => void;
-  subscribers?: HubSpotSubscriberData | null;
+  subscribers?: HubSpotBrandStats | null;
 }) {
   const tagColor =
     name === 'Pascal Press' ? 'bg-blue-100 text-blue-700'
@@ -769,7 +777,7 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers }: {
       )}
 
       {/* HubSpot subscriber stats */}
-      {subscribers?.connected && (
+      {subscribers && (
         <div className="flex items-center gap-4 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
           <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wide shrink-0">HubSpot</span>
           <div className="flex items-center gap-1.5">
@@ -1002,7 +1010,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
   const [data,        setData]        = useState<OverviewData | null>(null);
   const [loading,     setLoading]     = useState(true);
   const [error,       setError]       = useState('');
-  const [subscribers, setSubscribers] = useState<HubSpotSubscriberData | null>(null);
+  const [hsData, setHsData] = useState<HubSpotSubscriberData | null>(null);
 
   type DateRange = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth';
   const RANGE_OPTIONS: { key: DateRange; label: string }[] = [
@@ -1028,7 +1036,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
       const subMonth = overview?.month ?? new Date().toISOString().slice(0, 7);
       fetch(`/api/hubspot-subscribers?month=${subMonth}`)
         .then(r => r.ok ? r.json() : null)
-        .then((d: HubSpotSubscriberData | null) => { if (d?.connected) setSubscribers(d); })
+        .then((d: HubSpotSubscriberData | null) => { if (d?.connected) setHsData(d); })
         .catch(() => {});
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load overview');
@@ -1135,11 +1143,11 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
 
         {/* ── Brand cards ── */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <BrandCard name="Pascal Press"      data={pp}    dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={subscribers} />
-          <BrandCard name="Excel Test Zone"   data={etz}   dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={subscribers} />
-          <BrandCard name="Excel HSC Copilot" data={hsc}   dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={subscribers} />
+          <BrandCard name="Pascal Press"      data={pp}    dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.pp    ?? null} />
+          <BrandCard name="Excel Test Zone"   data={etz}   dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.etz   ?? null} />
+          <BrandCard name="Excel HSC Copilot" data={hsc}   dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.hsc   ?? null} />
           {blake && (
-            <BrandCard name="Blake Education" data={blake} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={subscribers} />
+            <BrandCard name="Blake Education" data={blake} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.blake ?? null} />
           )}
           {blake && <BlakeExtraCard />}
         </div>

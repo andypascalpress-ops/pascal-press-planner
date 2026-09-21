@@ -1,12 +1,15 @@
 /**
  * GET /api/hubspot-subscribers?month=YYYY-MM
  *
- * Returns new contacts and email opt-outs from HubSpot for the given month.
+ * Returns new contacts and email opt-outs from HubSpot for the given month,
+ * segmented by brand using the contact `brand` property.
  *
- * new contacts  – contacts created this month who have not opted out of email
- *                 (proxy for new email subscribers/sign-ups)
- * optOuts       – contacts who unsubscribed from email this month,
- *                 detected via the communication preferences unsubscribe timeline
+ * new contacts  – contacts created this month per brand (proxy for new sign-ups)
+ * optOuts       – contacts who have hs_email_optout=true and were modified this month
+ *                 per brand (best-effort: lastmodifieddate proxy for opt-out date)
+ *
+ * Brand property values: "Pascal Press", "Excel Test Zone", "Excel HSC Copilot",
+ * "Blake Education" (pulled from the contact `brand` enumeration field).
  *
  * Required env var: HUBSPOT_CRM_TOKEN or HUBSPOT_API_KEY
  */
@@ -33,13 +36,13 @@ function monthToEpochRange(month: string) {
   };
 }
 
-/** Count contacts matching the given filter groups (1 search call, reads only total). */
+/** Count contacts matching the given filter groups (reads only total). */
 async function hsContactCount(filterGroups: { filters: object[] }[]): Promise<number> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await fetch(`${HS_BASE}/crm/v3/objects/contacts/search`, {
       method: 'POST',
       headers: hsHeaders(),
-      body: JSON.stringify({ filterGroups, limit: 1, properties: ['email'] }),
+      body: JSON.stringify({ filterGroups, limit: 1, properties: ['createdate'] }),
       cache: 'no-store',
     });
     if (res.status === 429) {
@@ -53,39 +56,43 @@ async function hsContactCount(filterGroups: { filters: object[] }[]): Promise<nu
   return 0;
 }
 
+// HubSpot `brand` property values per business unit
+const BRAND_VALUES: Record<string, string> = {
+  pp:    'Pascal Press',
+  etz:   'Excel Test Zone',
+  hsc:   'Excel HSC Copilot',
+  blake: 'Blake Education',
+};
+
 /**
- * Count actual email unsubscribe events in the date range using the
- * communication preferences v3 timeline API.
+ * Count new contacts this month for a brand.
+ * Filters: brand = X AND createdate in [startMs, endMs)
  */
-async function hsUnsubscribeCount(startMs: number, endMs: number): Promise<number> {
-  let count = 0;
-  let after: string | undefined;
+function newContactsFilter(brandValue: string, startMs: number, endMs: number) {
+  return [{
+    filters: [
+      { propertyName: 'brand',      operator: 'EQ',  value: brandValue    },
+      { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
+      { propertyName: 'createdate', operator: 'LT',  value: String(endMs)   },
+    ],
+  }];
+}
 
-  do {
-    const params = new URLSearchParams({
-      startTimestamp: String(startMs),
-      endTimestamp:   String(endMs),
-      limit:          '100',
-    });
-    if (after) params.set('after', after);
-
-    const res = await fetch(
-      `${HS_BASE}/communication-preferences/v3/unsubscribes/timeline?${params}`,
-      { headers: hsHeaders(), cache: 'no-store' },
-    );
-
-    // This endpoint may not be available on all HubSpot tiers — fall back to 0
-    if (res.status === 403 || res.status === 404 || res.status === 501) return 0;
-    if (res.status === 429) { await delay(1100); continue; }
-    if (!res.ok) return 0;
-
-    const json = await res.json();
-    count += (json.results ?? []).length;
-    after  = json.paging?.next?.after as string | undefined;
-    if (after) await delay(250);
-  } while (after);
-
-  return count;
+/**
+ * Count contacts with hs_email_optout=true that were last modified this month.
+ * This is a best-effort proxy for "opted out this month" — lastmodifieddate
+ * is updated when any property changes, so it may slightly over-count if the
+ * contact was modified for another reason while already opted out.
+ */
+function optOutFilter(brandValue: string, startMs: number, endMs: number) {
+  return [{
+    filters: [
+      { propertyName: 'brand',            operator: 'EQ',  value: brandValue      },
+      { propertyName: 'hs_email_optout',  operator: 'EQ',  value: 'true'          },
+      { propertyName: 'lastmodifieddate', operator: 'GTE', value: String(startMs) },
+      { propertyName: 'lastmodifieddate', operator: 'LT',  value: String(endMs)   },
+    ],
+  }];
 }
 
 export async function GET(request: Request) {
@@ -108,34 +115,57 @@ export async function GET(request: Request) {
   const { startMs, endMs } = monthToEpochRange(month);
 
   try {
-    // Run new-contacts and unsubscribe queries in parallel
-    const [newContacts, optOuts] = await Promise.all([
-      // New contacts created this month (regardless of opt-in status — new signups)
+    // Run all 8 brand queries in parallel (4 brands × 2 metrics)
+    const brands = ['pp', 'etz', 'hsc', 'blake'] as const;
+    const results = await Promise.all(
+      brands.flatMap(key => {
+        const bv = BRAND_VALUES[key]!;
+        return [
+          hsContactCount(newContactsFilter(bv, startMs, endMs)),
+          hsContactCount(optOutFilter(bv, startMs, endMs)),
+        ];
+      })
+    );
+
+    // Also fetch overall totals (no brand filter)
+    const [totalNew, totalOptOut] = await Promise.all([
       hsContactCount([{
         filters: [
           { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
           { propertyName: 'createdate', operator: 'LT',  value: String(endMs)   },
         ],
       }]),
-
-      // Actual email unsubscribe events via communication preferences timeline
-      hsUnsubscribeCount(startMs, endMs),
+      hsContactCount([{
+        filters: [
+          { propertyName: 'hs_email_optout',  operator: 'EQ',  value: 'true'          },
+          { propertyName: 'lastmodifieddate', operator: 'GTE', value: String(startMs) },
+          { propertyName: 'lastmodifieddate', operator: 'LT',  value: String(endMs)   },
+        ],
+      }]),
     ]);
+
+    const [ppNew, ppOut, etzNew, etzOut, hscNew, hscOut, blakeNew, blakeOut] = results;
 
     return NextResponse.json({
       month,
-      newContacts,
-      optOuts,
       connected: true,
+      total:  { newContacts: totalNew,  optOuts: totalOptOut  },
+      pp:     { newContacts: ppNew!,    optOuts: ppOut!    },
+      etz:    { newContacts: etzNew!,   optOuts: etzOut!   },
+      hsc:    { newContacts: hscNew!,   optOuts: hscOut!   },
+      blake:  { newContacts: blakeNew!, optOuts: blakeOut! },
     });
   } catch (e) {
     console.error('[hubspot-subscribers]', e);
     return NextResponse.json({
       month,
-      newContacts: 0,
-      optOuts:     0,
       connected:   false,
       error:       e instanceof Error ? e.message : 'Unknown error',
+      total:  { newContacts: 0, optOuts: 0 },
+      pp:     { newContacts: 0, optOuts: 0 },
+      etz:    { newContacts: 0, optOuts: 0 },
+      hsc:    { newContacts: 0, optOuts: 0 },
+      blake:  { newContacts: 0, optOuts: 0 },
     });
   }
 }
