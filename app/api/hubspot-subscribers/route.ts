@@ -63,9 +63,10 @@ const BRAND_VALUES: Record<string, string> = {
 function newContactsFilter(brandValue: string, startMs: number, endMs: number) {
   return [{
     filters: [
-      { propertyName: 'brand',      operator: 'EQ',  value: brandValue      },
-      { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
-      { propertyName: 'createdate', operator: 'LT',  value: String(endMs)   },
+      { propertyName: 'brand',                operator: 'EQ',  value: brandValue      },
+      { propertyName: 'createdate',           operator: 'GTE', value: String(startMs) },
+      { propertyName: 'createdate',           operator: 'LT',  value: String(endMs)   },
+      { propertyName: 'hs_marketable_status', operator: 'EQ',  value: 'true'          },
     ],
   }];
 }
@@ -94,8 +95,9 @@ export async function GET(request: Request) {
     const [totalNew, ppNew, etzNew, hscNew, blakeNew] = await Promise.all([
       hsContactCount([{
         filters: [
-          { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
-          { propertyName: 'createdate', operator: 'LT',  value: String(endMs)   },
+          { propertyName: 'createdate',           operator: 'GTE', value: String(startMs) },
+          { propertyName: 'createdate',           operator: 'LT',  value: String(endMs)   },
+          { propertyName: 'hs_marketable_status', operator: 'EQ',  value: 'true'          },
         ],
       }]),
       hsContactCount(newContactsFilter(BRAND_VALUES.pp!,    startMs, endMs)),
