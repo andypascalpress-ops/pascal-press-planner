@@ -13,6 +13,7 @@ import EmailTab from '@/components/EmailTab';
 import OverviewTab from '@/components/OverviewTab';
 import ProductPerformanceTab from '@/components/ProductPerformanceTab';
 import AdsManagerTab from '@/components/AdsManagerTab';
+import BusinessUnitsTab from '@/components/BusinessUnitsTab';
 
 export default function Home() {
   // ── Campaign state ──
@@ -293,7 +294,7 @@ export default function Home() {
   const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
   const FMT = new Intl.NumberFormat('en-AU');
 
-  const isCampaignView = view !== 'finance' && view !== 'email' && view !== 'overview' && view !== 'products' && view !== 'systems' && view !== 'ads' && view !== 'blake';
+  const isCampaignView = view !== 'finance' && view !== 'email' && view !== 'overview' && view !== 'products' && view !== 'systems' && view !== 'ads' && view !== 'blake' && view !== 'business-units';
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -398,6 +399,19 @@ export default function Home() {
                   <path d="M3.5 9V11.5"/>
                 </svg>
                 <span className="hidden sm:inline">Ads</span>
+              </button>
+              <button
+                onClick={() => setView('business-units')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${view === 'business-units' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="1" y="4" width="3" height="9" rx="0.5"/>
+                  <rect x="5.5" y="1" width="3" height="12" rx="0.5"/>
+                  <rect x="10" y="6" width="3" height="7" rx="0.5"/>
+                  <line x1="1" y1="2" x2="4" y2="2"/>
+                  <line x1="2.5" y1="1" x2="2.5" y2="4"/>
+                </svg>
+                <span className="hidden sm:inline">Business Units</span>
               </button>
             </div>
 
@@ -582,6 +596,9 @@ export default function Home() {
 
           {/* Ads Manager view */}
           {view === 'ads' && <AdsManagerTab />}
+
+          {/* Business Units view */}
+          {view === 'business-units' && <BusinessUnitsTab />}
         </div>
       </main>
 
