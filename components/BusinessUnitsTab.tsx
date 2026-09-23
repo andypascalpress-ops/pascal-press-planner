@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  ComposedChart, Bar, Line, Legend,
+  ComposedChart, Bar,
 } from 'recharts';
 
 type BrandKey = 'pp' | 'etz' | 'ehc' | 'blake';
@@ -432,28 +432,39 @@ function TrendSection({
         <div className="h-48 flex items-center justify-center text-sm text-gray-400">Loading…</div>
       ) : trend && trend.length > 0 ? (
         <>
-          {/* Orders (+ Trials for ETZ/EHC) */}
-          <p className="text-[10px] text-gray-400 font-medium mb-1">
-            {hasTrials ? 'Orders vs Trials' : 'Orders per month'}
-          </p>
-          <ResponsiveContainer width="100%" height={160}>
+          {/* Trials per month (ETZ/EHC only) */}
+          {hasTrials && (
+            <>
+              <p className="text-[10px] text-gray-400 font-medium mb-1">Trials started per month</p>
+              <ResponsiveContainer width="100%" height={120}>
+                <ComposedChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 4 }}>
+                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} width={28} />
+                  <Tooltip
+                    formatter={(v) => [NUM.format(Number(v ?? 0)), 'Trials']}
+                    contentStyle={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,.08)' }}
+                  />
+                  <Bar dataKey="trials" name="Trials" fill="#f59e0b" opacity={0.85} radius={[2, 2, 0, 0]} maxBarSize={32} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </>
+          )}
+
+          {/* Orders per month */}
+          <p className="text-[10px] text-gray-400 font-medium mt-4 mb-1">Orders per month</p>
+          <ResponsiveContainer width="100%" height={120}>
             <ComposedChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 4 }}>
               <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
-              <YAxis yAxisId="orders" hide />
-              {hasTrials && <YAxis yAxisId="trials" orientation="right" hide />}
+              <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} width={28} />
               <Tooltip
-                formatter={(v, name) => [NUM.format(Number(v ?? 0)), name === 'trials' ? 'Trials' : 'Orders']}
+                formatter={(v) => [NUM.format(Number(v ?? 0)), 'Orders']}
                 contentStyle={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,.08)' }}
               />
-              {hasTrials && <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />}
-              <Bar yAxisId="orders" dataKey="orders" name="Orders" fill={color} opacity={0.85} radius={[2, 2, 0, 0]} maxBarSize={32} />
-              {hasTrials && (
-                <Line yAxisId="trials" type="monotone" dataKey="trials" name="Trials" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3, fill: '#f59e0b' }} />
-              )}
+              <Bar dataKey="orders" name="Orders" fill={color} opacity={0.85} radius={[2, 2, 0, 0]} maxBarSize={32} />
             </ComposedChart>
           </ResponsiveContainer>
 
-          {/* Revenue */}
+          {/* Revenue per month */}
           <p className="text-[10px] text-gray-400 font-medium mt-4 mb-1">Revenue per month</p>
           <ResponsiveContainer width="100%" height={110}>
             <AreaChart data={chartData} margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
@@ -464,7 +475,8 @@ function TrendSection({
                 </linearGradient>
               </defs>
               <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
-              <YAxis hide />
+              <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} width={40}
+                tickFormatter={v => v >= 1000 ? `$${Math.round(v/1000)}k` : `$${v}`} />
               <Tooltip
                 formatter={(v) => [AUD.format(Number(v ?? 0)), 'Revenue']}
                 contentStyle={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,.08)' }}

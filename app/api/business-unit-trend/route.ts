@@ -59,18 +59,21 @@ async function fetchRevenue(brand: BrandParam, month: string): Promise<{ revenue
   } catch { return { revenue: 0, orders: 0 }; }
 }
 
-async function fetchHubSpotTrialsForMonth(month: string, pipelineLabel: string): Promise<number> {
+async function resolvePipelineId(pipelineLabel: string): Promise<string | null> {
   try {
-    const pipelinesRes = await fetch(`${HS_BASE}/crm/v3/pipelines/deals`, {
+    const res = await fetch(`${HS_BASE}/crm/v3/pipelines/deals`, {
       headers: hsHeaders(), cache: 'no-store',
     });
-    if (!pipelinesRes.ok) return 0;
-    const { results } = await pipelinesRes.json() as {
-      results: Array<{ id: string; label: string }>
-    };
-    const pipeline = results.find(p => p.label.toLowerCase().includes(pipelineLabel.toLowerCase()));
-    if (!pipeline) return 0;
+    if (!res.ok) return null;
+    const { results } = await res.json() as { results: Array<{ id: string; label: string }> };
+    return results.find(p => p.label.toLowerCase().includes(pipelineLabel.toLowerCase()))?.id ?? null;
+  } catch { return null; }
+}
 
+async function fetchHubSpotTrialsForMonth(
+  month: string, pipelineId: string
+): Promise<number> {
+  try {
     const [y, m] = month.split('-').map(Number);
     const startMs = new Date(Date.UTC(y!, m! - 1, 1)).getTime();
     const endMs   = new Date(Date.UTC(y!, m!,     1)).getTime();
@@ -80,8 +83,8 @@ async function fetchHubSpotTrialsForMonth(month: string, pipelineLabel: string):
       headers: hsHeaders(),
       body: JSON.stringify({
         filterGroups: [{ filters: [
-          { propertyName: 'pipeline',   operator: 'EQ',  value: pipeline.id  },
-          { propertyName: 'amount',     operator: 'EQ',  value: '0'          },
+          { propertyName: 'pipeline',   operator: 'EQ',  value: pipelineId     },
+          { propertyName: 'amount',     operator: 'EQ',  value: '0'            },
           { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
           { propertyName: 'createdate', operator: 'LT',  value: String(endMs)   },
         ]}],
@@ -102,13 +105,21 @@ export async function GET(request: Request) {
   const hasTrials = brand === 'etz' || brand === 'ehc';
   const pipelineLabel = brand === 'etz' ? 'etz' : 'ehc';
 
+  // Resolve pipeline ID once, then fan out per-month deal searches
+  const pipelineId = hasTrials ? await resolvePipelineId(pipelineLabel) : null;
+
   // Fetch all months in parallel — revenue for every brand, trials for ETZ/EHC
+  // Stagger HubSpot calls slightly (200ms apart) to avoid 429s
+  const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
   const results = await Promise.allSettled(
-    months.map(month =>
-      hasTrials
-        ? Promise.all([fetchRevenue(brand, month), fetchHubSpotTrialsForMonth(month, pipelineLabel)])
-        : Promise.all([fetchRevenue(brand, month)])
-    )
+    months.map(async (month, i) => {
+      if (hasTrials && pipelineId) {
+        if (i > 0) await delay(i * 120); // stagger HubSpot searches
+        return Promise.all([fetchRevenue(brand, month), fetchHubSpotTrialsForMonth(month, pipelineId)]);
+      }
+      return Promise.all([fetchRevenue(brand, month)]);
+    })
   );
 
   const data = months.map((month, i) => {
