@@ -1,6 +1,9 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  ComposedChart, Bar, Line, Legend,
+} from 'recharts';
 
 type BrandKey = 'pp' | 'etz' | 'ehc' | 'blake';
 type RangeKey = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth';
@@ -124,6 +127,13 @@ function MetricCard({
   );
 }
 
+interface TrendPoint {
+  month: string;
+  revenue: number;
+  orders: number;
+  trials: number | null;
+}
+
 export default function BusinessUnitsTab() {
   const [brand, setBrand] = useState<BrandKey>('pp');
   const [range, setRange] = useState<RangeKey>('last7');
@@ -131,6 +141,9 @@ export default function BusinessUnitsTab() {
   const [data,  setData]  = useState<BUData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
+
+  const [trend,        setTrend]        = useState<TrendPoint[] | null>(null);
+  const [trendLoading, setTrendLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -146,7 +159,21 @@ export default function BusinessUnitsTab() {
     }
   }, [brand, range, yoy]);
 
+  const loadTrend = useCallback(async () => {
+    setTrendLoading(true);
+    setTrend(null);
+    try {
+      const res = await fetch(`/api/business-unit-trend?brand=${brand}`);
+      if (!res.ok) return;
+      const json = await res.json();
+      setTrend(json.months ?? []);
+    } catch { /* silent */ } finally {
+      setTrendLoading(false);
+    }
+  }, [brand]);
+
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadTrend(); }, [loadTrend]);
 
   const color = BRAND_COLOR[brand];
 
@@ -336,7 +363,119 @@ export default function BusinessUnitsTab() {
             )}
           </>
         ) : null}
+
+        {/* ── Month-on-month trend ── always visible, loads independently ── */}
+        <TrendSection brand={brand} color={color} trend={trend} loading={trendLoading} />
       </div>
+    </div>
+  );
+}
+
+function TrendSection({
+  brand, color, trend, loading,
+}: {
+  brand: BrandKey;
+  color: string;
+  trend: TrendPoint[] | null;
+  loading: boolean;
+}) {
+  const hasTrials = brand === 'etz' || brand === 'ehc';
+
+  // Compute MoM direction for the last 3 months vs previous 3
+  const summary = (() => {
+    if (!trend || trend.length < 6) return null;
+    const recent = trend.slice(-3);
+    const prior  = trend.slice(-6, -3);
+    const sumOrders  = (pts: TrendPoint[]) => pts.reduce((s, p) => s + p.orders, 0);
+    const sumTrials  = (pts: TrendPoint[]) => pts.reduce((s, p) => s + (p.trials ?? 0), 0);
+    const sumRevenue = (pts: TrendPoint[]) => pts.reduce((s, p) => s + p.revenue, 0);
+    const ordersPct  = prior.length && sumOrders(prior)  > 0 ? Math.round(((sumOrders(recent)  - sumOrders(prior))  / sumOrders(prior))  * 100) : null;
+    const trialsPct  = prior.length && sumTrials(prior)  > 0 ? Math.round(((sumTrials(recent)  - sumTrials(prior))  / sumTrials(prior))  * 100) : null;
+    const revenuePct = prior.length && sumRevenue(prior) > 0 ? Math.round(((sumRevenue(recent) - sumRevenue(prior)) / sumRevenue(prior)) * 100) : null;
+    return { ordersPct, trialsPct, revenuePct };
+  })();
+
+  const arrow = (pct: number | null | undefined) => {
+    if (pct == null) return null;
+    const up   = pct >= 0;
+    const icon = up ? '↑' : '↓';
+    const cls  = up ? 'text-emerald-600 bg-emerald-50' : 'text-red-500 bg-red-50';
+    return <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${cls}`}>{icon} {Math.abs(pct)}%</span>;
+  };
+
+  const chartData = (trend ?? []).map(pt => ({
+    ...pt,
+    label: pt.month.slice(5), // "MM" label
+  }));
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-4">
+      <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
+        <div>
+          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Month-on-month trend · last 12 months</p>
+          {summary && (
+            <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+              <span className="text-xs text-gray-500">vs 3 months prior:</span>
+              <span className="text-xs text-gray-500">Revenue {arrow(summary.revenuePct)}</span>
+              <span className="text-xs text-gray-500">Orders {arrow(summary.ordersPct)}</span>
+              {hasTrials && <span className="text-xs text-gray-500">Trials {arrow(summary.trialsPct)}</span>}
+            </div>
+          )}
+        </div>
+        {loading && (
+          <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin shrink-0"
+            style={{ borderColor: color, borderTopColor: 'transparent' }} />
+        )}
+      </div>
+
+      {loading && !trend ? (
+        <div className="h-48 flex items-center justify-center text-sm text-gray-400">Loading…</div>
+      ) : trend && trend.length > 0 ? (
+        <>
+          {/* Orders (+ Trials for ETZ/EHC) */}
+          <p className="text-[10px] text-gray-400 font-medium mb-1">
+            {hasTrials ? 'Orders vs Trials' : 'Orders per month'}
+          </p>
+          <ResponsiveContainer width="100%" height={160}>
+            <ComposedChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 4 }}>
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+              <YAxis yAxisId="orders" hide />
+              {hasTrials && <YAxis yAxisId="trials" orientation="right" hide />}
+              <Tooltip
+                formatter={(v, name) => [NUM.format(Number(v ?? 0)), name === 'trials' ? 'Trials' : 'Orders']}
+                contentStyle={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,.08)' }}
+              />
+              {hasTrials && <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />}
+              <Bar yAxisId="orders" dataKey="orders" name="Orders" fill={color} opacity={0.85} radius={[2, 2, 0, 0]} maxBarSize={32} />
+              {hasTrials && (
+                <Line yAxisId="trials" type="monotone" dataKey="trials" name="Trials" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3, fill: '#f59e0b' }} />
+              )}
+            </ComposedChart>
+          </ResponsiveContainer>
+
+          {/* Revenue */}
+          <p className="text-[10px] text-gray-400 font-medium mt-4 mb-1">Revenue per month</p>
+          <ResponsiveContainer width="100%" height={110}>
+            <AreaChart data={chartData} margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
+              <defs>
+                <linearGradient id={`trendGrad-${brand}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%"  stopColor={color} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={color} stopOpacity={0}    />
+                </linearGradient>
+              </defs>
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+              <YAxis hide />
+              <Tooltip
+                formatter={(v) => [AUD.format(Number(v ?? 0)), 'Revenue']}
+                contentStyle={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,.08)' }}
+              />
+              <Area type="monotone" dataKey="revenue" stroke={color} strokeWidth={2} fill={`url(#trendGrad-${brand})`} dot={false} activeDot={{ r: 4, fill: color }} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </>
+      ) : !loading ? (
+        <p className="text-sm text-gray-400 text-center py-8">No trend data available.</p>
+      ) : null}
     </div>
   );
 }
