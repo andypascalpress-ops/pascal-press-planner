@@ -2,13 +2,17 @@
  * GET /api/business-unit-trend?brand=pp|etz|ehc|blake
  *
  * Returns last 12 months of revenue, orders, and (for ETZ/EHC) trial counts.
- * Used for the month-on-month trend chart in the Business Units tab.
+ * Cached for 30 minutes — historical months never change so this is safe.
+ *
+ * Key optimisation: HubSpot trials use ONE bulk search covering all 12 months,
+ * grouped by month in code — replaces 12 sequential per-month searches.
  */
 import { NextResponse } from 'next/server';
 import { fetchPPRevenue, fetchBlakeRevenue } from '@/lib/bigcommerce-revenue';
 import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-revenue';
 
-export const dynamic = 'force-dynamic';
+// Cache for 30 min — historical month data never changes; current month updates are fine to lag.
+export const revalidate = 1800;
 
 type BrandParam = 'pp' | 'etz' | 'ehc' | 'blake';
 
@@ -59,43 +63,62 @@ async function fetchRevenue(brand: BrandParam, month: string): Promise<{ revenue
   } catch { return { revenue: 0, orders: 0 }; }
 }
 
-async function resolvePipelineId(pipelineLabel: string): Promise<string | null> {
+/**
+ * Single HubSpot search covering all 12 months.
+ * Returns a Map<YYYY-MM, count> — one API call instead of 12.
+ */
+async function fetchAllTrialsByMonth(
+  pipelineLabel: string,
+  startMonth: string,
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
   try {
-    const res = await fetch(`${HS_BASE}/crm/v3/pipelines/deals`, {
+    // Resolve pipeline ID
+    const plRes = await fetch(`${HS_BASE}/crm/v3/pipelines/deals`, {
       headers: hsHeaders(), cache: 'no-store',
     });
-    if (!res.ok) return null;
-    const { results } = await res.json() as { results: Array<{ id: string; label: string }> };
-    return results.find(p => p.label.toLowerCase().includes(pipelineLabel.toLowerCase()))?.id ?? null;
-  } catch { return null; }
-}
+    if (!plRes.ok) return map;
+    const { results: pipelines } = await plRes.json() as {
+      results: Array<{ id: string; label: string }>
+    };
+    const pipeline = pipelines.find(p => p.label.toLowerCase().includes(pipelineLabel.toLowerCase()));
+    if (!pipeline) return map;
 
-async function fetchHubSpotTrialsForMonth(
-  month: string, pipelineId: string
-): Promise<number> {
-  try {
-    const [y, m] = month.split('-').map(Number);
+    const [y, m] = startMonth.split('-').map(Number);
     const startMs = new Date(Date.UTC(y!, m! - 1, 1)).getTime();
-    const endMs   = new Date(Date.UTC(y!, m!,     1)).getTime();
+    const nowMs   = Date.now();
 
-    const search = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
-      method: 'POST',
-      headers: hsHeaders(),
-      body: JSON.stringify({
+    // Paginate through ALL $0 deals in the pipeline created in the last 12 months
+    let after: string | undefined;
+    do {
+      const body: Record<string, unknown> = {
         filterGroups: [{ filters: [
-          { propertyName: 'pipeline',   operator: 'EQ',  value: pipelineId     },
-          { propertyName: 'amount',     operator: 'EQ',  value: '0'            },
+          { propertyName: 'pipeline',   operator: 'EQ',  value: pipeline.id     },
+          { propertyName: 'amount',     operator: 'EQ',  value: '0'             },
           { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
-          { propertyName: 'createdate', operator: 'LT',  value: String(endMs)   },
+          { propertyName: 'createdate', operator: 'LTE', value: String(nowMs)   },
         ]}],
-        limit: 1,
-      }),
-      cache: 'no-store',
-    });
-    if (!search.ok) return 0;
-    const { total } = await search.json() as { total: number };
-    return total ?? 0;
-  } catch { return 0; }
+        properties: ['createdate'],
+        limit: 100,
+      };
+      if (after) body.after = after;
+
+      const res = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
+        method: 'POST', headers: hsHeaders(), body: JSON.stringify(body), cache: 'no-store',
+      });
+      if (!res.ok) break;
+      const json = await res.json();
+
+      for (const deal of (json.results ?? [])) {
+        const ts = deal.properties?.createdate;
+        if (!ts) continue;
+        const month = new Date(parseInt(ts)).toISOString().slice(0, 7); // YYYY-MM UTC
+        map.set(month, (map.get(month) ?? 0) + 1);
+      }
+      after = json.paging?.next?.after as string | undefined;
+    } while (after);
+  } catch { /* return partial map */ }
+  return map;
 }
 
 export async function GET(request: Request) {
@@ -105,32 +128,20 @@ export async function GET(request: Request) {
   const hasTrials = brand === 'etz' || brand === 'ehc';
   const pipelineLabel = brand === 'etz' ? 'etz' : 'ehc';
 
-  // Resolve pipeline ID once, then fan out per-month deal searches
-  const pipelineId = hasTrials ? await resolvePipelineId(pipelineLabel) : null;
-
-  // Fetch all months in parallel — revenue for every brand, trials for ETZ/EHC
-  // Stagger HubSpot calls slightly (200ms apart) to avoid 429s
-  const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-
-  const results = await Promise.allSettled(
-    months.map(async (month, i) => {
-      if (hasTrials && pipelineId) {
-        if (i > 0) await delay(i * 120); // stagger HubSpot searches
-        return Promise.all([fetchRevenue(brand, month), fetchHubSpotTrialsForMonth(month, pipelineId)]);
-      }
-      return Promise.all([fetchRevenue(brand, month)]);
-    })
-  );
+  // Run revenue fetches (12 months in parallel) and the single HubSpot bulk search together
+  const [revResults, trialsByMonth] = await Promise.all([
+    Promise.allSettled(months.map(m => fetchRevenue(brand, m))),
+    hasTrials ? fetchAllTrialsByMonth(pipelineLabel, months[0]!) : Promise.resolve(new Map<string, number>()),
+  ]);
 
   const data = months.map((month, i) => {
-    const r = results[i];
-    if (r.status !== 'fulfilled') return { month, revenue: 0, orders: 0, trials: null };
-    const [rev, trials] = r.value as [{ revenue: number; orders: number }, number?];
+    const r = revResults[i];
+    const rev = r?.status === 'fulfilled' ? r.value : { revenue: 0, orders: 0 };
     return {
       month,
       revenue: rev.revenue,
       orders:  rev.orders,
-      trials:  trials ?? null,
+      trials:  hasTrials ? (trialsByMonth.get(month) ?? 0) : null,
     };
   });
 
