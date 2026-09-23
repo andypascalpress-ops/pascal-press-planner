@@ -287,7 +287,7 @@ export default function BusinessUnitsTab() {
                     <p className="text-2xl font-bold text-gray-900">{NUM.format(data.subscriptions.active)}</p>
                   </div>
                   <div>
-                    <p className="text-[11px] text-gray-400 mb-0.5">Trialing</p>
+                    <p className="text-[11px] text-gray-400 mb-0.5">On Trial</p>
                     <p className="text-2xl font-bold text-gray-900">{NUM.format(data.subscriptions.trialing)}</p>
                   </div>
                   <div>

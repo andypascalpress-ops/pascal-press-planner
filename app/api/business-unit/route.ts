@@ -196,21 +196,50 @@ async function fetchStripeProductBreakdown(
   }
 }
 
-async function fetchStripeSubscriptionMetrics(key: string) {
+const HS_BASE = 'https://api.hubapi.com';
+function hsHeaders() {
+  return {
+    Authorization: `Bearer ${process.env.HUBSPOT_CRM_TOKEN ?? process.env.HUBSPOT_API_KEY ?? ''}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+async function fetchHubSpotCurrentTrials(pipelineLabel: string): Promise<number> {
+  try {
+    const res = await fetch(`${HS_BASE}/crm/v3/pipelines/deals`, {
+      headers: hsHeaders(), cache: 'no-store',
+    });
+    if (!res.ok) return 0;
+    const { results } = await res.json() as {
+      results: Array<{ id: string; label: string; stages: Array<{ id: string; label: string }> }>
+    };
+    const pipeline = results.find(p => p.label.toLowerCase().includes(pipelineLabel.toLowerCase()));
+    if (!pipeline) return 0;
+    const trialStage = pipeline.stages.find(s =>
+      s.label.toLowerCase().includes('active trial') || s.label.toLowerCase() === 'trial'
+    );
+    if (!trialStage) return 0;
+    const search = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
+      method: 'POST',
+      headers: hsHeaders(),
+      body: JSON.stringify({ filterGroups: [{ filters: [{ propertyName: 'dealstage', operator: 'EQ', value: trialStage.id }] }], limit: 1 }),
+      cache: 'no-store',
+    });
+    if (!search.ok) return 0;
+    const { total } = await search.json() as { total: number };
+    return total ?? 0;
+  } catch { return 0; }
+}
+
+async function fetchStripeSubscriptionMetrics(key: string, brand: BrandParam) {
   if (!key) return null;
   try {
-    const [activeRes, trialingRes] = await Promise.allSettled([
-      fetch('https://api.stripe.com/v1/subscriptions?status=active&limit=100', {
-        headers: { Authorization: `Bearer ${key}` }, cache: 'no-store',
-      }).then(r => r.json()),
-      fetch('https://api.stripe.com/v1/subscriptions?status=trialing&limit=100', {
-        headers: { Authorization: `Bearer ${key}` }, cache: 'no-store',
-      }).then(r => r.json()),
-    ]);
+    const activeRes = await fetch('https://api.stripe.com/v1/subscriptions?status=active&limit=100', {
+      headers: { Authorization: `Bearer ${key}` }, cache: 'no-store',
+    }).then(r => r.json());
 
     type StripeSub = { items: { data: { price: { unit_amount: number; recurring: { interval: string; interval_count: number } } }[] } };
-    const activeData: StripeSub[] = activeRes.status === 'fulfilled' ? (activeRes.value.data ?? []) : [];
-    const trialData: unknown[]    = trialingRes.status === 'fulfilled' ? (trialingRes.value.data ?? []) : [];
+    const activeData: StripeSub[] = activeRes.data ?? [];
 
     let mrr = 0;
     for (const sub of activeData) {
@@ -223,7 +252,12 @@ async function fetchStripeSubscriptionMetrics(key: string) {
       else if (interval === 'year') mrr += (amt / 100) / 12;
     }
 
-    return { active: activeData.length, trialing: trialData.length, mrr: Math.round(mrr) };
+    // ETZ and EHC trials are tracked as HubSpot deals ($0 in their pipeline),
+    // not as Stripe trialing subscriptions — fetch the real count from HubSpot.
+    const pipelineLabel = brand === 'etz' ? 'etz' : 'ehc';
+    const currentlyOnTrial = await fetchHubSpotCurrentTrials(pipelineLabel);
+
+    return { active: activeData.length, trialing: currentlyOnTrial, mrr: Math.round(mrr) };
   } catch {
     return null;
   }
@@ -328,7 +362,7 @@ export async function GET(request: Request) {
         : brand === 'etz'   ? fetchStripeProductBreakdown(STRIPE_ETZ, cur.start, cur.end)
         :                     fetchStripeProductBreakdown(STRIPE_HSC, cur.start, cur.end),
       (brand === 'etz' || brand === 'ehc')
-        ? fetchStripeSubscriptionMetrics(brand === 'etz' ? STRIPE_ETZ : STRIPE_HSC)
+        ? fetchStripeSubscriptionMetrics(brand === 'etz' ? STRIPE_ETZ : STRIPE_HSC, brand)
         : Promise.resolve(null),
       ...sparkDays.map(d => fetchRev(d, d)),
     ]);
