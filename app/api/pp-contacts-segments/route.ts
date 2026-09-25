@@ -48,7 +48,9 @@ async function fetchListSize(listId: string): Promise<number | null> {
     if (!res.ok) return null;
     const json = await res.json();
     const list = json.list ?? json;
-    const size = list.additionalProperties?.hs_list_size;
+    // GET /crm/v3/lists/{id} puts size directly on the list object (unlike
+    // the search endpoint, which nests it under additionalProperties.hs_list_size)
+    const size = list.size ?? list.additionalProperties?.hs_list_size;
     return size != null ? Number(size) : null;
   } catch {
     return null;
