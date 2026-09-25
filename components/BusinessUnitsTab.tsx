@@ -147,6 +147,7 @@ interface PPContactData {
   joinersThisWeek: number;
   joinersLastWeek: number;
   unsubsThisWeek: number;
+  unsubsLastWeek: number;
   net: number;
   netLastWeek: number;
   weekEndingLabel: string;
@@ -476,6 +477,8 @@ function PPContactsSection({
   const netPos = data.net >= 0;
   const vsLastWeek = data.joinersThisWeek - data.joinersLastWeek;
   const vsLastWeekPos = vsLastWeek >= 0;
+  const unsubsDelta = data.unsubsThisWeek - data.unsubsLastWeek;
+  const unsubsImproved = unsubsDelta <= 0; // fewer unsubs than last week is good
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4">
@@ -522,8 +525,12 @@ function PPContactsSection({
                 <span className="ml-1 text-[10px] text-gray-400 font-normal">from PP sends</span>
               </td>
               <td className="px-3 py-2.5 text-right font-semibold text-gray-900">{NUM.format(data.unsubsThisWeek)}</td>
-              <td className="px-3 py-2.5 text-right text-gray-400">—</td>
-              <td className="px-3 py-2.5 text-right text-gray-400">—</td>
+              <td className="px-3 py-2.5 text-right text-gray-500">{NUM.format(data.unsubsLastWeek)}</td>
+              <td className="px-3 py-2.5 text-right">
+                <span className={`text-xs font-semibold ${unsubsImproved ? 'text-emerald-600' : 'text-red-500'}`}>
+                  {unsubsDelta > 0 ? '+' : ''}{NUM.format(unsubsDelta)}
+                </span>
+              </td>
             </tr>
             <tr className="bg-gray-50">
               <td className="px-3 py-2.5 text-sm text-gray-700 font-semibold">Net</td>

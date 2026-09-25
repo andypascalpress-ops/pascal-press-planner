@@ -69,6 +69,8 @@ function weekBoundaries() {
     now,
     thisWeekStartDate: toAestDateStr(thisWeekStart),
     todayDate: toAestDateStr(now),
+    prevWeekStartDate: toAestDateStr(prevWeekStart),
+    prevWeekEndDate: toAestDateStr(thisWeekStart - 1),
   };
 }
 
@@ -77,9 +79,12 @@ export async function GET() {
     return NextResponse.json({ connected: false, error: 'No HubSpot token configured' }, { status: 500 });
   }
 
-  const { thisWeekStart, prevWeekStart, prevWeekEnd, now, thisWeekStartDate, todayDate } = weekBoundaries();
+  const {
+    thisWeekStart, prevWeekStart, prevWeekEnd, now,
+    thisWeekStartDate, todayDate, prevWeekStartDate, prevWeekEndDate,
+  } = weekBoundaries();
 
-  const [totalActive, joinersThisWeek, joinersLastWeek, emailSummary] = await Promise.all([
+  const [totalActive, joinersThisWeek, joinersLastWeek, emailSummary, emailSummaryLastWeek] = await Promise.all([
     // All active marketing contacts (no brand filter — many PP contacts lack brand property)
     hsCount([{ filters: [
       { propertyName: 'hs_marketable_status', operator: 'EQ', value: 'true' },
@@ -99,13 +104,19 @@ export async function GET() {
 
     // Real unsubscribe counters for PP emails sent this week
     fetchEmailCampaigns(undefined, { dateRange: { start: thisWeekStartDate, end: todayDate } }),
+
+    // Real unsubscribe counters for PP emails sent last week
+    fetchEmailCampaigns(undefined, { dateRange: { start: prevWeekStartDate, end: prevWeekEndDate } }),
   ]);
 
-  const unsubsThisWeek = emailSummary.connected
-    ? emailSummary.campaigns
+  const sumPPUnsubs = (summary: typeof emailSummary) => summary.connected
+    ? summary.campaigns
         .filter(c => detectEmailBrand(c.name, c.fromName) === 'Pascal Press')
         .reduce((sum, c) => sum + c.unsubscribes, 0)
     : 0;
+
+  const unsubsThisWeek = sumPPUnsubs(emailSummary);
+  const unsubsLastWeek = sumPPUnsubs(emailSummaryLastWeek);
 
   const net = joinersThisWeek - unsubsThisWeek;
 
@@ -122,6 +133,7 @@ export async function GET() {
     joinersThisWeek,
     joinersLastWeek,
     unsubsThisWeek,
+    unsubsLastWeek,
     net,
     weekEndingLabel,
   });
