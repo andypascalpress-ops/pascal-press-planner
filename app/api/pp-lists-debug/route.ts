@@ -1,11 +1,10 @@
 /**
- * GET /api/pp-lists-debug
+ * GET /api/pp-lists-debug?q=<search term>
  *
  * TEMPORARY diagnostic route — not linked from any UI.
- * Calls the HubSpot Lists Search API a couple of plausible ways and returns
- * the raw response so we can see actual list names, IDs, and which field
- * holds the member count, instead of guessing again after the last attempt
- * (searchQuery param, wrong response key) silently returned zero lists.
+ * Searches HubSpot lists by name and returns a compact summary (name, listId,
+ * size) instead of the full raw payload, so we can find the right list names
+ * for Teacher/Parent segments without dumping huge JSON into chat.
  *
  * Delete this route once /api/pp-contacts-segments is fixed and confirmed.
  */
@@ -22,33 +21,49 @@ function hsHeaders() {
   };
 }
 
-async function tryFetch(label: string, body: object) {
-  try {
-    const res = await fetch(`${HS_BASE}/crm/v3/lists/search`, {
-      method: 'POST',
-      headers: hsHeaders(),
-      body: JSON.stringify(body),
-      cache: 'no-store',
-    });
-    const text = await res.text();
-    let json: unknown;
-    try { json = JSON.parse(text); } catch { json = text; }
-    return { label, requestBody: body, status: res.status, ok: res.ok, response: json };
-  } catch (err) {
-    return { label, requestBody: body, status: 0, ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
+interface HsListRow {
+  listId: string;
+  name: string;
+  folder?: string;
+  size: number;
 }
 
-export async function GET() {
+async function searchLists(query: string | undefined, offset: number): Promise<{ lists: HsListRow[]; total: number; hasMore: boolean }> {
+  const body: Record<string, unknown> = { count: 100, offset };
+  if (query) body.query = query;
+
+  const res = await fetch(`${HS_BASE}/crm/v3/lists/search`, {
+    method: 'POST',
+    headers: hsHeaders(),
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+  if (!res.ok) return { lists: [], total: 0, hasMore: false };
+  const json = await res.json();
+
+  const lists: HsListRow[] = (json.lists ?? []).map((l: {
+    listId: string; name: string;
+    additionalProperties?: { hs_list_size?: string; hs_folder_name?: string };
+  }) => ({
+    listId: l.listId,
+    name: l.name,
+    folder: l.additionalProperties?.hs_folder_name,
+    size: Number(l.additionalProperties?.hs_list_size ?? 0),
+  }));
+
+  return { lists, total: json.total ?? 0, hasMore: json.hasMore ?? false };
+}
+
+export async function GET(req: Request) {
   if (!process.env.HUBSPOT_CRM_TOKEN && !process.env.HUBSPOT_API_KEY) {
     return NextResponse.json({ connected: false, error: 'No HubSpot token configured' }, { status: 500 });
   }
 
-  const attempts = await Promise.all([
-    tryFetch('query=PP',        { query: 'PP', count: 100, offset: 0 }),
-    tryFetch('query=Years',     { query: 'Years', count: 100, offset: 0 }),
-    tryFetch('no query (all)',  { count: 100, offset: 0 }),
-  ]);
+  const { searchParams } = new URL(req.url);
+  const q = searchParams.get('q') ?? undefined;
+  const offset = Number(searchParams.get('offset') ?? '0');
 
-  return NextResponse.json({ connected: true, attempts });
+  const result = await searchLists(q, offset);
+
+  return NextResponse.json({ connected: true, query: q ?? null, ...result });
 }
