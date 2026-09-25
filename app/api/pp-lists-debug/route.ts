@@ -54,6 +54,17 @@ async function searchLists(query: string | undefined, offset: number): Promise<{
   return { lists, total: json.total ?? 0, hasMore: json.hasMore ?? false };
 }
 
+async function fetchById(listId: string) {
+  const res = await fetch(`${HS_BASE}/crm/v3/lists/${listId}`, {
+    headers: hsHeaders(),
+    cache: 'no-store',
+  });
+  const text = await res.text();
+  let json: unknown;
+  try { json = JSON.parse(text); } catch { json = text; }
+  return { listId, status: res.status, ok: res.ok, response: json };
+}
+
 export async function GET(req: Request) {
   if (!process.env.HUBSPOT_CRM_TOKEN && !process.env.HUBSPOT_API_KEY) {
     return NextResponse.json({ connected: false, error: 'No HubSpot token configured' }, { status: 500 });
@@ -62,6 +73,13 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const q = searchParams.get('q') ?? undefined;
   const offset = Number(searchParams.get('offset') ?? '0');
+  const idsParam = searchParams.get('ids');
+
+  if (idsParam) {
+    const ids = idsParam.split(',').map(s => s.trim()).filter(Boolean);
+    const byId = await Promise.all(ids.map(fetchById));
+    return NextResponse.json({ connected: true, byId });
+  }
 
   const result = await searchLists(q, offset);
 
