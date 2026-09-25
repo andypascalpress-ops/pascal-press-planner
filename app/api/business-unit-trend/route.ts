@@ -11,8 +11,7 @@ import { NextResponse } from 'next/server';
 import { fetchPPRevenue, fetchBlakeRevenue } from '@/lib/bigcommerce-revenue';
 import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-revenue';
 
-// Cache for 30 min — historical month data never changes; current month updates are fine to lag.
-export const revalidate = 1800;
+export const dynamic = 'force-dynamic';
 
 type BrandParam = 'pp' | 'etz' | 'ehc' | 'blake';
 
@@ -88,13 +87,14 @@ async function fetchAllTrialsByMonth(
     const startMs = new Date(Date.UTC(y!, m! - 1, 1)).getTime();
     const nowMs   = Date.now();
 
-    // Paginate through ALL $0 deals in the pipeline created in the last 12 months
+    // Paginate through ALL deals in the pipeline created in the last 12 months.
+    // No amount filter — trial deals may be created with null amount (not '0'),
+    // and all ETZ/EHC pipeline deals represent trials by design.
     let after: string | undefined;
     do {
       const body: Record<string, unknown> = {
         filterGroups: [{ filters: [
           { propertyName: 'pipeline',   operator: 'EQ',  value: pipeline.id     },
-          { propertyName: 'amount',     operator: 'EQ',  value: '0'             },
           { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
           { propertyName: 'createdate', operator: 'LTE', value: String(nowMs)   },
         ]}],

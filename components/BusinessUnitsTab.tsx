@@ -127,6 +127,30 @@ function MetricCard({
   );
 }
 
+interface PPSegment {
+  key: string;
+  label: string;
+  active: number | null;
+  listNames: string[];
+}
+
+interface PPSegmentData {
+  connected: boolean;
+  segments: PPSegment[];
+  totalLists: number;
+}
+
+interface PPContactData {
+  connected: boolean;
+  totalActive: number;
+  joinersThisWeek: number;
+  joinersLastWeek: number;
+  unsubsThisWeek: number;
+  net: number;
+  netLastWeek: number;
+  weekEndingLabel: string;
+}
+
 interface TrendPoint {
   month: string;
   revenue: number;
@@ -144,6 +168,12 @@ export default function BusinessUnitsTab() {
 
   const [trend,        setTrend]        = useState<TrendPoint[] | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
+
+  const [ppContacts,        setPPContacts]        = useState<PPContactData | null>(null);
+  const [ppContactsLoading, setPPContactsLoading] = useState(true);
+
+  const [ppSegments,        setPPSegments]        = useState<PPSegmentData | null>(null);
+  const [ppSegmentsLoading, setPPSegmentsLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -172,8 +202,32 @@ export default function BusinessUnitsTab() {
     }
   }, [brand]);
 
+  const loadPPContacts = useCallback(async () => {
+    if (brand !== 'pp') return;
+    setPPContactsLoading(true);
+    try {
+      const res = await fetch('/api/pp-marketing-contacts');
+      if (res.ok) setPPContacts(await res.json());
+    } catch { /* silent */ } finally {
+      setPPContactsLoading(false);
+    }
+  }, [brand]);
+
+  const loadPPSegments = useCallback(async () => {
+    if (brand !== 'pp') return;
+    setPPSegmentsLoading(true);
+    try {
+      const res = await fetch('/api/pp-contacts-segments');
+      if (res.ok) setPPSegments(await res.json());
+    } catch { /* silent */ } finally {
+      setPPSegmentsLoading(false);
+    }
+  }, [brand]);
+
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadTrend(); }, [loadTrend]);
+  useEffect(() => { loadPPContacts(); }, [loadPPContacts]);
+  useEffect(() => { loadPPSegments(); }, [loadPPSegments]);
 
   const color = BRAND_COLOR[brand];
 
@@ -364,9 +418,172 @@ export default function BusinessUnitsTab() {
           </>
         ) : null}
 
+        {/* ── Marketing contacts ── PP only, always visible ── */}
+        {brand === 'pp' && (
+          <PPContactsSection
+            data={ppContacts}
+            loading={ppContactsLoading}
+            segments={ppSegments}
+            segmentsLoading={ppSegmentsLoading}
+          />
+        )}
+
         {/* ── Month-on-month trend ── always visible, loads independently ── */}
         <TrendSection brand={brand} color={color} trend={trend} loading={trendLoading} />
       </div>
+    </div>
+  );
+}
+
+function PPContactsSection({
+  data, loading, segments, segmentsLoading,
+}: {
+  data: PPContactData | null;
+  loading: boolean;
+  segments: PPSegmentData | null;
+  segmentsLoading: boolean;
+}) {
+  const header = (
+    <div className="flex items-start justify-between gap-4 mb-3">
+      <div>
+        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Marketing Contacts</p>
+        {data?.weekEndingLabel && (
+          <p className="text-[11px] text-gray-400 mt-0.5">Week ending {data.weekEndingLabel}</p>
+        )}
+      </div>
+    </div>
+  );
+
+  if (loading && !data) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        {header}
+        <div className="h-16 flex items-center justify-center text-sm text-gray-400">Loading…</div>
+      </div>
+    );
+  }
+
+  if (!data || !data.connected) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        {header}
+        <p className="text-sm text-gray-400">Could not load contact data — check HubSpot connection.</p>
+      </div>
+    );
+  }
+
+  const netPos = data.net >= 0;
+  const vsLastWeek = data.joinersThisWeek - data.joinersLastWeek;
+  const vsLastWeekPos = vsLastWeek >= 0;
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-4">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div>
+          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Marketing Contacts</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">Week ending {data.weekEndingLabel}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-2xl font-bold text-gray-900">{NUM.format(data.totalActive)}</p>
+          <p className="text-[11px] text-gray-400">total active</p>
+        </div>
+      </div>
+
+      {/* Weekly metrics table */}
+      <div className="rounded-lg border border-gray-100 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-100">
+              <th className="text-left px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider w-2/5">Metric</th>
+              <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">This week</th>
+              <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Last week</th>
+              <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Change</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            <tr>
+              <td className="px-3 py-2.5 text-sm text-gray-700 font-medium">Joiners</td>
+              <td className="px-3 py-2.5 text-right font-semibold text-gray-900">{NUM.format(data.joinersThisWeek)}</td>
+              <td className="px-3 py-2.5 text-right text-gray-500">{NUM.format(data.joinersLastWeek)}</td>
+              <td className="px-3 py-2.5 text-right">
+                <span className={`text-xs font-semibold ${vsLastWeekPos ? 'text-emerald-600' : 'text-red-500'}`}>
+                  {vsLastWeekPos ? '+' : ''}{NUM.format(vsLastWeek)}
+                </span>
+              </td>
+            </tr>
+            <tr>
+              <td className="px-3 py-2.5 text-sm text-gray-700 font-medium">
+                Unsubscribes
+                <span className="ml-1 text-[10px] text-gray-400 font-normal">~approx</span>
+              </td>
+              <td className="px-3 py-2.5 text-right font-semibold text-gray-900">{NUM.format(data.unsubsThisWeek)}</td>
+              <td className="px-3 py-2.5 text-right text-gray-400">—</td>
+              <td className="px-3 py-2.5 text-right text-gray-400">—</td>
+            </tr>
+            <tr className="bg-gray-50">
+              <td className="px-3 py-2.5 text-sm text-gray-700 font-semibold">Net</td>
+              <td className="px-3 py-2.5 text-right">
+                <span className={`font-bold text-base ${netPos ? 'text-emerald-600' : 'text-red-500'}`}>
+                  {netPos ? '+' : ''}{NUM.format(data.net)}
+                </span>
+              </td>
+              <td className="px-3 py-2.5 text-right text-gray-400">—</td>
+              <td className="px-3 py-2.5 text-right">
+                <span className={`text-lg ${netPos ? '🟢' : '🔴'}`}>{netPos ? '🟢' : '🔴'}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* Segment breakdown */}
+      <div className="mt-4">
+        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Active contacts by segment</p>
+        {segmentsLoading && !segments ? (
+          <div className="h-10 flex items-center text-sm text-gray-400">Loading segments…</div>
+        ) : segments?.connected && segments.segments.some(s => s.active !== null) ? (
+          <div className="rounded-lg border border-gray-100 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100">
+                  <th className="text-left px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Segment</th>
+                  <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Active</th>
+                  <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Share</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {(() => {
+                  const total = segments.segments.reduce((s, seg) => s + (seg.active ?? 0), 0);
+                  return segments.segments.map(seg => (
+                    <tr key={seg.key}>
+                      <td className="px-3 py-2.5 text-sm text-gray-700 font-medium">{seg.label}</td>
+                      <td className="px-3 py-2.5 text-right font-semibold text-gray-900 tabular-nums">
+                        {seg.active !== null ? NUM.format(seg.active) : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-3 py-2.5 text-right text-gray-400 tabular-nums text-xs">
+                        {seg.active !== null && total > 0
+                          ? `${Math.round((seg.active / total) * 100)}%`
+                          : '—'}
+                      </td>
+                    </tr>
+                  ));
+                })()}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-xs text-gray-400">
+            {segments && !segments.connected
+              ? 'Could not load segments — HubSpot Lists API may need crm.lists.read scope.'
+              : 'No matching PP lists found in HubSpot.'}
+          </p>
+        )}
+      </div>
+
+      <p className="text-[10px] text-gray-400 mt-3">
+        Unsubscribes are approximated. Segment counts show the largest matching HubSpot list per category.
+      </p>
     </div>
   );
 }
@@ -389,10 +606,12 @@ function TrendSection({
     const sumOrders  = (pts: TrendPoint[]) => pts.reduce((s, p) => s + p.orders, 0);
     const sumTrials  = (pts: TrendPoint[]) => pts.reduce((s, p) => s + (p.trials ?? 0), 0);
     const sumRevenue = (pts: TrendPoint[]) => pts.reduce((s, p) => s + p.revenue, 0);
-    const ordersPct  = prior.length && sumOrders(prior)  > 0 ? Math.round(((sumOrders(recent)  - sumOrders(prior))  / sumOrders(prior))  * 100) : null;
-    const trialsPct  = prior.length && sumTrials(prior)  > 0 ? Math.round(((sumTrials(recent)  - sumTrials(prior))  / sumTrials(prior))  * 100) : null;
-    const revenuePct = prior.length && sumRevenue(prior) > 0 ? Math.round(((sumRevenue(recent) - sumRevenue(prior)) / sumRevenue(prior)) * 100) : null;
-    return { ordersPct, trialsPct, revenuePct };
+    const recentTrials = sumTrials(recent);
+    const priorTrials  = sumTrials(prior);
+    const ordersPct  = sumOrders(prior)  > 0 ? Math.round(((sumOrders(recent)  - sumOrders(prior))  / sumOrders(prior))  * 100) : null;
+    const trialsPct  = priorTrials > 0       ? Math.round(((recentTrials - priorTrials) / priorTrials) * 100)                      : null;
+    const revenuePct = sumRevenue(prior) > 0 ? Math.round(((sumRevenue(recent) - sumRevenue(prior)) / sumRevenue(prior)) * 100)    : null;
+    return { ordersPct, trialsPct, revenuePct, recentTrials, priorTrials };
   })();
 
   const arrow = (pct: number | null | undefined) => {
@@ -418,7 +637,17 @@ function TrendSection({
               <span className="text-xs text-gray-500">vs 3 months prior:</span>
               <span className="text-xs text-gray-500">Revenue {arrow(summary.revenuePct)}</span>
               <span className="text-xs text-gray-500">Orders {arrow(summary.ordersPct)}</span>
-              {hasTrials && <span className="text-xs text-gray-500">Trials {arrow(summary.trialsPct)}</span>}
+              {hasTrials && (
+                <span className="text-xs text-gray-500">
+                  {'Trials '}
+                  {summary.trialsPct != null
+                    ? arrow(summary.trialsPct)
+                    : summary.recentTrials > 0
+                      ? <span className="text-xs font-semibold px-1.5 py-0.5 rounded text-blue-600 bg-blue-50">+{summary.recentTrials} new</span>
+                      : <span className="text-xs text-gray-400">no prior data</span>
+                  }
+                </span>
+              )}
             </div>
           )}
         </div>
