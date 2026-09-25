@@ -579,13 +579,13 @@ function PPContactsSection({
           <p className="text-xs text-gray-400">
             {segments && !segments.connected
               ? 'Could not load segments — check HubSpot connection.'
-              : 'Could not find a Unific "Products Bought" property in HubSpot.'}
+              : 'Could not load HubSpot segment lists.'}
           </p>
         )}
       </div>
 
       <p className="text-[10px] text-gray-400 mt-3">
-        Joiners = new HubSpot contact records this week (not opt-in date, which HubSpot doesn&apos;t expose). Unsubscribes = real unsubscribe counts from PP emails sent this week. Segments are based on the Unific &quot;Products Bought&quot; property, so they only cover contacts with a synced purchase — most email-only subscribers won&apos;t appear in any segment.
+        Joiners = new HubSpot contact records this week (not opt-in date, which HubSpot doesn&apos;t expose). Unsubscribes = real unsubscribe counts from PP emails sent this week. Segments are HubSpot list sizes (K–2/3–6/7–10/11–12/Teacher = &quot;PP - Years... Purchase&quot; / &quot;PP - All Teachers&quot; lists). Parent uses a differently-scoped list that includes non-marketable and purchase-only contacts, so its share % will look larger than the others.
       </p>
     </div>
   );
