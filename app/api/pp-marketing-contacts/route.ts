@@ -2,21 +2,16 @@
  * GET /api/pp-marketing-contacts
  *
  * Returns Pascal Press marketing contact metrics for the current week vs last week.
- * - totalActive: all PP contacts where hs_marketable_status = true
- * - joinersThisWeek / joinersLastWeek: new marketable contacts created this/last week
- * - unsubsThisWeek: PP contacts where hs_email_optout = true, modified this week
- *   (approximation — HubSpot has no dedicated unsubscribe-date property)
- * - net: joinersThisWeek - unsubsThisWeek
  *
- * Segment breakdown (K-2, 3-6, etc.) will be added once the HubSpot
- * audience segment property name is confirmed.
+ * Total active = all contacts where hs_marketable_status=true (no brand filter —
+ * many PP contacts don't have the brand property set, causing undercounting).
+ * Joiners / unsubs / net use the same broad filter.
  */
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
 const HS_BASE = 'https://api.hubapi.com';
-const PP_BRAND = 'Pascal Press';
 
 function hsHeaders() {
   return {
@@ -41,20 +36,16 @@ async function hsCount(filterGroups: object[]): Promise<number> {
   }
 }
 
-function weekBoundaries(): { thisWeekStart: number; prevWeekStart: number; prevWeekEnd: number; now: number } {
-  // Work in AEST (UTC+10) — week starts Monday
+function weekBoundaries() {
   const AEST_OFFSET_MS = 10 * 60 * 60 * 1000;
   const nowAest = new Date(Date.now() + AEST_OFFSET_MS);
-  const dayOfWeek = nowAest.getUTCDay(); // 0=Sun, 1=Mon … 6=Sat
+  const dayOfWeek = nowAest.getUTCDay();
   const daysFromMon = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-
-  // Monday midnight AEST → convert back to UTC ms
   const thisWeekStartAest = new Date(
     Date.UTC(nowAest.getUTCFullYear(), nowAest.getUTCMonth(), nowAest.getUTCDate() - daysFromMon)
   );
   const thisWeekStart = thisWeekStartAest.getTime() - AEST_OFFSET_MS;
   const prevWeekStart = thisWeekStart - 7 * 24 * 60 * 60 * 1000;
-
   return { thisWeekStart, prevWeekStart, prevWeekEnd: thisWeekStart, now: Date.now() };
 }
 
@@ -66,40 +57,34 @@ export async function GET() {
   const { thisWeekStart, prevWeekStart, prevWeekEnd, now } = weekBoundaries();
 
   const [totalActive, joinersThisWeek, joinersLastWeek, unsubsThisWeek] = await Promise.all([
-    // All active PP marketing contacts
+    // All active marketing contacts (no brand filter — many PP contacts lack brand property)
     hsCount([{ filters: [
-      { propertyName: 'brand',                operator: 'EQ', value: PP_BRAND },
-      { propertyName: 'hs_marketable_status', operator: 'EQ', value: 'true'   },
+      { propertyName: 'hs_marketable_status', operator: 'EQ', value: 'true' },
     ]}]),
 
-    // New marketable PP contacts created this week
+    // New marketable contacts created this week
     hsCount([{ filters: [
-      { propertyName: 'brand',                operator: 'EQ',  value: PP_BRAND              },
       { propertyName: 'hs_marketable_status', operator: 'EQ',  value: 'true'                },
       { propertyName: 'createdate',           operator: 'GTE', value: String(thisWeekStart) },
       { propertyName: 'createdate',           operator: 'LTE', value: String(now)           },
     ]}]),
 
-    // New marketable PP contacts created last week
+    // New marketable contacts created last week
     hsCount([{ filters: [
-      { propertyName: 'brand',                operator: 'EQ',  value: PP_BRAND              },
       { propertyName: 'hs_marketable_status', operator: 'EQ',  value: 'true'                },
       { propertyName: 'createdate',           operator: 'GTE', value: String(prevWeekStart) },
       { propertyName: 'createdate',           operator: 'LT',  value: String(prevWeekEnd)   },
     ]}]),
 
-    // Approximate unsubs: PP contacts with hs_email_optout=true, modified this week
+    // Approx unsubs: contacts with hs_email_optout=true, modified this week
     hsCount([{ filters: [
-      { propertyName: 'brand',            operator: 'EQ',  value: PP_BRAND              },
       { propertyName: 'hs_email_optout',  operator: 'EQ',  value: 'true'                },
       { propertyName: 'lastmodifieddate', operator: 'GTE', value: String(thisWeekStart) },
     ]}]),
   ]);
 
   const net = joinersThisWeek - unsubsThisWeek;
-  const netLastWeek = joinersLastWeek; // unsubs last week not tracked, just show joiners for now
 
-  // Week-ending label in AEST
   const weekEndingLabel = new Date().toLocaleDateString('en-AU', {
     timeZone: 'Australia/Sydney',
     weekday: 'short',
@@ -114,7 +99,6 @@ export async function GET() {
     joinersLastWeek,
     unsubsThisWeek,
     net,
-    netLastWeek,
     weekEndingLabel,
   });
 }

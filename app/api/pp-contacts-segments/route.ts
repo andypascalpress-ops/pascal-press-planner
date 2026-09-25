@@ -1,13 +1,12 @@
 /**
  * GET /api/pp-contacts-segments
  *
- * Auto-discovers Pascal Press HubSpot lists and groups them into
- * the 6 audience segments: K-2, 3-6, 7-10, 11-12, Teacher, Parent.
+ * Returns active marketing contact counts grouped into 6 audience segments
+ * (K-2, 3-6, 7-10, 11-12, Teacher, Parent) by querying the HubSpot contact
+ * property that Unific uses to record what products a contact has purchased.
  *
- * Uses the HubSpot Lists API (requires crm.lists.read scope).
- * If multiple lists match a segment (e.g. "PP - Years 3 to 6 Purchase after 2023"
- * and "PP - Years 3 to 6 Purchase after 2024"), takes the one with the highest
- * member count as the active total.
+ * The Unific "Products Bought" property name is discovered at runtime via
+ * the HubSpot Properties API so it doesn't need to be hard-coded.
  */
 import { NextResponse } from 'next/server';
 
@@ -22,82 +21,81 @@ function hsHeaders() {
   };
 }
 
+async function hsCount(filterGroups: object[]): Promise<number> {
+  try {
+    const res = await fetch(`${HS_BASE}/crm/v3/objects/contacts/search`, {
+      method: 'POST',
+      headers: hsHeaders(),
+      body: JSON.stringify({ filterGroups, limit: 1, properties: ['createdate'] }),
+      cache: 'no-store',
+    });
+    if (!res.ok) return 0;
+    const json = await res.json();
+    return (json.total as number) ?? 0;
+  } catch { return 0; }
+}
+
+interface HubSpotProperty {
+  name: string;
+  label: string;
+  type: string;
+  fieldType: string;
+}
+
+async function discoverUnificProperty(): Promise<HubSpotProperty | null> {
+  try {
+    const res = await fetch(`${HS_BASE}/crm/v3/properties/contacts?limit=500`, {
+      headers: hsHeaders(), cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const { results } = await res.json() as { results: HubSpotProperty[] };
+
+    // Look for Unific "products bought" property by label or name
+    return results.find(p =>
+      /products?\s*(bought|purchased)/i.test(p.label) ||
+      /unific/i.test(p.label) && /product/i.test(p.label) ||
+      /products?_bought/i.test(p.name) ||
+      /unific.*product|product.*unific/i.test(p.name)
+    ) ?? null;
+  } catch { return null; }
+}
+
 const SEGMENTS = [
   {
-    key: 'k2',
-    label: 'K–2',
-    patterns: [/k[\s-]?to[\s-]?2/i, /\bprep\b/i, /\bfoundation\b/i, /year[\s-]?[12]\b/i, /years[\s-]?[12]\b/i],
+    key: 'k2', label: 'K–2',
+    tokens: ['Year 1', 'Year 2', 'Kindergarten', 'Prep', 'Foundation', 'K-2'],
   },
   {
-    key: '36',
-    label: '3–6',
-    patterns: [/3[\s-]?to[\s-]?6/i, /year[\s-]?[3-6]\b/i, /years[\s-]?[3-6]\b/i],
+    key: '36', label: '3–6',
+    tokens: ['Year 3', 'Year 4', 'Year 5', 'Year 6'],
   },
   {
-    key: '710',
-    label: '7–10',
-    patterns: [/7[\s-]?to[\s-]?10/i, /year[\s-]?[7-9]\b/i, /years[\s-]?[7-9]\b/i, /year[\s-]?10\b/i, /years[\s-]?10\b/i],
+    key: '710', label: '7–10',
+    tokens: ['Year 7', 'Year 8', 'Year 9', 'Year 10'],
   },
   {
-    key: '1112',
-    label: '11–12',
-    patterns: [/11[\s-]?to[\s-]?12/i, /year[\s-]?1[12]\b/i, /years[\s-]?1[12]\b/i],
+    key: '1112', label: '11–12',
+    tokens: ['Year 11', 'Year 12', 'HSC'],
   },
   {
-    key: 'teacher',
-    label: 'Teacher',
-    patterns: [/teacher/i],
+    key: 'teacher', label: 'Teacher',
+    tokens: ['Teacher'],
   },
   {
-    key: 'parent',
-    label: 'Parent',
-    patterns: [/parent/i],
+    key: 'parent', label: 'Parent',
+    tokens: ['Parent'],
   },
 ] as const;
 
-type SegmentKey = typeof SEGMENTS[number]['key'];
-
-function matchSegment(name: string): SegmentKey | null {
-  for (const seg of SEGMENTS) {
-    for (const pattern of seg.patterns) {
-      if (pattern.test(name)) return seg.key;
-    }
-  }
-  return null;
-}
-
-interface HubSpotList {
-  listId: string;
-  name: string;
-  memberCount: number;
-}
-
-async function fetchPPLists(): Promise<HubSpotList[]> {
-  const results: HubSpotList[] = [];
-  try {
-    // Search for lists with "PP" in the name — one call, up to 500 results
-    const res = await fetch(`${HS_BASE}/crm/v3/lists/search`, {
-      method: 'POST',
-      headers: hsHeaders(),
-      body: JSON.stringify({ searchQuery: 'PP', count: 500 }),
-      cache: 'no-store',
-    });
-    if (!res.ok) return results;
-    const json = await res.json();
-
-    for (const list of (json.lists ?? json.results ?? [])) {
-      const name: string = list.name ?? '';
-      // Only include lists clearly prefixed "PP" or "Pascal Press"
-      if (/^PP[\s-]/i.test(name) || /pascal press/i.test(name)) {
-        results.push({
-          listId: list.listId ?? list.id ?? '',
-          name,
-          memberCount: list.memberCount ?? list.size ?? 0,
-        });
-      }
-    }
-  } catch { /* return empty */ }
-  return results;
+async function countBySegment(propName: string, tokens: readonly string[]): Promise<number> {
+  // Each token is a separate OR filter group
+  const filterGroups = tokens.map(token => ({
+    filters: [
+      { propertyName: propName,              operator: 'CONTAINS_TOKEN', value: token  },
+      { propertyName: 'hs_marketable_status', operator: 'EQ',             value: 'true' },
+    ],
+  }));
+  return hsCount(filterGroups);
 }
 
 export async function GET() {
@@ -105,34 +103,32 @@ export async function GET() {
     return NextResponse.json({ connected: false, error: 'No HubSpot token configured' }, { status: 500 });
   }
 
-  const lists = await fetchPPLists();
+  const productsProp = await discoverUnificProperty();
 
-  // Group by segment — if multiple lists match, keep the largest member count
-  const best: Partial<Record<SegmentKey, { active: number; listNames: string[] }>> = {};
-
-  for (const list of lists) {
-    const key = matchSegment(list.name);
-    if (!key) continue;
-    const current = best[key];
-    if (!current) {
-      best[key] = { active: list.memberCount, listNames: [list.name] };
-    } else if (list.memberCount > current.active) {
-      best[key] = { active: list.memberCount, listNames: [...current.listNames, list.name] };
-    } else {
-      current.listNames.push(list.name);
-    }
+  if (!productsProp) {
+    return NextResponse.json({
+      connected: true,
+      propertyFound: false,
+      propertyName: null,
+      segments: SEGMENTS.map(s => ({ key: s.key, label: s.label, active: null })),
+    });
   }
 
-  const segments = SEGMENTS.map(seg => ({
+  const counts = await Promise.all(
+    SEGMENTS.map(seg => countBySegment(productsProp.name, seg.tokens))
+  );
+
+  const segments = SEGMENTS.map((seg, i) => ({
     key: seg.key,
     label: seg.label,
-    active: best[seg.key]?.active ?? null,
-    listNames: best[seg.key]?.listNames ?? [],
+    active: counts[i] ?? 0,
   }));
 
   return NextResponse.json({
     connected: true,
+    propertyFound: true,
+    propertyName: productsProp.name,
+    propertyLabel: productsProp.label,
     segments,
-    totalLists: lists.length,
   });
 }
