@@ -503,7 +503,10 @@ function PPContactsSection({
           </thead>
           <tbody className="divide-y divide-gray-50">
             <tr>
-              <td className="px-3 py-2.5 text-sm text-gray-700 font-medium">Joiners</td>
+              <td className="px-3 py-2.5 text-sm text-gray-700 font-medium">
+                Joiners
+                <span className="ml-1 text-[10px] text-gray-400 font-normal">new contacts</span>
+              </td>
               <td className="px-3 py-2.5 text-right font-semibold text-gray-900">{NUM.format(data.joinersThisWeek)}</td>
               <td className="px-3 py-2.5 text-right text-gray-500">{NUM.format(data.joinersLastWeek)}</td>
               <td className="px-3 py-2.5 text-right">
@@ -515,7 +518,7 @@ function PPContactsSection({
             <tr>
               <td className="px-3 py-2.5 text-sm text-gray-700 font-medium">
                 Unsubscribes
-                <span className="ml-1 text-[10px] text-gray-400 font-normal">~approx</span>
+                <span className="ml-1 text-[10px] text-gray-400 font-normal">from PP sends</span>
               </td>
               <td className="px-3 py-2.5 text-right font-semibold text-gray-900">{NUM.format(data.unsubsThisWeek)}</td>
               <td className="px-3 py-2.5 text-right text-gray-400">—</td>
@@ -575,14 +578,14 @@ function PPContactsSection({
         ) : (
           <p className="text-xs text-gray-400">
             {segments && !segments.connected
-              ? 'Could not load segments — HubSpot Lists API may need crm.lists.read scope.'
-              : 'No matching PP lists found in HubSpot.'}
+              ? 'Could not load segments — check HubSpot connection.'
+              : 'Could not find a Unific "Products Bought" property in HubSpot.'}
           </p>
         )}
       </div>
 
       <p className="text-[10px] text-gray-400 mt-3">
-        Unsubscribes are approximated. Segment counts show the largest matching HubSpot list per category.
+        Joiners = new HubSpot contact records this week (not opt-in date, which HubSpot doesn&apos;t expose). Unsubscribes = real unsubscribe counts from PP emails sent this week. Segments are based on the Unific &quot;Products Bought&quot; property, so they only cover contacts with a synced purchase — most email-only subscribers won&apos;t appear in any segment.
       </p>
     </div>
   );
