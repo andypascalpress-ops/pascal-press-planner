@@ -1,27 +1,37 @@
 /**
  * GET /api/pp-contacts-segments
  *
- * Returns active contact counts for the 6 audience segments (K-2, 3-6,
- * 7-10, 11-12, Teacher, Parent) from specific HubSpot lists, confirmed via
- * a diagnostic dump of /crm/v3/lists/search against the live account.
+ * Returns active contact counts AND real joiners-this-week/last-week for
+ * the 6 audience segments (K-2, 3-6, 7-10, 11-12, Teacher, Parent), from
+ * specific HubSpot lists confirmed via a diagnostic dump of the live
+ * account (not pattern-guessed — see git history for the earlier attempts
+ * that silently failed on wrong field names).
  *
- * Each list ID below was picked from the actual HubSpot list names/sizes —
- * not pattern-guessed. The year-band lists follow a "PP - Years X to Y
- * (Books) Purchase after YYYY" naming convention that rotates forward each
- * year; these are the highest-year (most current) list per band. Teacher
- * and Parent were confirmed with the user directly since no single naming
- * convention covered them cleanly:
+ * Joiners come from GET /crm/v3/lists/{id}/memberships/join-order, which
+ * returns each contact's membershipTimestamp sorted newest-first — we page
+ * through it and stop as soon as we cross the "last week" boundary.
+ *
+ * There's no equivalent HubSpot endpoint for *removals* from a list, so
+ * per-segment unsubscribe counts aren't included here (unlike the overall
+ * unsubscribe count on /api/pp-marketing-contacts, which uses real email
+ * campaign unsubscribe data instead).
+ *
+ * List picks:
+ *   - K-2/3-6/7-10/11-12: highest-year "PP - Years X to Y (Books) Purchase
+ *     after YYYY" list per band (the naming convention rotates forward
+ *     each year).
  *   - Teacher: "PP - All Teachers" — matches the PP-prefixed convention.
  *   - Parent: "FS // PP - All Parents (Purchased & Non-Purchases)" — the
- *     only all-parents list found; note it's larger than total active
- *     marketing contacts (128K vs 49K) since it includes non-marketable
- *     and purchase-only contacts, so its % share will look disproportionate.
+ *     only all-parents list found; confirmed with the user. It's larger
+ *     than total active marketing contacts (128K vs 49K) since it includes
+ *     non-marketable and purchase-only contacts.
  */
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
 const HS_BASE = 'https://api.hubapi.com';
+const AEST_OFFSET_MS = 10 * 60 * 60 * 1000;
 
 function hsHeaders() {
   return {
@@ -38,6 +48,18 @@ const SEGMENTS = [
   { key: 'teacher', label: 'Teacher', listId: '1155', name: 'PP - All Teachers' },
   { key: 'parent',  label: 'Parent',  listId: '3767', name: 'FS // PP - All Parents (Purchased & Non-Purchases)' },
 ] as const;
+
+function weekBoundaries() {
+  const nowAest = new Date(Date.now() + AEST_OFFSET_MS);
+  const dayOfWeek = nowAest.getUTCDay();
+  const daysFromMon = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const thisWeekStartAest = new Date(
+    Date.UTC(nowAest.getUTCFullYear(), nowAest.getUTCMonth(), nowAest.getUTCDate() - daysFromMon)
+  );
+  const thisWeekStart = thisWeekStartAest.getTime() - AEST_OFFSET_MS;
+  const prevWeekStart = thisWeekStart - 7 * 24 * 60 * 60 * 1000;
+  return { thisWeekStart, prevWeekStart };
+}
 
 async function fetchListSize(listId: string): Promise<number | null> {
   try {
@@ -57,18 +79,72 @@ async function fetchListSize(listId: string): Promise<number | null> {
   }
 }
 
+interface MembershipRow {
+  membershipTimestamp: string;
+}
+
+/** Pages join-order (newest-first) and stops once timestamps fall before prevWeekStart. */
+async function fetchJoinersInWindow(
+  listId: string,
+  thisWeekStart: number,
+  prevWeekStart: number,
+): Promise<{ thisWeek: number; lastWeek: number }> {
+  let thisWeek = 0;
+  let lastWeek = 0;
+  let after: string | undefined;
+  const MAX_PAGES = 25; // safety valve for very large/active lists (e.g. Parent)
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const url = new URL(`${HS_BASE}/crm/v3/lists/${listId}/memberships/join-order`);
+    url.searchParams.set('limit', '100');
+    if (after) url.searchParams.set('after', after);
+
+    let res: Response;
+    try {
+      res = await fetch(url.toString(), { headers: hsHeaders(), cache: 'no-store' });
+    } catch {
+      break;
+    }
+    if (!res.ok) break;
+    const json = await res.json();
+    const results: MembershipRow[] = json.results ?? [];
+
+    let crossedBoundary = false;
+    for (const r of results) {
+      const ts = new Date(r.membershipTimestamp).getTime();
+      if (ts >= thisWeekStart) thisWeek++;
+      else if (ts >= prevWeekStart) lastWeek++;
+      else { crossedBoundary = true; break; }
+    }
+
+    const nextAfter = json.paging?.next?.after;
+    if (crossedBoundary || !nextAfter) break;
+    after = nextAfter;
+  }
+
+  return { thisWeek, lastWeek };
+}
+
 export async function GET() {
   if (!process.env.HUBSPOT_CRM_TOKEN && !process.env.HUBSPOT_API_KEY) {
     return NextResponse.json({ connected: false, error: 'No HubSpot token configured' }, { status: 500 });
   }
 
-  const sizes = await Promise.all(SEGMENTS.map(s => fetchListSize(s.listId)));
+  const { thisWeekStart, prevWeekStart } = weekBoundaries();
 
-  const segments = SEGMENTS.map((s, i) => ({
-    key: s.key,
-    label: s.label,
-    active: sizes[i],
-    listName: s.name,
+  const segments = await Promise.all(SEGMENTS.map(async s => {
+    const [active, joiners] = await Promise.all([
+      fetchListSize(s.listId),
+      fetchJoinersInWindow(s.listId, thisWeekStart, prevWeekStart),
+    ]);
+    return {
+      key: s.key,
+      label: s.label,
+      active,
+      joinersThisWeek: joiners.thisWeek,
+      joinersLastWeek: joiners.lastWeek,
+      listName: s.name,
+    };
   }));
 
   return NextResponse.json({ connected: true, segments });

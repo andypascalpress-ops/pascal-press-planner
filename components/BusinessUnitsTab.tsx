@@ -131,13 +131,14 @@ interface PPSegment {
   key: string;
   label: string;
   active: number | null;
-  listNames: string[];
+  joinersThisWeek: number;
+  joinersLastWeek: number;
+  listName: string;
 }
 
 interface PPSegmentData {
   connected: boolean;
   segments: PPSegment[];
-  totalLists: number;
 }
 
 interface PPContactData {
@@ -552,26 +553,31 @@ function PPContactsSection({
                 <tr className="bg-gray-50 border-b border-gray-100">
                   <th className="text-left px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Segment</th>
                   <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Active</th>
-                  <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Share</th>
+                  <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Joiners this wk</th>
+                  <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">vs last wk</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {(() => {
-                  const total = segments.segments.reduce((s, seg) => s + (seg.active ?? 0), 0);
-                  return segments.segments.map(seg => (
+                {segments.segments.map(seg => {
+                  const delta = seg.joinersThisWeek - seg.joinersLastWeek;
+                  const deltaPos = delta >= 0;
+                  return (
                     <tr key={seg.key}>
                       <td className="px-3 py-2.5 text-sm text-gray-700 font-medium">{seg.label}</td>
                       <td className="px-3 py-2.5 text-right font-semibold text-gray-900 tabular-nums">
                         {seg.active !== null ? NUM.format(seg.active) : <span className="text-gray-300">—</span>}
                       </td>
-                      <td className="px-3 py-2.5 text-right text-gray-400 tabular-nums text-xs">
-                        {seg.active !== null && total > 0
-                          ? `${Math.round((seg.active / total) * 100)}%`
-                          : '—'}
+                      <td className="px-3 py-2.5 text-right font-semibold text-gray-900 tabular-nums">
+                        {NUM.format(seg.joinersThisWeek)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-xs">
+                        <span className={`font-semibold ${deltaPos ? 'text-emerald-600' : 'text-red-500'}`}>
+                          {deltaPos ? '+' : ''}{NUM.format(delta)}
+                        </span>
                       </td>
                     </tr>
-                  ));
-                })()}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -585,7 +591,7 @@ function PPContactsSection({
       </div>
 
       <p className="text-[10px] text-gray-400 mt-3">
-        Joiners = new HubSpot contact records this week (not opt-in date, which HubSpot doesn&apos;t expose). Unsubscribes = real unsubscribe counts from PP emails sent this week. Segments are HubSpot list sizes (K–2/3–6/7–10/11–12/Teacher = &quot;PP - Years... Purchase&quot; / &quot;PP - All Teachers&quot; lists). Parent uses a differently-scoped list that includes non-marketable and purchase-only contacts, so its share % will look larger than the others.
+        Top-line Joiners = new HubSpot contact records this week (not opt-in date, which HubSpot doesn&apos;t expose). Unsubscribes = real unsubscribe counts from PP emails sent this week. Segment Active/Joiners come from each segment&apos;s HubSpot list (K–2/3–6/7–10/11–12/Teacher = &quot;PP - Years... Purchase&quot; / &quot;PP - All Teachers&quot; lists, Parent = a differently-scoped list that includes non-marketable and purchase-only contacts). Segment Joiners are real per-contact join dates from HubSpot, but there&apos;s no equivalent per-segment unsubscribe feed, so that column isn&apos;t shown here.
       </p>
     </div>
   );
