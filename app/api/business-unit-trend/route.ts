@@ -14,10 +14,11 @@ import { fetchETZStripeRevenue, fetchHSCStripeRevenue, fetchETZCustomerTrend, fe
 
 export const dynamic = 'force-dynamic';
 
-// New/returning customer trend is heavier than the plain revenue fetch (one
-// customer lookup per unique paying customer across the whole 12-month
-// window) and historical months never change, so cache it for 30 min —
-// same policy this route's header comment already documents for revenue.
+// New/returning customer trend is heavier than the plain revenue fetch and
+// historical months never change, so cache it for 30 min — same policy this
+// route's header comment already documents for revenue. Must return a plain
+// object, not a Map: unstable_cache persists results via JSON, and a Map
+// loses its prototype (.get() breaks) once read back from a cache hit.
 const fetchPPCustomerTrendCached    = unstable_cache(fetchPPCustomerTrend,    ['pp-customer-trend'],    { revalidate: 1800 });
 const fetchBlakeCustomerTrendCached = unstable_cache(fetchBlakeCustomerTrend, ['blake-customer-trend'], { revalidate: 1800 });
 const fetchETZCustomerTrendCached   = unstable_cache(fetchETZCustomerTrend,   ['etz-customer-trend'],   { revalidate: 1800 });
@@ -133,7 +134,7 @@ async function fetchAllTrialsByMonth(
   return map;
 }
 
-function fetchCustomerTrend(brand: BrandParam, months: string[]): Promise<Map<string, CustomerTrendMonth>> {
+function fetchCustomerTrend(brand: BrandParam, months: string[]): Promise<Record<string, CustomerTrendMonth>> {
   switch (brand) {
     case 'pp':    return fetchPPCustomerTrendCached(months);
     case 'blake': return fetchBlakeCustomerTrendCached(months);
@@ -149,39 +150,29 @@ export async function GET(request: Request) {
   const hasTrials = brand === 'etz' || brand === 'ehc';
   const pipelineLabel = brand === 'etz' ? 'etz' : 'ehc';
 
-  try {
-    // Revenue fetches (12 months in parallel), the single HubSpot bulk trials
-    // search, and the bulk new/returning customer trend all run together.
-    const [revResults, trialsByMonth, customerTrend] = await Promise.all([
-      Promise.allSettled(months.map(m => fetchRevenue(brand, m))),
-      hasTrials ? fetchAllTrialsByMonth(pipelineLabel, months[0]!) : Promise.resolve(new Map<string, number>()),
-      fetchCustomerTrend(brand, months).catch(() => new Map<string, CustomerTrendMonth>()),
-    ]);
+  // Revenue fetches (12 months in parallel), the single HubSpot bulk trials
+  // search, and the bulk new/returning customer trend all run together.
+  const [revResults, trialsByMonth, customerTrend] = await Promise.all([
+    Promise.allSettled(months.map(m => fetchRevenue(brand, m))),
+    hasTrials ? fetchAllTrialsByMonth(pipelineLabel, months[0]!) : Promise.resolve(new Map<string, number>()),
+    fetchCustomerTrend(brand, months).catch(() => ({} as Record<string, CustomerTrendMonth>)),
+  ]);
 
-    const data = months.map((month, i) => {
-      const r = revResults[i];
-      const rev = r?.status === 'fulfilled' ? r.value : { revenue: 0, orders: 0 };
-      const ct  = customerTrend.get(month);
-      return {
-        month,
-        revenue: rev.revenue,
-        orders:  rev.orders,
-        trials:  hasTrials ? (trialsByMonth.get(month) ?? 0) : null,
-        newCustomers:       ct?.newCustomers       ?? 0,
-        newRevenue:         ct?.newRevenue         ?? 0,
-        returningCustomers: ct?.returningCustomers ?? 0,
-        returningRevenue:   ct?.returningRevenue   ?? 0,
-      };
-    });
+  const data = months.map((month, i) => {
+    const r = revResults[i];
+    const rev = r?.status === 'fulfilled' ? r.value : { revenue: 0, orders: 0 };
+    const ct  = customerTrend[month];
+    return {
+      month,
+      revenue: rev.revenue,
+      orders:  rev.orders,
+      trials:  hasTrials ? (trialsByMonth.get(month) ?? 0) : null,
+      newCustomers:       ct?.newCustomers       ?? 0,
+      newRevenue:         ct?.newRevenue         ?? 0,
+      returningCustomers: ct?.returningCustomers ?? 0,
+      returningRevenue:   ct?.returningRevenue   ?? 0,
+    };
+  });
 
-    return NextResponse.json({ brand, months: data });
-  } catch (err) {
-    // TEMPORARY diagnostic — surfaces the real error instead of a bare 500
-    // so we can fix whatever's crashing for the larger brands (PP/ETZ).
-    console.error('[business-unit-trend] fatal error', err);
-    return NextResponse.json({
-      error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : null,
-    }, { status: 500 });
-  }
+  return NextResponse.json({ brand, months: data });
 }

@@ -343,8 +343,11 @@ export interface CustomerTrendMonth {
 export async function fetchStripeCustomerTrend(
   secretKey: string,
   months: string[],
-): Promise<Map<string, CustomerTrendMonth>> {
-  const result = new Map<string, CustomerTrendMonth>();
+): Promise<Record<string, CustomerTrendMonth>> {
+  // Plain object, not a Map — this crosses an unstable_cache boundary in the
+  // caller, and Map/Set objects lose their prototype (and .get()) once
+  // round-tripped through the Data Cache's JSON serialization.
+  const result: Record<string, CustomerTrendMonth> = {};
   if (!secretKey || months.length === 0) return result;
 
   try {
@@ -424,12 +427,12 @@ export async function fetchStripeCustomerTrend(
           }
         }
       }
-      result.set(month, {
+      result[month] = {
         newCustomers,
         newRevenue: Math.round(newRevenue) / 100,
         returningCustomers,
         returningRevenue: Math.round(returningRevenue) / 100,
-      });
+      };
     }
   } catch (err) {
     console.error('[stripe-revenue] customer trend error', err);
@@ -452,10 +455,10 @@ export async function fetchHSCStripeRevenue(
   return fetchStripeRevenueWithKey(STRIPE_HSC_SECRET_KEY, month, options);
 }
 
-export async function fetchETZCustomerTrend(months: string[]): Promise<Map<string, CustomerTrendMonth>> {
+export async function fetchETZCustomerTrend(months: string[]): Promise<Record<string, CustomerTrendMonth>> {
   return fetchStripeCustomerTrend(STRIPE_SECRET_KEY, months);
 }
 
-export async function fetchHSCCustomerTrend(months: string[]): Promise<Map<string, CustomerTrendMonth>> {
+export async function fetchHSCCustomerTrend(months: string[]): Promise<Record<string, CustomerTrendMonth>> {
   return fetchStripeCustomerTrend(STRIPE_HSC_SECRET_KEY, months);
 }

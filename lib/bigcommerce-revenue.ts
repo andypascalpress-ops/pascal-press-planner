@@ -260,8 +260,11 @@ export async function fetchBCCustomerTrend(
   storeHash: string,
   token: string,
   months: string[],
-): Promise<Map<string, CustomerTrendMonth>> {
-  const result = new Map<string, CustomerTrendMonth>();
+): Promise<Record<string, CustomerTrendMonth>> {
+  // Plain object, not a Map — this crosses an unstable_cache boundary in the
+  // caller, and Map/Set objects lose their prototype (and .get()) once
+  // round-tripped through the Data Cache's JSON serialization.
+  const result: Record<string, CustomerTrendMonth> = {};
   if (!storeHash || !token || months.length === 0) return result;
 
   try {
@@ -349,12 +352,12 @@ export async function fetchBCCustomerTrend(
         }
       }
 
-      result.set(month, {
+      result[month] = {
         newCustomers,
         newRevenue: Math.round(newRevenue * 100) / 100,
         returningCustomers,
         returningRevenue: Math.round(returningRevenue * 100) / 100,
-      });
+      };
     }
   } catch (err) {
     console.error('[bigcommerce-revenue] customer trend error', err);
@@ -377,11 +380,11 @@ export async function fetchBlakeRevenue(
   return fetchBCRevenue(BLAKE_STORE_HASH, BLAKE_ACCESS_TOKEN, month, dateRange);
 }
 
-export async function fetchPPCustomerTrend(months: string[]): Promise<Map<string, CustomerTrendMonth>> {
+export async function fetchPPCustomerTrend(months: string[]): Promise<Record<string, CustomerTrendMonth>> {
   return fetchBCCustomerTrend(PP_STORE_HASH, PP_ACCESS_TOKEN, months);
 }
 
-export async function fetchBlakeCustomerTrend(months: string[]): Promise<Map<string, CustomerTrendMonth>> {
+export async function fetchBlakeCustomerTrend(months: string[]): Promise<Record<string, CustomerTrendMonth>> {
   return fetchBCCustomerTrend(BLAKE_STORE_HASH, BLAKE_ACCESS_TOKEN, months);
 }
 
