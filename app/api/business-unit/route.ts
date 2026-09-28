@@ -304,6 +304,7 @@ export async function GET(request: Request) {
   const brand = (searchParams.get('brand') ?? 'pp') as BrandParam;
   const range = (searchParams.get('range') ?? 'last7') as RangeParam;
   const yoy   = searchParams.get('yoy') === 'true';
+  const productLimit = Math.min(Number(searchParams.get('productLimit') ?? '15') || 15, 500);
 
   const cur  = deriveRange(range);
   const comp = getComparisonRange(range, cur.start, cur.end, yoy);
@@ -403,7 +404,7 @@ export async function GET(request: Request) {
   const compSpend   = compSpendR.status  === 'fulfilled' ? compSpendR.value : 0;
   const curProducts  = curProductsR.status  === 'fulfilled' ? curProductsR.value  : new Map();
   const compProducts = compProductsR.status === 'fulfilled' ? compProductsR.value : new Map();
-  const products      = buildProductBreakdown(curProducts, compProducts);
+  const products      = buildProductBreakdown(curProducts, compProducts, productLimit);
   const subs        = subsR.status       === 'fulfilled' ? subsR.value      : null;
 
   const sparkline = sparkDays.map((date, i) => ({
