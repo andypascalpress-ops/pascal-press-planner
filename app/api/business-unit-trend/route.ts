@@ -149,29 +149,39 @@ export async function GET(request: Request) {
   const hasTrials = brand === 'etz' || brand === 'ehc';
   const pipelineLabel = brand === 'etz' ? 'etz' : 'ehc';
 
-  // Revenue fetches (12 months in parallel), the single HubSpot bulk trials
-  // search, and the bulk new/returning customer trend all run together.
-  const [revResults, trialsByMonth, customerTrend] = await Promise.all([
-    Promise.allSettled(months.map(m => fetchRevenue(brand, m))),
-    hasTrials ? fetchAllTrialsByMonth(pipelineLabel, months[0]!) : Promise.resolve(new Map<string, number>()),
-    fetchCustomerTrend(brand, months).catch(() => new Map<string, CustomerTrendMonth>()),
-  ]);
+  try {
+    // Revenue fetches (12 months in parallel), the single HubSpot bulk trials
+    // search, and the bulk new/returning customer trend all run together.
+    const [revResults, trialsByMonth, customerTrend] = await Promise.all([
+      Promise.allSettled(months.map(m => fetchRevenue(brand, m))),
+      hasTrials ? fetchAllTrialsByMonth(pipelineLabel, months[0]!) : Promise.resolve(new Map<string, number>()),
+      fetchCustomerTrend(brand, months).catch(() => new Map<string, CustomerTrendMonth>()),
+    ]);
 
-  const data = months.map((month, i) => {
-    const r = revResults[i];
-    const rev = r?.status === 'fulfilled' ? r.value : { revenue: 0, orders: 0 };
-    const ct  = customerTrend.get(month);
-    return {
-      month,
-      revenue: rev.revenue,
-      orders:  rev.orders,
-      trials:  hasTrials ? (trialsByMonth.get(month) ?? 0) : null,
-      newCustomers:       ct?.newCustomers       ?? 0,
-      newRevenue:         ct?.newRevenue         ?? 0,
-      returningCustomers: ct?.returningCustomers ?? 0,
-      returningRevenue:   ct?.returningRevenue   ?? 0,
-    };
-  });
+    const data = months.map((month, i) => {
+      const r = revResults[i];
+      const rev = r?.status === 'fulfilled' ? r.value : { revenue: 0, orders: 0 };
+      const ct  = customerTrend.get(month);
+      return {
+        month,
+        revenue: rev.revenue,
+        orders:  rev.orders,
+        trials:  hasTrials ? (trialsByMonth.get(month) ?? 0) : null,
+        newCustomers:       ct?.newCustomers       ?? 0,
+        newRevenue:         ct?.newRevenue         ?? 0,
+        returningCustomers: ct?.returningCustomers ?? 0,
+        returningRevenue:   ct?.returningRevenue   ?? 0,
+      };
+    });
 
-  return NextResponse.json({ brand, months: data });
+    return NextResponse.json({ brand, months: data });
+  } catch (err) {
+    // TEMPORARY diagnostic — surfaces the real error instead of a bare 500
+    // so we can fix whatever's crashing for the larger brands (PP/ETZ).
+    console.error('[business-unit-trend] fatal error', err);
+    return NextResponse.json({
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : null,
+    }, { status: 500 });
+  }
 }
