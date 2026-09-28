@@ -27,11 +27,11 @@
  *     non-marketable and purchase-only contacts.
  */
 import { NextResponse } from 'next/server';
+import { rangeBoundaries, type RangeParam } from '@/lib/pp-range';
 
 export const dynamic = 'force-dynamic';
 
 const HS_BASE = 'https://api.hubapi.com';
-const AEST_OFFSET_MS = 10 * 60 * 60 * 1000;
 
 function hsHeaders() {
   return {
@@ -48,18 +48,6 @@ const SEGMENTS = [
   { key: 'teacher', label: 'Teacher', listId: '1155', name: 'PP - All Teachers' },
   { key: 'parent',  label: 'Parent',  listId: '3767', name: 'FS // PP - All Parents (Purchased & Non-Purchases)' },
 ] as const;
-
-function weekBoundaries() {
-  const nowAest = new Date(Date.now() + AEST_OFFSET_MS);
-  const dayOfWeek = nowAest.getUTCDay();
-  const daysFromMon = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-  const thisWeekStartAest = new Date(
-    Date.UTC(nowAest.getUTCFullYear(), nowAest.getUTCMonth(), nowAest.getUTCDate() - daysFromMon)
-  );
-  const thisWeekStart = thisWeekStartAest.getTime() - AEST_OFFSET_MS;
-  const prevWeekStart = thisWeekStart - 7 * 24 * 60 * 60 * 1000;
-  return { thisWeekStart, prevWeekStart };
-}
 
 async function fetchListSize(listId: string): Promise<number | null> {
   try {
@@ -83,14 +71,20 @@ interface MembershipRow {
   membershipTimestamp: string;
 }
 
-/** Pages join-order (newest-first) and stops once timestamps fall before prevWeekStart. */
+/**
+ * Pages join-order (newest-first) and stops once timestamps fall before
+ * prevStart. Both periods are bounded on both ends — needed for ranges like
+ * "yesterday" or "lastmonth" where "this period" isn't open-ended through now.
+ */
 async function fetchJoinersInWindow(
   listId: string,
-  thisWeekStart: number,
-  prevWeekStart: number,
-): Promise<{ thisWeek: number; lastWeek: number }> {
-  let thisWeek = 0;
-  let lastWeek = 0;
+  thisStart: number,
+  thisEnd: number,
+  prevStart: number,
+  prevEnd: number,
+): Promise<{ thisPeriod: number; prevPeriod: number }> {
+  let thisPeriod = 0;
+  let prevPeriod = 0;
   let after: string | undefined;
   const MAX_PAGES = 25; // safety valve for very large/active lists (e.g. Parent)
 
@@ -112,9 +106,9 @@ async function fetchJoinersInWindow(
     let crossedBoundary = false;
     for (const r of results) {
       const ts = new Date(r.membershipTimestamp).getTime();
-      if (ts >= thisWeekStart) thisWeek++;
-      else if (ts >= prevWeekStart) lastWeek++;
-      else { crossedBoundary = true; break; }
+      if (ts >= thisStart && ts < thisEnd) thisPeriod++;
+      else if (ts >= prevStart && ts < prevEnd) prevPeriod++;
+      if (ts < prevStart) { crossedBoundary = true; break; }
     }
 
     const nextAfter = json.paging?.next?.after;
@@ -122,27 +116,29 @@ async function fetchJoinersInWindow(
     after = nextAfter;
   }
 
-  return { thisWeek, lastWeek };
+  return { thisPeriod, prevPeriod };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   if (!process.env.HUBSPOT_CRM_TOKEN && !process.env.HUBSPOT_API_KEY) {
     return NextResponse.json({ connected: false, error: 'No HubSpot token configured' }, { status: 500 });
   }
 
-  const { thisWeekStart, prevWeekStart } = weekBoundaries();
+  const { searchParams } = new URL(request.url);
+  const range = (searchParams.get('range') ?? 'last7') as RangeParam;
+  const { startMs, endMs, prevStartMs, prevEndMs } = rangeBoundaries(range);
 
   const segments = await Promise.all(SEGMENTS.map(async s => {
     const [active, joiners] = await Promise.all([
       fetchListSize(s.listId),
-      fetchJoinersInWindow(s.listId, thisWeekStart, prevWeekStart),
+      fetchJoinersInWindow(s.listId, startMs, endMs, prevStartMs, prevEndMs),
     ]);
     return {
       key: s.key,
       label: s.label,
       active,
-      joinersThisWeek: joiners.thisWeek,
-      joinersLastWeek: joiners.lastWeek,
+      joinersThisWeek: joiners.thisPeriod,
+      joinersLastWeek: joiners.prevPeriod,
       listName: s.name,
     };
   }));

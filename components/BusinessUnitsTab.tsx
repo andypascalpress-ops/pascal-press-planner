@@ -208,23 +208,23 @@ export default function BusinessUnitsTab() {
     if (brand !== 'pp') return;
     setPPContactsLoading(true);
     try {
-      const res = await fetch('/api/pp-marketing-contacts');
+      const res = await fetch(`/api/pp-marketing-contacts?range=${range}`);
       if (res.ok) setPPContacts(await res.json());
     } catch { /* silent */ } finally {
       setPPContactsLoading(false);
     }
-  }, [brand]);
+  }, [brand, range]);
 
   const loadPPSegments = useCallback(async () => {
     if (brand !== 'pp') return;
     setPPSegmentsLoading(true);
     try {
-      const res = await fetch('/api/pp-contacts-segments');
+      const res = await fetch(`/api/pp-contacts-segments?range=${range}`);
       if (res.ok) setPPSegments(await res.json());
     } catch { /* silent */ } finally {
       setPPSegmentsLoading(false);
     }
-  }, [brand]);
+  }, [brand, range]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadTrend(); }, [loadTrend]);
@@ -450,7 +450,7 @@ function PPContactsSection({
       <div>
         <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Marketing Contacts</p>
         {data?.weekEndingLabel && (
-          <p className="text-[11px] text-gray-400 mt-0.5">Week ending {data.weekEndingLabel}</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">{data.weekEndingLabel}</p>
         )}
       </div>
     </div>
@@ -486,7 +486,7 @@ function PPContactsSection({
       <div className="flex items-start justify-between gap-4 mb-4">
         <div>
           <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Marketing Contacts</p>
-          <p className="text-[11px] text-gray-400 mt-0.5">Week ending {data.weekEndingLabel}</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">{data.weekEndingLabel}</p>
         </div>
         <div className="text-right">
           <p className="text-2xl font-bold text-gray-900">{NUM.format(data.totalActive)}</p>
@@ -500,8 +500,8 @@ function PPContactsSection({
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
               <th className="text-left px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider w-2/5">Metric</th>
-              <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">This week</th>
-              <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Last week</th>
+              <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">This period</th>
+              <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Prior period</th>
               <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Change</th>
             </tr>
           </thead>
@@ -560,8 +560,8 @@ function PPContactsSection({
                 <tr className="bg-gray-50 border-b border-gray-100">
                   <th className="text-left px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Segment</th>
                   <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Active</th>
-                  <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Joiners this wk</th>
-                  <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">vs last wk</th>
+                  <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Joiners</th>
+                  <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">vs prior</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -598,7 +598,7 @@ function PPContactsSection({
       </div>
 
       <p className="text-[10px] text-gray-400 mt-3">
-        Top-line Joiners = new HubSpot contact records this week (not opt-in date, which HubSpot doesn&apos;t expose). Unsubscribes = real unsubscribe counts from PP emails sent this week. Segment Active/Joiners come from each segment&apos;s HubSpot list (K–2/3–6/7–10/11–12/Teacher = &quot;PP - Years... Purchase&quot; / &quot;PP - All Teachers&quot; lists, Parent = a differently-scoped list that includes non-marketable and purchase-only contacts). Segment Joiners are real per-contact join dates from HubSpot, but there&apos;s no equivalent per-segment unsubscribe feed, so that column isn&apos;t shown here.
+        Top-line Joiners = new HubSpot contact records in the selected period (not opt-in date, which HubSpot doesn&apos;t expose). Unsubscribes = real unsubscribe counts from PP emails sent in the period. Segment Active/Joiners come from each segment&apos;s HubSpot list (K–2/3–6/7–10/11–12/Teacher = &quot;PP - Years... Purchase&quot; / &quot;PP - All Teachers&quot; lists, Parent = a differently-scoped list that includes non-marketable and purchase-only contacts). Segment Joiners are real per-contact join dates from HubSpot, but there&apos;s no equivalent per-segment unsubscribe feed, so that column isn&apos;t shown here.
       </p>
     </div>
   );
