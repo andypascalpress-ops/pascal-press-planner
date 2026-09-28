@@ -326,19 +326,19 @@ export interface CustomerTrendMonth {
 
 /**
  * Per-month new vs returning customer revenue split across a set of months,
- * computed with ONE bulk charge fetch spanning the whole window (not one
- * fetch per month) plus ONE customer.created lookup per unique paying
- * customer across the whole window (not one per month either) — this is
- * what keeps a 12-month trend fast instead of re-triggering the ~40s
- * per-period cost the single-period "accurate" mode has.
+ * computed with ONE bulk paginated charge fetch spanning the whole window
+ * (plus a lookback buffer) — zero per-customer API calls. An earlier version
+ * used a customer.created lookup per unique paying customer, which does not
+ * scale for a subscription business: ETZ alone has enough distinct paying
+ * customers across 12 months that the lookups took well over a minute and
+ * risked a function timeout, reintroducing the exact problem accurate:false
+ * was meant to fix.
  *
- * A customer counts as "new" in the month their Stripe customer object was
- * created (their actual first checkout in this integration's flow) — this
- * skips the slower prior-charge-history fallback the accurate single-period
- * mode uses as a second check, so an edge case (a customer record created
- * earlier via an abandoned checkout, now making their real first payment)
- * can misclassify as "returning". Acceptable for a trend chart; the
- * Finance tab's precise numbers still use the accurate path.
+ * A customer counts as "new" in the first month they appear in the fetched
+ * window (lookback included). This can misclassify a long-standing customer
+ * as "new" if their actual first-ever payment predates the lookback buffer —
+ * acceptable for a trend chart; the Finance tab's precise numbers still use
+ * the accurate per-period path.
  */
 export async function fetchStripeCustomerTrend(
   secretKey: string,
@@ -349,18 +349,28 @@ export async function fetchStripeCustomerTrend(
 
   try {
     const sorted = [...months].sort();
-    const { gte } = monthUnixRange(sorted[0]!);
+    const firstMonth = sorted[0]!;
+
+    // Look back a few months before the window so a customer who paid
+    // recently but not in the window's first month isn't misclassified as
+    // "new" the first time they show up inside the reported window.
+    const LOOKBACK_MONTHS = 3;
+    const [ly, lm] = firstMonth.split('-').map(Number);
+    let lbY = ly!, lbM = lm! - LOOKBACK_MONTHS;
+    while (lbM < 1) { lbM += 12; lbY--; }
+    const lookbackMonth = `${lbY}-${String(lbM).padStart(2, '0')}`;
+
+    const { gte } = monthUnixRange(lookbackMonth);
     const { lte } = monthUnixRange(sorted[sorted.length - 1]!);
 
-    // Bulk-fetch every charge across the whole window in one paginated pass.
     let startingAfter: string | null = null;
     let pages = 0;
-    const perMonthCustomerNet = new Map<string, Map<string, number>>(); // month -> customerId -> net cents
-    const allCustomerIds = new Set<string>();
+    const firstSeenMonth = new Map<string, string>();                     // customerId -> earliest month seen (incl. lookback)
+    const perMonthCustomerNet = new Map<string, Map<string, number>>();   // month -> customerId -> net cents (reported months only)
 
     while (true) {
       pages++;
-      if (pages > 100) break; // hard safety cap (10,000 charges)
+      if (pages > 150) break; // hard safety cap (~15,000 charges across window + lookback)
 
       const params = new URLSearchParams({
         'created[gte]': String(gte),
@@ -385,26 +395,19 @@ export async function fetchStripeCustomerTrend(
 
         const month = new Date((charge.created * 1000) + 10 * 60 * 60 * 1000)
           .toISOString().slice(0, 7); // AEST month
-        if (!months.includes(month)) continue;
 
-        allCustomerIds.add(cid);
-        const monthMap = perMonthCustomerNet.get(month) ?? new Map<string, number>();
-        monthMap.set(cid, (monthMap.get(cid) ?? 0) + net);
-        perMonthCustomerNet.set(month, monthMap);
+        const seen = firstSeenMonth.get(cid);
+        if (!seen || month < seen) firstSeenMonth.set(cid, month);
+
+        if (months.includes(month)) {
+          const monthMap = perMonthCustomerNet.get(month) ?? new Map<string, number>();
+          monthMap.set(cid, (monthMap.get(cid) ?? 0) + net);
+          perMonthCustomerNet.set(month, monthMap);
+        }
       }
 
       if (!data.has_more || data.data.length === 0) break;
       startingAfter = data.data[data.data.length - 1]!.id;
-    }
-
-    // One customer.created lookup per UNIQUE paying customer across the whole window.
-    const ids = [...allCustomerIds];
-    const createdById = new Map<string, number | null>();
-    const CHUNK = 8;
-    for (let i = 0; i < ids.length; i += CHUNK) {
-      const chunk = ids.slice(i, i + CHUNK);
-      const chunkResults = await Promise.all(chunk.map(id => fetchCustomerCreated(id, secretKey)));
-      chunk.forEach((id, j) => createdById.set(id, chunkResults[j] ?? null));
     }
 
     for (const month of months) {
@@ -412,11 +415,7 @@ export async function fetchStripeCustomerTrend(
       let newCustomers = 0, newRevenue = 0, returningCustomers = 0, returningRevenue = 0;
       if (monthMap) {
         for (const [cid, netCents] of monthMap) {
-          const created = createdById.get(cid);
-          const createdMonth = created != null
-            ? new Date((created * 1000) + 10 * 60 * 60 * 1000).toISOString().slice(0, 7)
-            : null;
-          if (createdMonth === month) {
+          if (firstSeenMonth.get(cid) === month) {
             newCustomers++;
             newRevenue += netCents;
           } else {
