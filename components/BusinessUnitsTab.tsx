@@ -24,6 +24,8 @@ interface BUProduct {
   revenue: number;
   orders: number;
   pct: number;
+  prevRevenue: number;
+  changePct: number | null;
 }
 
 interface BUSubscriptions {
@@ -384,29 +386,45 @@ export default function BusinessUnitsTab() {
             {/* Product breakdown */}
             {data.products.length > 0 && (
               <div className="bg-white rounded-xl border border-gray-200 p-4">
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Product Breakdown</p>
+                <div className="flex items-baseline justify-between gap-2 mb-3">
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Product Breakdown</p>
+                  {data.comparison?.label && (
+                    <p className="text-[11px] text-gray-400">{data.comparison.label}</p>
+                  )}
+                </div>
                 <div className="space-y-3">
-                  {data.products.map((p, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <span className="text-[11px] text-gray-400 w-4 text-right shrink-0">{i + 1}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <span className="text-sm font-medium text-gray-800 truncate">{p.name}</span>
-                          <div className="flex items-center gap-3 shrink-0">
-                            <span className="text-xs text-gray-400">{p.orders} orders</span>
-                            <span className="text-sm font-semibold text-gray-900">{AUD.format(p.revenue)}</span>
+                  {data.products.map((p, i) => {
+                    const isNew = p.prevRevenue === 0 && p.revenue > 0;
+                    const changeUp = (p.changePct ?? 0) >= 0;
+                    return (
+                      <div key={i} className="flex items-center gap-3">
+                        <span className="text-[11px] text-gray-400 w-4 text-right shrink-0">{i + 1}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <span className="text-sm font-medium text-gray-800 truncate">{p.name}</span>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-xs text-gray-400">{p.orders} orders</span>
+                              <span className="text-sm font-semibold text-gray-900">{AUD.format(p.revenue)}</span>
+                              {p.changePct !== null ? (
+                                <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded ${changeUp ? 'text-emerald-600 bg-emerald-50' : 'text-red-500 bg-red-50'}`}>
+                                  {changeUp ? '↑' : '↓'} {Math.abs(p.changePct)}%
+                                </span>
+                              ) : isNew ? (
+                                <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded text-blue-600 bg-blue-50">new</span>
+                              ) : null}
+                            </div>
+                          </div>
+                          <div className="relative h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                              className="absolute inset-y-0 left-0 rounded-full transition-all"
+                              style={{ width: `${p.pct}%`, backgroundColor: color }}
+                            />
                           </div>
                         </div>
-                        <div className="relative h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                          <div
-                            className="absolute inset-y-0 left-0 rounded-full transition-all"
-                            style={{ width: `${p.pct}%`, backgroundColor: color }}
-                          />
-                        </div>
+                        <span className="text-[11px] font-medium text-gray-400 w-8 text-right shrink-0">{p.pct}%</span>
                       </div>
-                      <span className="text-[11px] font-medium text-gray-400 w-8 text-right shrink-0">{p.pct}%</span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}

@@ -115,10 +115,13 @@ function getComparisonRange(range: RangeParam, start: string, end: string, yoy: 
   }
 }
 
-async function fetchBCProductBreakdown(
+type ProductMap = Map<string, { revenue: number; qty: number }>;
+
+async function fetchBCProductMap(
   hash: string, token: string, start: string, end: string
-): Promise<{ name: string; revenue: number; orders: number; pct: number }[]> {
-  if (!hash || !token) return [];
+): Promise<ProductMap> {
+  const map: ProductMap = new Map();
+  if (!hash || !token) return map;
   try {
     const startISO = new Date(`${start}T00:00:00+10:00`).toISOString();
     const endISO   = new Date(`${end}T23:59:59+10:00`).toISOString();
@@ -127,9 +130,9 @@ async function fetchBCProductBreakdown(
       headers: { 'X-Auth-Token': token, Accept: 'application/json' },
       cache: 'no-store',
     });
-    if (!res.ok) return [];
+    if (!res.ok) return map;
     const orders: { id: number }[] = await res.json();
-    if (!Array.isArray(orders) || orders.length === 0) return [];
+    if (!Array.isArray(orders) || orders.length === 0) return map;
 
     const productResults = await Promise.allSettled(
       orders.map(o =>
@@ -140,7 +143,6 @@ async function fetchBCProductBreakdown(
       )
     );
 
-    const map = new Map<string, { revenue: number; qty: number }>();
     for (const r of productResults) {
       if (r.status !== 'fulfilled' || !Array.isArray(r.value)) continue;
       for (const p of r.value as { name: string; total_inc_tax: string }[]) {
@@ -149,21 +151,15 @@ async function fetchBCProductBreakdown(
         map.set(p.name, { revenue: entry.revenue + rev, qty: entry.qty + 1 });
       }
     }
-
-    const total = Array.from(map.values()).reduce((s, v) => s + v.revenue, 0);
-    return Array.from(map.entries())
-      .map(([name, v]) => ({ name, revenue: v.revenue, orders: v.qty, pct: total > 0 ? Math.round((v.revenue / total) * 100) : 0 }))
-      .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 15);
-  } catch {
-    return [];
-  }
+  } catch { /* return what we have */ }
+  return map;
 }
 
-async function fetchStripeProductBreakdown(
+async function fetchStripeProductMap(
   key: string, start: string, end: string
-): Promise<{ name: string; revenue: number; orders: number; pct: number }[]> {
-  if (!key) return [];
+): Promise<ProductMap> {
+  const map: ProductMap = new Map();
+  if (!key) return map;
   try {
     const gte = Math.floor(new Date(`${start}T00:00:00+10:00`).getTime() / 1000);
     const lte = Math.floor(new Date(`${end}T23:59:59+10:00`).getTime() / 1000);
@@ -171,29 +167,56 @@ async function fetchStripeProductBreakdown(
       `https://api.stripe.com/v1/charges?created[gte]=${gte}&created[lte]=${lte}&limit=100`,
       { headers: { Authorization: `Bearer ${key}` }, cache: 'no-store' }
     );
-    if (!res.ok) return [];
+    if (!res.ok) return map;
     const { data: charges } = await res.json() as {
       data: { status: string; description: string | null; amount: number; amount_refunded: number }[]
     };
 
-    const map = new Map<string, { revenue: number; cnt: number }>();
     for (const c of charges) {
       if (c.status !== 'succeeded') continue;
       const net = (c.amount - (c.amount_refunded ?? 0)) / 100;
       if (net <= 0) continue;
       const name  = c.description || 'Other';
-      const entry = map.get(name) ?? { revenue: 0, cnt: 0 };
-      map.set(name, { revenue: entry.revenue + net, cnt: entry.cnt + 1 });
+      const entry = map.get(name) ?? { revenue: 0, qty: 0 };
+      map.set(name, { revenue: entry.revenue + net, qty: entry.qty + 1 });
     }
+  } catch { /* return what we have */ }
+  return map;
+}
 
-    const total = Array.from(map.values()).reduce((s, v) => s + v.revenue, 0);
-    return Array.from(map.entries())
-      .map(([name, v]) => ({ name, revenue: v.revenue, orders: v.cnt, pct: total > 0 ? Math.round((v.revenue / total) * 100) : 0 }))
-      .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 15);
-  } catch {
-    return [];
-  }
+interface ProductRow {
+  name: string;
+  revenue: number;
+  orders: number;
+  pct: number;               // share of this period's total revenue
+  prevRevenue: number;       // revenue for the same product in the comparison period
+  changePct: number | null;  // null when prevRevenue = 0 (show as "new" in the UI)
+}
+
+/**
+ * Builds the top-N current-period product list with a per-product
+ * revenue comparison against `compMap` — the full (unsliced) comparison
+ * period product map, so a product outside the current top-15 lookup
+ * still matches correctly even if it wasn't itself in the comparison
+ * period's top-15.
+ */
+function buildProductBreakdown(curMap: ProductMap, compMap: ProductMap, limit = 15): ProductRow[] {
+  const total = Array.from(curMap.values()).reduce((s, v) => s + v.revenue, 0);
+  return Array.from(curMap.entries())
+    .map(([name, v]) => {
+      const prevRevenue = compMap.get(name)?.revenue ?? 0;
+      const changePct = prevRevenue > 0 ? Math.round(((v.revenue - prevRevenue) / prevRevenue) * 100) : null;
+      return {
+        name,
+        revenue: v.revenue,
+        orders: v.qty,
+        pct: total > 0 ? Math.round((v.revenue / total) * 100) : 0,
+        prevRevenue,
+        changePct,
+      };
+    })
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, limit);
 }
 
 const HS_BASE = 'https://api.hubapi.com';
@@ -351,28 +374,37 @@ export async function GET(request: Request) {
   const today     = toYMD(new Date());
   const sparkDays = Array.from({ length: 7 }, (_, i) => subDays(today, 6 - i));
 
-  const [curRevR, compRevR, curSpendR, compSpendR, productsR, subsR, ...sparkR] =
+  const fetchProductMap = (s: string, e: string): Promise<ProductMap> => {
+    switch (brand) {
+      case 'pp':    return fetchBCProductMap(PP_HASH, PP_TOKEN, s, e);
+      case 'blake': return fetchBCProductMap(BL_HASH, BL_TOKEN, s, e);
+      case 'etz':   return fetchStripeProductMap(STRIPE_ETZ, s, e);
+      case 'ehc':   return fetchStripeProductMap(STRIPE_HSC, s, e);
+    }
+  };
+
+  const [curRevR, compRevR, curSpendR, compSpendR, curProductsR, compProductsR, subsR, ...sparkR] =
     await Promise.allSettled([
       fetchRev(cur.start, cur.end),
       fetchRev(comp.start, comp.end),
       fetchSpend(cur.start, cur.end, curMonth),
       fetchSpend(comp.start, comp.end, compMonth),
-      brand === 'pp'    ? fetchBCProductBreakdown(PP_HASH, PP_TOKEN, cur.start, cur.end)
-        : brand === 'blake' ? fetchBCProductBreakdown(BL_HASH, BL_TOKEN, cur.start, cur.end)
-        : brand === 'etz'   ? fetchStripeProductBreakdown(STRIPE_ETZ, cur.start, cur.end)
-        :                     fetchStripeProductBreakdown(STRIPE_HSC, cur.start, cur.end),
+      fetchProductMap(cur.start, cur.end),
+      fetchProductMap(comp.start, comp.end),
       (brand === 'etz' || brand === 'ehc')
         ? fetchStripeSubscriptionMetrics(brand === 'etz' ? STRIPE_ETZ : STRIPE_HSC, brand)
         : Promise.resolve(null),
       ...sparkDays.map(d => fetchRev(d, d)),
     ]);
 
-  const curRev    = curRevR.status    === 'fulfilled' ? curRevR.value    : null;
-  const compRev   = compRevR.status   === 'fulfilled' ? compRevR.value   : null;
-  const curSpend  = curSpendR.status  === 'fulfilled' ? curSpendR.value  : 0;
-  const compSpend = compSpendR.status === 'fulfilled' ? compSpendR.value : 0;
-  const products  = productsR.status  === 'fulfilled' ? productsR.value  : [];
-  const subs      = subsR.status      === 'fulfilled' ? subsR.value      : null;
+  const curRev     = curRevR.status     === 'fulfilled' ? curRevR.value     : null;
+  const compRev     = compRevR.status    === 'fulfilled' ? compRevR.value   : null;
+  const curSpend    = curSpendR.status   === 'fulfilled' ? curSpendR.value  : 0;
+  const compSpend   = compSpendR.status  === 'fulfilled' ? compSpendR.value : 0;
+  const curProducts  = curProductsR.status  === 'fulfilled' ? curProductsR.value  : new Map();
+  const compProducts = compProductsR.status === 'fulfilled' ? compProductsR.value : new Map();
+  const products      = buildProductBreakdown(curProducts, compProducts);
+  const subs        = subsR.status       === 'fulfilled' ? subsR.value      : null;
 
   const sparkline = sparkDays.map((date, i) => ({
     date,
