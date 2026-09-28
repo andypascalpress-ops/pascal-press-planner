@@ -126,8 +126,10 @@ export async function GET(request: Request) {
   // ── 4. Stripe orders — parallel across all months (no rate-limit concern) ──
   const ordersByMonth:   Record<string, number> = {};
   const revenueByMonth:  Record<string, number> = {};
+  // accurate:false — only totalOrders/totalRevenue are read below; the accurate
+  // path does per-customer Stripe lookups for every one of these 12 months at once
   const stripeResults = await Promise.allSettled(
-    months.map(month => fetchETZStripeRevenue(month).catch(() => null)),
+    months.map(month => fetchETZStripeRevenue(month, { accurate: false }).catch(() => null)),
   );
   for (let i = 0; i < months.length; i++) {
     const month = months[i]!;

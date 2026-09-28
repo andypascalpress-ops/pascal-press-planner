@@ -55,8 +55,10 @@ async function fetchRevenue(brand: BrandParam, month: string): Promise<{ revenue
     switch (brand) {
       case 'pp':    rev = await fetchPPRevenue(month, { start, end }); break;
       case 'blake': rev = await fetchBlakeRevenue(month, { start, end }); break;
-      case 'etz':   rev = await fetchETZStripeRevenue(month, { dateRange: { start, end } }); break;
-      case 'ehc':   rev = await fetchHSCStripeRevenue(month, { dateRange: { start, end } }); break;
+      // accurate:false — this route only reads revenue/orders below, never the
+      // new/returning split, so skip the expensive per-customer Stripe lookups
+      case 'etz':   rev = await fetchETZStripeRevenue(month, { accurate: false, dateRange: { start, end } }); break;
+      case 'ehc':   rev = await fetchHSCStripeRevenue(month, { accurate: false, dateRange: { start, end } }); break;
     }
     return { revenue: rev?.totalRevenue ?? 0, orders: rev?.totalOrders ?? 0 };
   } catch { return { revenue: 0, orders: 0 }; }

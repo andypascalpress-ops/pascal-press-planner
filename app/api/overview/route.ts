@@ -150,8 +150,11 @@ export async function GET(request: Request) {
         ? fetchMonthlySpend(hscCfg, startDate, endDate)
         : noAds(),
       fetchPPRevenue(month, { start: startDate, end: endDate }),
-      fetchETZStripeRevenue(month, { dateRange: { start: startDate, end: endDate } }),
-      fetchHSCStripeRevenue(month, { dateRange: { start: startDate, end: endDate } }),
+      // accurate:false — overview never displays new/returning customer split,
+      // and the accurate path does 1-2 sequential Stripe calls per paying
+      // customer that month, which was adding tens of seconds to page load.
+      fetchETZStripeRevenue(month, { accurate: false, dateRange: { start: startDate, end: endDate } }),
+      fetchHSCStripeRevenue(month, { accurate: false, dateRange: { start: startDate, end: endDate } }),
       fetchBlakeRevenue(month, { start: startDate, end: endDate }),
       fetchEmailCampaigns(month, { dateRange: { start: startDate, end: endDate } }),
       fetchPPWebsiteConversion(startDate, endDate, isMonthly ? 'alignMonth' : 'priorEqual'),
