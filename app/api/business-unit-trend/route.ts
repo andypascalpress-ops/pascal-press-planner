@@ -8,10 +8,20 @@
  * grouped by month in code — replaces 12 sequential per-month searches.
  */
 import { NextResponse } from 'next/server';
-import { fetchPPRevenue, fetchBlakeRevenue } from '@/lib/bigcommerce-revenue';
-import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-revenue';
+import { unstable_cache } from 'next/cache';
+import { fetchPPRevenue, fetchBlakeRevenue, fetchPPCustomerTrend, fetchBlakeCustomerTrend, type CustomerTrendMonth } from '@/lib/bigcommerce-revenue';
+import { fetchETZStripeRevenue, fetchHSCStripeRevenue, fetchETZCustomerTrend, fetchHSCCustomerTrend } from '@/lib/stripe-revenue';
 
 export const dynamic = 'force-dynamic';
+
+// New/returning customer trend is heavier than the plain revenue fetch (one
+// customer lookup per unique paying customer across the whole 12-month
+// window) and historical months never change, so cache it for 30 min —
+// same policy this route's header comment already documents for revenue.
+const fetchPPCustomerTrendCached    = unstable_cache(fetchPPCustomerTrend,    ['pp-customer-trend'],    { revalidate: 1800 });
+const fetchBlakeCustomerTrendCached = unstable_cache(fetchBlakeCustomerTrend, ['blake-customer-trend'], { revalidate: 1800 });
+const fetchETZCustomerTrendCached   = unstable_cache(fetchETZCustomerTrend,   ['etz-customer-trend'],   { revalidate: 1800 });
+const fetchHSCCustomerTrendCached   = unstable_cache(fetchHSCCustomerTrend,   ['hsc-customer-trend'],   { revalidate: 1800 });
 
 type BrandParam = 'pp' | 'etz' | 'ehc' | 'blake';
 
@@ -123,6 +133,15 @@ async function fetchAllTrialsByMonth(
   return map;
 }
 
+function fetchCustomerTrend(brand: BrandParam, months: string[]): Promise<Map<string, CustomerTrendMonth>> {
+  switch (brand) {
+    case 'pp':    return fetchPPCustomerTrendCached(months);
+    case 'blake': return fetchBlakeCustomerTrendCached(months);
+    case 'etz':   return fetchETZCustomerTrendCached(months);
+    case 'ehc':   return fetchHSCCustomerTrendCached(months);
+  }
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const brand = (searchParams.get('brand') ?? 'pp') as BrandParam;
@@ -130,20 +149,27 @@ export async function GET(request: Request) {
   const hasTrials = brand === 'etz' || brand === 'ehc';
   const pipelineLabel = brand === 'etz' ? 'etz' : 'ehc';
 
-  // Run revenue fetches (12 months in parallel) and the single HubSpot bulk search together
-  const [revResults, trialsByMonth] = await Promise.all([
+  // Revenue fetches (12 months in parallel), the single HubSpot bulk trials
+  // search, and the bulk new/returning customer trend all run together.
+  const [revResults, trialsByMonth, customerTrend] = await Promise.all([
     Promise.allSettled(months.map(m => fetchRevenue(brand, m))),
     hasTrials ? fetchAllTrialsByMonth(pipelineLabel, months[0]!) : Promise.resolve(new Map<string, number>()),
+    fetchCustomerTrend(brand, months).catch(() => new Map<string, CustomerTrendMonth>()),
   ]);
 
   const data = months.map((month, i) => {
     const r = revResults[i];
     const rev = r?.status === 'fulfilled' ? r.value : { revenue: 0, orders: 0 };
+    const ct  = customerTrend.get(month);
     return {
       month,
       revenue: rev.revenue,
       orders:  rev.orders,
       trials:  hasTrials ? (trialsByMonth.get(month) ?? 0) : null,
+      newCustomers:       ct?.newCustomers       ?? 0,
+      newRevenue:         ct?.newRevenue         ?? 0,
+      returningCustomers: ct?.returningCustomers ?? 0,
+      returningRevenue:   ct?.returningRevenue   ?? 0,
     };
   });
 

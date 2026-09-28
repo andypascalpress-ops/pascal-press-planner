@@ -317,6 +317,128 @@ async function fetchStripeRevenueWithKey(
   }
 }
 
+export interface CustomerTrendMonth {
+  newCustomers: number;
+  newRevenue: number;
+  returningCustomers: number;
+  returningRevenue: number;
+}
+
+/**
+ * Per-month new vs returning customer revenue split across a set of months,
+ * computed with ONE bulk charge fetch spanning the whole window (not one
+ * fetch per month) plus ONE customer.created lookup per unique paying
+ * customer across the whole window (not one per month either) — this is
+ * what keeps a 12-month trend fast instead of re-triggering the ~40s
+ * per-period cost the single-period "accurate" mode has.
+ *
+ * A customer counts as "new" in the month their Stripe customer object was
+ * created (their actual first checkout in this integration's flow) — this
+ * skips the slower prior-charge-history fallback the accurate single-period
+ * mode uses as a second check, so an edge case (a customer record created
+ * earlier via an abandoned checkout, now making their real first payment)
+ * can misclassify as "returning". Acceptable for a trend chart; the
+ * Finance tab's precise numbers still use the accurate path.
+ */
+export async function fetchStripeCustomerTrend(
+  secretKey: string,
+  months: string[],
+): Promise<Map<string, CustomerTrendMonth>> {
+  const result = new Map<string, CustomerTrendMonth>();
+  if (!secretKey || months.length === 0) return result;
+
+  try {
+    const sorted = [...months].sort();
+    const { gte } = monthUnixRange(sorted[0]!);
+    const { lte } = monthUnixRange(sorted[sorted.length - 1]!);
+
+    // Bulk-fetch every charge across the whole window in one paginated pass.
+    let startingAfter: string | null = null;
+    let pages = 0;
+    const perMonthCustomerNet = new Map<string, Map<string, number>>(); // month -> customerId -> net cents
+    const allCustomerIds = new Set<string>();
+
+    while (true) {
+      pages++;
+      if (pages > 100) break; // hard safety cap (10,000 charges)
+
+      const params = new URLSearchParams({
+        'created[gte]': String(gte),
+        'created[lte]': String(lte),
+        limit: '100',
+      });
+      if (startingAfter) params.set('starting_after', startingAfter);
+
+      const res = await fetch(`${STRIPE_BASE}/charges?${params}`, {
+        headers: stripeHeaders(secretKey),
+        cache: 'no-store',
+      });
+      if (!res.ok) break;
+      const data: StripeList<StripeCharge & { created: number }> = await res.json();
+
+      for (const charge of data.data) {
+        if (!charge.paid || charge.status !== 'succeeded') continue;
+        const net = (charge.amount ?? 0) - (charge.amount_refunded ?? 0);
+        if (net <= 100) continue; // > $1.00 AUD — matches the "qualifying" rule elsewhere
+        const cid = customerIdOf(charge.customer);
+        if (!cid) continue;
+
+        const month = new Date((charge.created * 1000) + 10 * 60 * 60 * 1000)
+          .toISOString().slice(0, 7); // AEST month
+        if (!months.includes(month)) continue;
+
+        allCustomerIds.add(cid);
+        const monthMap = perMonthCustomerNet.get(month) ?? new Map<string, number>();
+        monthMap.set(cid, (monthMap.get(cid) ?? 0) + net);
+        perMonthCustomerNet.set(month, monthMap);
+      }
+
+      if (!data.has_more || data.data.length === 0) break;
+      startingAfter = data.data[data.data.length - 1]!.id;
+    }
+
+    // One customer.created lookup per UNIQUE paying customer across the whole window.
+    const ids = [...allCustomerIds];
+    const createdById = new Map<string, number | null>();
+    const CHUNK = 8;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK);
+      const chunkResults = await Promise.all(chunk.map(id => fetchCustomerCreated(id, secretKey)));
+      chunk.forEach((id, j) => createdById.set(id, chunkResults[j] ?? null));
+    }
+
+    for (const month of months) {
+      const monthMap = perMonthCustomerNet.get(month);
+      let newCustomers = 0, newRevenue = 0, returningCustomers = 0, returningRevenue = 0;
+      if (monthMap) {
+        for (const [cid, netCents] of monthMap) {
+          const created = createdById.get(cid);
+          const createdMonth = created != null
+            ? new Date((created * 1000) + 10 * 60 * 60 * 1000).toISOString().slice(0, 7)
+            : null;
+          if (createdMonth === month) {
+            newCustomers++;
+            newRevenue += netCents;
+          } else {
+            returningCustomers++;
+            returningRevenue += netCents;
+          }
+        }
+      }
+      result.set(month, {
+        newCustomers,
+        newRevenue: Math.round(newRevenue) / 100,
+        returningCustomers,
+        returningRevenue: Math.round(returningRevenue) / 100,
+      });
+    }
+  } catch (err) {
+    console.error('[stripe-revenue] customer trend error', err);
+  }
+
+  return result;
+}
+
 export async function fetchETZStripeRevenue(
   month: string,
   options?: { accurate?: boolean; dateRange?: { start: string; end: string } },
@@ -329,4 +451,12 @@ export async function fetchHSCStripeRevenue(
   options?: { accurate?: boolean; dateRange?: { start: string; end: string } },
 ): Promise<RevenueData> {
   return fetchStripeRevenueWithKey(STRIPE_HSC_SECRET_KEY, month, options);
+}
+
+export async function fetchETZCustomerTrend(months: string[]): Promise<Map<string, CustomerTrendMonth>> {
+  return fetchStripeCustomerTrend(STRIPE_SECRET_KEY, months);
+}
+
+export async function fetchHSCCustomerTrend(months: string[]): Promise<Map<string, CustomerTrendMonth>> {
+  return fetchStripeCustomerTrend(STRIPE_HSC_SECRET_KEY, months);
 }

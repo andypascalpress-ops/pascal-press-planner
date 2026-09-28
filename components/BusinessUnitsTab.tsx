@@ -160,6 +160,10 @@ interface TrendPoint {
   revenue: number;
   orders: number;
   trials: number | null;
+  newCustomers: number;
+  newRevenue: number;
+  returningCustomers: number;
+  returningRevenue: number;
 }
 
 export default function BusinessUnitsTab() {
@@ -637,15 +641,19 @@ function TrendSection({
     if (!trend || trend.length < 6) return null;
     const recent = trend.slice(-3);
     const prior  = trend.slice(-6, -3);
-    const sumOrders  = (pts: TrendPoint[]) => pts.reduce((s, p) => s + p.orders, 0);
-    const sumTrials  = (pts: TrendPoint[]) => pts.reduce((s, p) => s + (p.trials ?? 0), 0);
-    const sumRevenue = (pts: TrendPoint[]) => pts.reduce((s, p) => s + p.revenue, 0);
+    const sumOrders   = (pts: TrendPoint[]) => pts.reduce((s, p) => s + p.orders, 0);
+    const sumTrials   = (pts: TrendPoint[]) => pts.reduce((s, p) => s + (p.trials ?? 0), 0);
+    const sumRevenue  = (pts: TrendPoint[]) => pts.reduce((s, p) => s + p.revenue, 0);
+    const sumNewCusts = (pts: TrendPoint[]) => pts.reduce((s, p) => s + p.newCustomers, 0);
     const recentTrials = sumTrials(recent);
     const priorTrials  = sumTrials(prior);
+    const recentNewCusts = sumNewCusts(recent);
+    const priorNewCusts  = sumNewCusts(prior);
     const ordersPct  = sumOrders(prior)  > 0 ? Math.round(((sumOrders(recent)  - sumOrders(prior))  / sumOrders(prior))  * 100) : null;
     const trialsPct  = priorTrials > 0       ? Math.round(((recentTrials - priorTrials) / priorTrials) * 100)                      : null;
     const revenuePct = sumRevenue(prior) > 0 ? Math.round(((sumRevenue(recent) - sumRevenue(prior)) / sumRevenue(prior)) * 100)    : null;
-    return { ordersPct, trialsPct, revenuePct, recentTrials, priorTrials };
+    const newCustsPct = priorNewCusts > 0    ? Math.round(((recentNewCusts - priorNewCusts) / priorNewCusts) * 100)                : null;
+    return { ordersPct, trialsPct, revenuePct, recentTrials, priorTrials, newCustsPct, recentNewCusts, priorNewCusts };
   })();
 
   const arrow = (pct: number | null | undefined) => {
@@ -671,6 +679,15 @@ function TrendSection({
               <span className="text-xs text-gray-500">vs 3 months prior:</span>
               <span className="text-xs text-gray-500">Revenue {arrow(summary.revenuePct)}</span>
               <span className="text-xs text-gray-500">Orders {arrow(summary.ordersPct)}</span>
+              <span className="text-xs text-gray-500">
+                {'New customers '}
+                {summary.newCustsPct != null
+                  ? arrow(summary.newCustsPct)
+                  : summary.recentNewCusts > 0
+                    ? <span className="text-xs font-semibold px-1.5 py-0.5 rounded text-blue-600 bg-blue-50">+{summary.recentNewCusts}</span>
+                    : <span className="text-xs text-gray-400">no data</span>
+                }
+              </span>
               {hasTrials && (
                 <span className="text-xs text-gray-500">
                   {'Trials '}
@@ -713,40 +730,44 @@ function TrendSection({
             </>
           )}
 
-          {/* Orders per month */}
-          <p className="text-[10px] text-gray-400 font-medium mt-4 mb-1">Orders per month</p>
-          <ResponsiveContainer width="100%" height={120}>
+          {/* New vs returning customers per month */}
+          <p className="text-[10px] text-gray-400 font-medium mt-4 mb-1">Customers by type</p>
+          <ResponsiveContainer width="100%" height={130}>
             <ComposedChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 4 }}>
               <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} width={28} />
               <Tooltip
-                formatter={(v) => [NUM.format(Number(v ?? 0)), 'Orders']}
+                formatter={(v, name) => [NUM.format(Number(v ?? 0)), name]}
                 contentStyle={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,.08)' }}
               />
-              <Bar dataKey="orders" name="Orders" fill={color} opacity={0.85} radius={[2, 2, 0, 0]} maxBarSize={32} />
+              <Bar dataKey="newCustomers"       name="New"        stackId="custs" fill={color}    opacity={0.9}  radius={[0, 0, 0, 0]} maxBarSize={32} />
+              <Bar dataKey="returningCustomers" name="Returning"  stackId="custs" fill={color}    opacity={0.35} radius={[2, 2, 0, 0]} maxBarSize={32} />
             </ComposedChart>
           </ResponsiveContainer>
+          <div className="flex items-center gap-4 mt-1">
+            <span className="flex items-center gap-1 text-[10px] text-gray-400"><span className="w-2 h-2 rounded-sm inline-block" style={{ backgroundColor: color, opacity: 0.9 }} />New</span>
+            <span className="flex items-center gap-1 text-[10px] text-gray-400"><span className="w-2 h-2 rounded-sm inline-block" style={{ backgroundColor: color, opacity: 0.35 }} />Returning</span>
+          </div>
 
-          {/* Revenue per month */}
-          <p className="text-[10px] text-gray-400 font-medium mt-4 mb-1">Revenue per month</p>
-          <ResponsiveContainer width="100%" height={110}>
-            <AreaChart data={chartData} margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
-              <defs>
-                <linearGradient id={`trendGrad-${brand}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor={color} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={color} stopOpacity={0}    />
-                </linearGradient>
-              </defs>
+          {/* Revenue by customer type per month */}
+          <p className="text-[10px] text-gray-400 font-medium mt-4 mb-1">Revenue by customer type</p>
+          <ResponsiveContainer width="100%" height={130}>
+            <ComposedChart data={chartData} margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
               <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} width={40}
                 tickFormatter={v => v >= 1000 ? `$${Math.round(v/1000)}k` : `$${v}`} />
               <Tooltip
-                formatter={(v) => [AUD.format(Number(v ?? 0)), 'Revenue']}
+                formatter={(v, name) => [AUD.format(Number(v ?? 0)), name]}
                 contentStyle={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,.08)' }}
               />
-              <Area type="monotone" dataKey="revenue" stroke={color} strokeWidth={2} fill={`url(#trendGrad-${brand})`} dot={false} activeDot={{ r: 4, fill: color }} />
-            </AreaChart>
+              <Bar dataKey="newRevenue"       name="New revenue"       stackId="rev" fill={color} opacity={0.9}  radius={[0, 0, 0, 0]} maxBarSize={32} />
+              <Bar dataKey="returningRevenue" name="Returning revenue" stackId="rev" fill={color} opacity={0.35} radius={[2, 2, 0, 0]} maxBarSize={32} />
+            </ComposedChart>
           </ResponsiveContainer>
+          <div className="flex items-center gap-4 mt-1">
+            <span className="flex items-center gap-1 text-[10px] text-gray-400"><span className="w-2 h-2 rounded-sm inline-block" style={{ backgroundColor: color, opacity: 0.9 }} />New</span>
+            <span className="flex items-center gap-1 text-[10px] text-gray-400"><span className="w-2 h-2 rounded-sm inline-block" style={{ backgroundColor: color, opacity: 0.35 }} />Returning</span>
+          </div>
         </>
       ) : !loading ? (
         <p className="text-sm text-gray-400 text-center py-8">No trend data available.</p>

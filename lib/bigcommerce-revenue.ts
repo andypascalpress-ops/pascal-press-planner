@@ -238,6 +238,131 @@ async function fetchBCRevenue(
   }
 }
 
+export interface CustomerTrendMonth {
+  newCustomers: number;
+  newRevenue: number;
+  returningCustomers: number;
+  returningRevenue: number;
+}
+
+/**
+ * Per-month new vs returning customer revenue split across a set of months.
+ * Orders are still fetched month-by-month (BigCommerce's v2 orders endpoint
+ * takes one min/max date range per call, not a list of months), but customer
+ * registration dates are looked up ONCE per unique registered customer
+ * across the whole window — not once per month — which is what keeps a
+ * 12-month trend from multiplying that cost by 12.
+ *
+ * Guests (customer_id = 0) are always "new", deduped by billing email within
+ * each month — matches the single-period classification in fetchBCRevenue.
+ */
+export async function fetchBCCustomerTrend(
+  storeHash: string,
+  token: string,
+  months: string[],
+): Promise<Map<string, CustomerTrendMonth>> {
+  const result = new Map<string, CustomerTrendMonth>();
+  if (!storeHash || !token || months.length === 0) return result;
+
+  try {
+    const sorted = [...months].sort();
+    const startMonth = sorted[0]!;
+    const endMonth   = sorted[sorted.length - 1]!;
+
+    let allOrders: BCOrder[] = [];
+    let cur = startMonth;
+    while (cur <= endMonth) {
+      const mOrders = await fetchAllPages<BCOrder>(storeHash, token, '/orders', {
+        min_date_created: toRFC2822(`${cur}-01`),
+        max_date_created: toRFC2822(lastDayOfMonth(cur), true),
+      });
+      allOrders.push(...mOrders);
+      const [y, m] = cur.split('-').map(Number);
+      cur = m! === 12 ? `${y! + 1}-01` : `${y}-${String(m! + 1).padStart(2, '0')}`;
+    }
+
+    const excludedStatuses = new Set([
+      'Cancelled', 'Refunded', 'Incomplete',
+      'Awaiting Payment', 'Manual Verification Required',
+    ]);
+    const validOrders = allOrders.filter(o => !excludedStatuses.has(o.status));
+
+    const guestRevenueByMonth = new Map<string, Map<string, number>>(); // month -> email -> revenue
+    const perMonthRegisteredRevenue = new Map<string, Map<number, number>>(); // month -> customerId -> revenue
+    const registeredIds = new Set<number>();
+
+    for (const o of validOrders) {
+      const month = orderDateSydney(o.date_created).slice(0, 7);
+      if (!months.includes(month)) continue;
+      const rev = parseFloat(o.total_inc_tax || '0');
+
+      if (o.customer_id === 0) {
+        const email = (o.billing_address?.email ?? '').toLowerCase().trim() || `guest-order-${o.id}`;
+        const emailMap = guestRevenueByMonth.get(month) ?? new Map<string, number>();
+        emailMap.set(email, (emailMap.get(email) ?? 0) + rev);
+        guestRevenueByMonth.set(month, emailMap);
+      } else {
+        registeredIds.add(o.customer_id);
+        const custMap = perMonthRegisteredRevenue.get(month) ?? new Map<number, number>();
+        custMap.set(o.customer_id, (custMap.get(o.customer_id) ?? 0) + rev);
+        perMonthRegisteredRevenue.set(month, custMap);
+      }
+    }
+
+    // One batched registration-date lookup for ALL unique registered customers.
+    const v3Base = `https://api.bigcommerce.com/stores/${storeHash}/v3`;
+    const regDateById = new Map<number, string | null>();
+    const idsArr = [...registeredIds];
+    for (let i = 0; i < idsArr.length; i += 50) {
+      const chunk = idsArr.slice(i, i + 50);
+      const res = await fetch(`${v3Base}/customers?id:in=${chunk.join(',')}&limit=250`, {
+        headers: bcHeaders(token), cache: 'no-store',
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const data: BCCustomer[] = Array.isArray(json) ? json : (json.data ?? []);
+        for (const c of data) {
+          regDateById.set(c.id, (c.date_created ?? '').split('T')[0] || null);
+        }
+      }
+    }
+
+    for (const month of months) {
+      const guestMap = guestRevenueByMonth.get(month);
+      let newCustomers = guestMap ? guestMap.size : 0;
+      let newRevenue    = guestMap ? Array.from(guestMap.values()).reduce((s, v) => s + v, 0) : 0;
+      let returningCustomers = 0;
+      let returningRevenue   = 0;
+
+      const custMap = perMonthRegisteredRevenue.get(month);
+      if (custMap) {
+        for (const [cid, rev] of custMap) {
+          const regDate  = regDateById.get(cid);
+          const regMonth = regDate ? regDate.slice(0, 7) : null;
+          if (regMonth === month) {
+            newCustomers++;
+            newRevenue += rev;
+          } else {
+            returningCustomers++;
+            returningRevenue += rev;
+          }
+        }
+      }
+
+      result.set(month, {
+        newCustomers,
+        newRevenue: Math.round(newRevenue * 100) / 100,
+        returningCustomers,
+        returningRevenue: Math.round(returningRevenue * 100) / 100,
+      });
+    }
+  } catch (err) {
+    console.error('[bigcommerce-revenue] customer trend error', err);
+  }
+
+  return result;
+}
+
 export async function fetchPPRevenue(
   month: string,
   dateRange?: { start: string; end: string },
@@ -250,6 +375,14 @@ export async function fetchBlakeRevenue(
   dateRange?: { start: string; end: string },
 ): Promise<RevenueData> {
   return fetchBCRevenue(BLAKE_STORE_HASH, BLAKE_ACCESS_TOKEN, month, dateRange);
+}
+
+export async function fetchPPCustomerTrend(months: string[]): Promise<Map<string, CustomerTrendMonth>> {
+  return fetchBCCustomerTrend(PP_STORE_HASH, PP_ACCESS_TOKEN, months);
+}
+
+export async function fetchBlakeCustomerTrend(months: string[]): Promise<Map<string, CustomerTrendMonth>> {
+  return fetchBCCustomerTrend(BLAKE_STORE_HASH, BLAKE_ACCESS_TOKEN, months);
 }
 
 export function placeholderETZRevenue(): RevenueData {
