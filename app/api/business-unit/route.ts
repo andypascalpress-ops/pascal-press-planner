@@ -125,30 +125,53 @@ async function fetchBCProductMap(
   try {
     const startISO = new Date(`${start}T00:00:00+10:00`).toISOString();
     const endISO   = new Date(`${end}T23:59:59+10:00`).toISOString();
-    const url = `${BC_BASE}/${hash}/v2/orders?min_date_created=${encodeURIComponent(startISO)}&max_date_created=${encodeURIComponent(endISO)}&limit=50&sort=date_created:desc`;
-    const res = await fetch(url, {
-      headers: { 'X-Auth-Token': token, Accept: 'application/json' },
-      cache: 'no-store',
-    });
-    if (!res.ok) return map;
-    const orders: { id: number }[] = await res.json();
-    if (!Array.isArray(orders) || orders.length === 0) return map;
 
-    const productResults = await Promise.allSettled(
-      orders.map(o =>
-        fetch(`${BC_BASE}/${hash}/v2/orders/${o.id}/products`, {
-          headers: { 'X-Auth-Token': token, Accept: 'application/json' },
-          cache: 'no-store',
-        }).then(r => r.ok ? r.json() : [])
-      )
-    );
+    // Paginate through ALL orders in the window — a single limit=50 page
+    // (sorted newest-first) silently dropped every order before the most
+    // recent 50, undercounting or entirely missing products that sold
+    // earlier in any period with more than 50 orders (routine for PP).
+    const orders: { id: number }[] = [];
+    let page = 1;
+    while (true) {
+      if (page > 40) break; // hard safety cap (10,000 orders)
+      const url = `${BC_BASE}/${hash}/v2/orders?min_date_created=${encodeURIComponent(startISO)}&max_date_created=${encodeURIComponent(endISO)}&limit=250&page=${page}&sort=date_created:desc`;
+      const res = await fetch(url, {
+        headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+        cache: 'no-store',
+      });
+      if (res.status === 204 || res.status === 404) break;
+      if (!res.ok) break;
+      const pageOrders: { id: number }[] = await res.json();
+      if (!Array.isArray(pageOrders) || pageOrders.length === 0) break;
+      orders.push(...pageOrders);
+      if (pageOrders.length < 250) break;
+      page++;
+    }
+    if (orders.length === 0) return map;
 
-    for (const r of productResults) {
-      if (r.status !== 'fulfilled' || !Array.isArray(r.value)) continue;
-      for (const p of r.value as { name: string; total_inc_tax: string }[]) {
-        const rev   = parseFloat(p.total_inc_tax ?? '0');
-        const entry = map.get(p.name) ?? { revenue: 0, qty: 0 };
-        map.set(p.name, { revenue: entry.revenue + rev, qty: entry.qty + 1 });
+    // Batch the per-order product-line fetches — firing all of them at once
+    // for a high-volume month (PP routinely has 500-1000+ orders) risks
+    // BigCommerce rate limiting, which would silently undercount rather
+    // than error (a failed fetch just contributes nothing below).
+    const BATCH = 20;
+    for (let i = 0; i < orders.length; i += BATCH) {
+      const batch = orders.slice(i, i + BATCH);
+      const productResults = await Promise.allSettled(
+        batch.map(o =>
+          fetch(`${BC_BASE}/${hash}/v2/orders/${o.id}/products`, {
+            headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+            cache: 'no-store',
+          }).then(r => r.ok ? r.json() : [])
+        )
+      );
+
+      for (const r of productResults) {
+        if (r.status !== 'fulfilled' || !Array.isArray(r.value)) continue;
+        for (const p of r.value as { name: string; total_inc_tax: string }[]) {
+          const rev   = parseFloat(p.total_inc_tax ?? '0');
+          const entry = map.get(p.name) ?? { revenue: 0, qty: 0 };
+          map.set(p.name, { revenue: entry.revenue + rev, qty: entry.qty + 1 });
+        }
       }
     }
   } catch { /* return what we have */ }
@@ -163,22 +186,44 @@ async function fetchStripeProductMap(
   try {
     const gte = Math.floor(new Date(`${start}T00:00:00+10:00`).getTime() / 1000);
     const lte = Math.floor(new Date(`${end}T23:59:59+10:00`).getTime() / 1000);
-    const res = await fetch(
-      `https://api.stripe.com/v1/charges?created[gte]=${gte}&created[lte]=${lte}&limit=100`,
-      { headers: { Authorization: `Bearer ${key}` }, cache: 'no-store' }
-    );
-    if (!res.ok) return map;
-    const { data: charges } = await res.json() as {
-      data: { status: string; description: string | null; amount: number; amount_refunded: number }[]
-    };
 
-    for (const c of charges) {
-      if (c.status !== 'succeeded') continue;
-      const net = (c.amount - (c.amount_refunded ?? 0)) / 100;
-      if (net <= 0) continue;
-      const name  = c.description || 'Other';
-      const entry = map.get(name) ?? { revenue: 0, qty: 0 };
-      map.set(name, { revenue: entry.revenue + net, qty: entry.qty + 1 });
+    // Paginate through ALL charges in the window — a single limit=100 page
+    // silently dropped the earliest charges of any period with >100 charges
+    // (e.g. a 134-order month), undercounting or entirely missing whichever
+    // products happened to sell early in the period.
+    let startingAfter: string | undefined;
+    let pages = 0;
+    while (true) {
+      pages++;
+      if (pages > 50) break; // hard safety cap (5,000 charges)
+
+      const params = new URLSearchParams({
+        'created[gte]': String(gte),
+        'created[lte]': String(lte),
+        limit: '100',
+      });
+      if (startingAfter) params.set('starting_after', startingAfter);
+
+      const res = await fetch(`https://api.stripe.com/v1/charges?${params}`, {
+        headers: { Authorization: `Bearer ${key}` }, cache: 'no-store',
+      });
+      if (!res.ok) break;
+      const { data: charges, has_more } = await res.json() as {
+        data: { id: string; status: string; description: string | null; amount: number; amount_refunded: number }[];
+        has_more: boolean;
+      };
+
+      for (const c of charges) {
+        if (c.status !== 'succeeded') continue;
+        const net = (c.amount - (c.amount_refunded ?? 0)) / 100;
+        if (net <= 0) continue;
+        const name  = c.description || 'Other';
+        const entry = map.get(name) ?? { revenue: 0, qty: 0 };
+        map.set(name, { revenue: entry.revenue + net, qty: entry.qty + 1 });
+      }
+
+      if (!has_more || charges.length === 0) break;
+      startingAfter = charges[charges.length - 1]!.id;
     }
   } catch { /* return what we have */ }
   return map;
