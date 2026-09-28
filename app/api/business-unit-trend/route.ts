@@ -8,21 +8,19 @@
  * grouped by month in code — replaces 12 sequential per-month searches.
  */
 import { NextResponse } from 'next/server';
-import { unstable_cache } from 'next/cache';
 import { fetchPPRevenue, fetchBlakeRevenue, fetchPPCustomerTrend, fetchBlakeCustomerTrend, type CustomerTrendMonth } from '@/lib/bigcommerce-revenue';
 import { fetchETZStripeRevenue, fetchHSCStripeRevenue, fetchETZCustomerTrend, fetchHSCCustomerTrend } from '@/lib/stripe-revenue';
 
 export const dynamic = 'force-dynamic';
 
-// New/returning customer trend is heavier than the plain revenue fetch and
-// historical months never change, so cache it for 30 min — same policy this
-// route's header comment already documents for revenue. Must return a plain
-// object, not a Map: unstable_cache persists results via JSON, and a Map
-// loses its prototype (.get() breaks) once read back from a cache hit.
-const fetchPPCustomerTrendCached    = unstable_cache(fetchPPCustomerTrend,    ['pp-customer-trend'],    { revalidate: 1800 });
-const fetchBlakeCustomerTrendCached = unstable_cache(fetchBlakeCustomerTrend, ['blake-customer-trend'], { revalidate: 1800 });
-const fetchETZCustomerTrendCached   = unstable_cache(fetchETZCustomerTrend,   ['etz-customer-trend'],   { revalidate: 1800 });
-const fetchHSCCustomerTrendCached   = unstable_cache(fetchHSCCustomerTrend,   ['hsc-customer-trend'],   { revalidate: 1800 });
+// Deliberately uncached: an unstable_cache wrapper here previously served
+// stale/empty data indefinitely across deploys (a Map return value gets
+// serialized to {} by the Data Cache, and — worse — that corrupted entry
+// persisted under the same cache key across code changes, so brands tested
+// while the bug was live kept silently returning empty new/returning data
+// even after the fix shipped). The plain uncached fetch already runs in
+// ~3-5s, in parallel with the revenue/trials fetches below, so caching
+// isn't worth that correctness risk here.
 
 type BrandParam = 'pp' | 'etz' | 'ehc' | 'blake';
 
@@ -136,10 +134,10 @@ async function fetchAllTrialsByMonth(
 
 function fetchCustomerTrend(brand: BrandParam, months: string[]): Promise<Record<string, CustomerTrendMonth>> {
   switch (brand) {
-    case 'pp':    return fetchPPCustomerTrendCached(months);
-    case 'blake': return fetchBlakeCustomerTrendCached(months);
-    case 'etz':   return fetchETZCustomerTrendCached(months);
-    case 'ehc':   return fetchHSCCustomerTrendCached(months);
+    case 'pp':    return fetchPPCustomerTrend(months);
+    case 'blake': return fetchBlakeCustomerTrend(months);
+    case 'etz':   return fetchETZCustomerTrend(months);
+    case 'ehc':   return fetchHSCCustomerTrend(months);
   }
 }
 
