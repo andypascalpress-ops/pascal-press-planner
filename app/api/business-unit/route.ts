@@ -39,6 +39,13 @@ function subDays(ymd: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+function ymdToMsRangeAEST(start: string, end: string): { startMs: number; endMs: number } {
+  return {
+    startMs: new Date(`${start}T00:00:00+10:00`).getTime(),
+    endMs:   new Date(`${end}T23:59:59+10:00`).getTime(),
+  };
+}
+
 function subMonths(ymd: string, n: number): string {
   const [y, m, day] = ymd.split('-').map(Number);
   let nm = m! - n, ny = y!;
@@ -299,6 +306,42 @@ async function fetchHubSpotCurrentTrials(pipelineLabel: string): Promise<number>
   } catch { return 0; }
 }
 
+/**
+ * Trials started within [startMs, endMs] — deals created in the ETZ/EHC
+ * HubSpot pipeline during the window. No dealstage or amount filter: every
+ * deal in this pipeline represents a trial by design (trial deals may be
+ * created with a null amount, not '0'), matching the convention already
+ * established in business-unit-trend's fetchAllTrialsByMonth.
+ */
+async function fetchTrialsStartedInRange(pipelineLabel: string, startMs: number, endMs: number): Promise<number> {
+  try {
+    const plRes = await fetch(`${HS_BASE}/crm/v3/pipelines/deals`, {
+      headers: hsHeaders(), cache: 'no-store',
+    });
+    if (!plRes.ok) return 0;
+    const { results: pipelines } = await plRes.json() as { results: Array<{ id: string; label: string }> };
+    const pipeline = pipelines.find(p => p.label.toLowerCase().includes(pipelineLabel.toLowerCase()));
+    if (!pipeline) return 0;
+
+    const search = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
+      method: 'POST',
+      headers: hsHeaders(),
+      body: JSON.stringify({
+        filterGroups: [{ filters: [
+          { propertyName: 'pipeline',   operator: 'EQ',  value: pipeline.id },
+          { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
+          { propertyName: 'createdate', operator: 'LTE', value: String(endMs) },
+        ]}],
+        limit: 1,
+      }),
+      cache: 'no-store',
+    });
+    if (!search.ok) return 0;
+    const { total } = await search.json() as { total: number };
+    return total ?? 0;
+  } catch { return 0; }
+}
+
 async function fetchStripeSubscriptionMetrics(key: string, brand: BrandParam) {
   if (!key) return null;
   try {
@@ -429,7 +472,12 @@ export async function GET(request: Request) {
     }
   };
 
-  const [curRevR, compRevR, curSpendR, compSpendR, curProductsR, compProductsR, subsR, ...sparkR] =
+  const hasTrials = brand === 'etz' || brand === 'ehc';
+  const trialsPipelineLabel = brand === 'etz' ? 'etz' : 'ehc';
+  const curTrialsRangeMs  = ymdToMsRangeAEST(cur.start,  cur.end);
+  const compTrialsRangeMs = ymdToMsRangeAEST(comp.start, comp.end);
+
+  const [curRevR, compRevR, curSpendR, compSpendR, curProductsR, compProductsR, subsR, curTrialsR, compTrialsR, ...sparkR] =
     await Promise.allSettled([
       fetchRev(cur.start, cur.end),
       fetchRev(comp.start, comp.end),
@@ -439,6 +487,12 @@ export async function GET(request: Request) {
       fetchProductMap(comp.start, comp.end),
       (brand === 'etz' || brand === 'ehc')
         ? fetchStripeSubscriptionMetrics(brand === 'etz' ? STRIPE_ETZ : STRIPE_HSC, brand)
+        : Promise.resolve(null),
+      hasTrials
+        ? fetchTrialsStartedInRange(trialsPipelineLabel, curTrialsRangeMs.startMs, curTrialsRangeMs.endMs)
+        : Promise.resolve(null),
+      hasTrials
+        ? fetchTrialsStartedInRange(trialsPipelineLabel, compTrialsRangeMs.startMs, compTrialsRangeMs.endMs)
         : Promise.resolve(null),
       ...sparkDays.map(d => fetchRev(d, d)),
     ]);
@@ -451,6 +505,8 @@ export async function GET(request: Request) {
   const compProducts = compProductsR.status === 'fulfilled' ? compProductsR.value : new Map();
   const products      = buildProductBreakdown(curProducts, compProducts, productLimit);
   const subs        = subsR.status       === 'fulfilled' ? subsR.value      : null;
+  const curTrials   = curTrialsR.status   === 'fulfilled' ? curTrialsR.value  : null;
+  const compTrials  = compTrialsR.status  === 'fulfilled' ? compTrialsR.value : null;
 
   const sparkline = sparkDays.map((date, i) => ({
     date,
@@ -463,8 +519,8 @@ export async function GET(request: Request) {
     brand, range, yoy,
     period:      { start: cur.start,  end: cur.end,  label: cur.label  },
     comparison:  { start: comp.start, end: comp.end, label: comp.label },
-    current:     buildMetrics(curRev,  curSpend),
-    prev:        buildMetrics(compRev, compSpend),
+    current:     { ...buildMetrics(curRev,  curSpend),  trialsStarted: curTrials  },
+    prev:        { ...buildMetrics(compRev, compSpend), trialsStarted: compTrials },
     products,
     subscriptions: subs,
     sparkline,

@@ -17,6 +17,7 @@ interface BUMetrics {
   newCustomers: number;
   returningCustomers: number;
   cac: number | null;
+  trialsStarted: number | null;
 }
 
 interface BUProduct {
@@ -322,6 +323,12 @@ export default function BusinessUnitsTab() {
               <MetricCard label="Returning"       value={data.current.returningCustomers} prevValue={data.prev.returningCustomers} fmt="number" />
               <MetricCard label="CAC"             value={data.current.cac}              prevValue={data.prev.cac}              fmt="currency" />
             </div>
+
+            {(brand === 'etz' || brand === 'ehc') && data.current.trialsStarted !== null && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <MetricCard label="Trials Started" value={data.current.trialsStarted} prevValue={data.prev.trialsStarted} fmt="number" />
+              </div>
+            )}
 
             {/* Sparkline */}
             {data.sparkline.some(d => d.revenue > 0) && (
