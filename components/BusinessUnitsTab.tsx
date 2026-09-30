@@ -167,11 +167,60 @@ interface TrendPoint {
   returningRevenue: number;
 }
 
+interface WeeklyMetric {
+  current: number;
+  prior: number;
+  pctChange: number | null;
+}
+
+interface WeeklyConversionSide {
+  converted: number;
+  totalEverStarted: number;
+  pct: number | null;
+}
+
+interface WeeklyChannel {
+  channel: string;
+  revenue: number;
+  transactions: number;
+  pct: number;
+}
+
+interface WeeklyUpdateData {
+  connected: boolean;
+  week: { start: string; end: string; label: string; isPartial: boolean };
+  comparisonWeek: { start: string; end: string; label: string };
+  revenue: WeeklyMetric;
+  orders: WeeklyMetric;
+  trials: WeeklyMetric;
+  trialToPaid: { current: WeeklyConversionSide | null; prior: WeeklyConversionSide | null };
+  bestChannel: { name: string; revenue: number; pct: number } | null;
+  channels: WeeklyChannel[];
+}
+
+function todayYmdSydney(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+}
+
+function addDaysYmd(ymd: string, n: number): string {
+  const d = new Date(`${ymd}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 export default function BusinessUnitsTab() {
   const [brand, setBrand] = useState<BrandKey>('pp');
   const [range, setRange] = useState<RangeKey>('last7');
   const [yoy,   setYoy]   = useState(false);
   const [data,  setData]  = useState<BUData | null>(null);
+
+  const [showWeekly,    setShowWeekly]    = useState(false);
+  const [weekAnchor,    setWeekAnchor]    = useState<string>(() => todayYmdSydney());
+  const [weeklyData,    setWeeklyData]    = useState<WeeklyUpdateData | null>(null);
+  const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const [weeklyError,   setWeeklyError]   = useState('');
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
 
@@ -233,10 +282,26 @@ export default function BusinessUnitsTab() {
     }
   }, [brand, range]);
 
+  const loadWeekly = useCallback(async () => {
+    if (!showWeekly) return;
+    setWeeklyLoading(true);
+    setWeeklyError('');
+    try {
+      const res = await fetch(`/api/etz-weekly-update?week=${weekAnchor}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setWeeklyData(await res.json());
+    } catch (e) {
+      setWeeklyError(e instanceof Error ? e.message : 'Failed to load');
+    } finally {
+      setWeeklyLoading(false);
+    }
+  }, [showWeekly, weekAnchor]);
+
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadTrend(); }, [loadTrend]);
   useEffect(() => { loadPPContacts(); }, [loadPPContacts]);
   useEffect(() => { loadPPSegments(); }, [loadPPSegments]);
+  useEffect(() => { loadWeekly(); }, [loadWeekly]);
 
   const color = BRAND_COLOR[brand];
 
@@ -259,18 +324,44 @@ export default function BusinessUnitsTab() {
               </button>
             ))}
           </div>
-          <button
-            onClick={() => setYoy(v => !v)}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
-              yoy
-                ? 'bg-gray-800 text-white border-gray-800'
-                : 'text-gray-600 border-gray-300 hover:bg-gray-100'
-            }`}
-          >
-            {yoy ? '↕ YoY ON' : '↕ YoY'} · year-over-year
-          </button>
+          <div className="flex items-center gap-2">
+            {brand === 'etz' && (
+              <button
+                onClick={() => setShowWeekly(v => !v)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+                  showWeekly
+                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    : 'text-indigo-600 border-indigo-300 hover:bg-indigo-50'
+                }`}
+              >
+                {showWeekly ? '✓ Weekly Update' : '📅 Weekly Update'}
+              </button>
+            )}
+            <button
+              onClick={() => setYoy(v => !v)}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+                yoy
+                  ? 'bg-gray-800 text-white border-gray-800'
+                  : 'text-gray-600 border-gray-300 hover:bg-gray-100'
+              }`}
+            >
+              {yoy ? '↕ YoY ON' : '↕ YoY'} · year-over-year
+            </button>
+          </div>
         </div>
 
+        {showWeekly && brand === 'etz' ? (
+          <WeeklyUpdateSection
+            data={weeklyData}
+            loading={weeklyLoading}
+            error={weeklyError}
+            weekAnchor={weekAnchor}
+            onPrevWeek={() => setWeekAnchor(a => addDaysYmd(a, -7))}
+            onNextWeek={() => setWeekAnchor(a => addDaysYmd(a, 7))}
+            onThisWeek={() => setWeekAnchor(todayYmdSydney())}
+          />
+        ) : (
+          <>
         {/* Date range selector */}
         <div className="flex gap-1 bg-white rounded-xl border border-gray-200 p-1 w-fit flex-wrap">
           {RANGES.map(r => (
@@ -461,7 +552,123 @@ export default function BusinessUnitsTab() {
 
         {/* ── Month-on-month trend ── always visible, loads independently ── */}
         <TrendSection brand={brand} color={color} trend={trend} loading={trendLoading} />
+          </>
+        )}
       </div>
+    </div>
+  );
+}
+
+function WeeklyUpdateSection({
+  data, loading, error, onPrevWeek, onNextWeek, onThisWeek,
+}: {
+  data: WeeklyUpdateData | null;
+  loading: boolean;
+  error: string;
+  weekAnchor: string;
+  onPrevWeek: () => void;
+  onNextWeek: () => void;
+  onThisWeek: () => void;
+}) {
+  return (
+    <div className="space-y-4">
+      {/* Week navigator */}
+      <div className="flex items-center justify-between gap-4 bg-white rounded-xl border border-gray-200 p-3">
+        <button onClick={onPrevWeek} className="px-3 py-1.5 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-100">
+          ← Prev week
+        </button>
+        <div className="text-center">
+          <p className="text-sm font-semibold text-gray-900">{data?.week.label ?? 'Loading…'}</p>
+          {data?.week.isPartial && <p className="text-[10px] text-amber-600 mt-0.5">Week in progress — figures will keep changing</p>}
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={onThisWeek} className="px-3 py-1.5 text-xs font-medium rounded-lg text-indigo-600 hover:bg-indigo-50">
+            This week
+          </button>
+          <button onClick={onNextWeek} className="px-3 py-1.5 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-100">
+            Next week →
+          </button>
+        </div>
+      </div>
+
+      {loading && !data ? (
+        <div className="flex items-center justify-center py-20 text-sm text-gray-400">Loading…</div>
+      ) : error ? (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">{error}</div>
+      ) : data ? (
+        <>
+          <p className="text-xs text-gray-400">
+            <span className="font-medium text-gray-600">{data.week.label}</span>
+            {' · '}
+            <span className="italic">vs {data.comparisonWeek.label} last year</span>
+          </p>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <MetricCard label="Revenue"        value={data.revenue.current} prevValue={data.revenue.prior} fmt="currency" />
+            <MetricCard label="Trials Started" value={data.trials.current}  prevValue={data.trials.prior}  fmt="number"   />
+            <MetricCard label="Orders"         value={data.orders.current}  prevValue={data.orders.prior}  fmt="number"   />
+          </div>
+
+          {/* Trial to paid */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Trial → Paid</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-2xl font-bold text-gray-900">
+                  {data.trialToPaid.current?.pct != null ? `${data.trialToPaid.current.pct}%` : '—'}
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {data.trialToPaid.current
+                    ? `${NUM.format(data.trialToPaid.current.converted)} of ${NUM.format(data.trialToPaid.current.totalEverStarted)} converted`
+                    : 'No data'}
+                </p>
+                <p className="text-[10px] text-gray-400 mt-1">This week</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-gray-400">
+                  {data.trialToPaid.prior?.pct != null ? `${data.trialToPaid.prior.pct}%` : '—'}
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {data.trialToPaid.prior
+                    ? `${NUM.format(data.trialToPaid.prior.converted)} of ${NUM.format(data.trialToPaid.prior.totalEverStarted)} converted`
+                    : 'No data'}
+                </p>
+                <p className="text-[10px] text-gray-400 mt-1">Same week last year</p>
+              </div>
+            </div>
+            <p className="text-[10px] text-gray-400 mt-3">
+              This week&apos;s % is a live snapshot, not a final result — trials still in progress (not yet expired or converted) aren&apos;t counted, so it will keep changing as they resolve. Last year&apos;s figure had a full year to settle and is much closer to final.
+            </p>
+          </div>
+
+          {/* Revenue by channel */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Revenue by Channel</p>
+            {data.bestChannel && (
+              <p className="text-sm text-gray-700 mb-3">
+                Best channel: <span className="font-semibold">{data.bestChannel.name}</span>
+                {' '}({data.bestChannel.pct}%, {AUD.format(data.bestChannel.revenue)})
+              </p>
+            )}
+            {data.channels.length > 0 ? (
+              <div className="space-y-2">
+                {data.channels.map(c => (
+                  <div key={c.channel} className="flex items-center gap-3">
+                    <span className="text-sm text-gray-700 w-32 shrink-0 truncate">{c.channel}</span>
+                    <div className="flex-1 relative h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="absolute inset-y-0 left-0 rounded-full bg-indigo-500" style={{ width: `${c.pct}%` }} />
+                    </div>
+                    <span className="text-xs text-gray-500 w-10 text-right">{c.pct}%</span>
+                    <span className="text-xs font-medium text-gray-900 w-20 text-right">{AUD.format(c.revenue)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400">No channel data for this week.</p>
+            )}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
