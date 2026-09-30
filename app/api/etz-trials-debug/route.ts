@@ -32,13 +32,14 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const start = searchParams.get('start') ?? '2026-09-01';
   const end   = searchParams.get('end')   ?? '2026-09-29';
+  const pipelineFilter = searchParams.get('pipeline') ?? 'etz';
   const startMs = new Date(`${start}T00:00:00+10:00`).getTime();
   const endMs   = new Date(`${end}T23:59:59+10:00`).getTime();
 
   const plRes = await fetch(`${HS_BASE}/crm/v3/pipelines/deals`, { headers: hsHeaders(), cache: 'no-store' });
   const plJson = await plRes.json() as { results: Array<{ id: string; label: string; stages: Array<{ id: string; label: string }> }> };
 
-  const matchingPipelines = plJson.results.filter(p => p.label.toLowerCase().includes('etz'));
+  const matchingPipelines = plJson.results.filter(p => p.label.toLowerCase().includes(pipelineFilter.toLowerCase()));
 
   const perPipeline = await Promise.all(matchingPipelines.map(async pipeline => {
     // Count deals per stage created in the window
