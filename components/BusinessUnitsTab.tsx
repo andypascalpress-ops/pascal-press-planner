@@ -167,35 +167,35 @@ interface TrendPoint {
   returningRevenue: number;
 }
 
-interface WeeklyMetric {
+interface MonthlyMetric {
   current: number;
   prior: number;
   pctChange: number | null;
 }
 
-interface WeeklyConversionSide {
+interface MonthlyConversionSide {
   converted: number;
   totalEverStarted: number;
   pct: number | null;
 }
 
-interface WeeklyChannel {
+interface MonthlyChannel {
   channel: string;
   revenue: number;
   transactions: number;
   pct: number;
 }
 
-interface WeeklyUpdateData {
+interface MonthlyUpdateData {
   connected: boolean;
-  week: { start: string; end: string; label: string; isPartial: boolean };
-  comparisonWeek: { start: string; end: string; label: string };
-  revenue: WeeklyMetric;
-  orders: WeeklyMetric;
-  trials: WeeklyMetric;
-  trialToPaid: { current: WeeklyConversionSide | null; prior: WeeklyConversionSide | null };
+  month: { key: string; start: string; end: string; label: string; isPartial: boolean };
+  comparisonMonth: { key: string; start: string; end: string; label: string };
+  revenue: MonthlyMetric;
+  orders: MonthlyMetric;
+  trials: MonthlyMetric;
+  trialToPaid: { current: MonthlyConversionSide | null; prior: MonthlyConversionSide | null };
   bestChannel: { name: string; revenue: number; pct: number } | null;
-  channels: WeeklyChannel[];
+  channels: MonthlyChannel[];
 }
 
 function todayYmdSydney(): string {
@@ -204,10 +204,12 @@ function todayYmdSydney(): string {
   }).format(new Date());
 }
 
-function addDaysYmd(ymd: string, n: number): string {
-  const d = new Date(`${ymd}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
+function addMonthsToKey(monthKey: string, n: number): string {
+  const [y, m] = monthKey.split('-').map(Number);
+  let nm = m! + n, ny = y!;
+  while (nm > 12) { nm -= 12; ny++; }
+  while (nm < 1)  { nm += 12; ny--; }
+  return `${ny}-${String(nm).padStart(2, '0')}`;
 }
 
 export default function BusinessUnitsTab() {
@@ -216,11 +218,11 @@ export default function BusinessUnitsTab() {
   const [yoy,   setYoy]   = useState(false);
   const [data,  setData]  = useState<BUData | null>(null);
 
-  const [showWeekly,    setShowWeekly]    = useState(false);
-  const [weekAnchor,    setWeekAnchor]    = useState<string>(() => todayYmdSydney());
-  const [weeklyData,    setWeeklyData]    = useState<WeeklyUpdateData | null>(null);
-  const [weeklyLoading, setWeeklyLoading] = useState(false);
-  const [weeklyError,   setWeeklyError]   = useState('');
+  const [showMonthly,    setShowMonthly]    = useState(false);
+  const [monthAnchor,    setMonthAnchor]    = useState<string>(() => todayYmdSydney().slice(0, 7));
+  const [monthlyData,    setMonthlyData]    = useState<MonthlyUpdateData | null>(null);
+  const [monthlyLoading, setMonthlyLoading] = useState(false);
+  const [monthlyError,   setMonthlyError]   = useState('');
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
 
@@ -282,26 +284,26 @@ export default function BusinessUnitsTab() {
     }
   }, [brand, range]);
 
-  const loadWeekly = useCallback(async () => {
-    if (!showWeekly) return;
-    setWeeklyLoading(true);
-    setWeeklyError('');
+  const loadMonthly = useCallback(async () => {
+    if (!showMonthly) return;
+    setMonthlyLoading(true);
+    setMonthlyError('');
     try {
-      const res = await fetch(`/api/etz-weekly-update?week=${weekAnchor}`);
+      const res = await fetch(`/api/etz-monthly-update?month=${monthAnchor}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setWeeklyData(await res.json());
+      setMonthlyData(await res.json());
     } catch (e) {
-      setWeeklyError(e instanceof Error ? e.message : 'Failed to load');
+      setMonthlyError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
-      setWeeklyLoading(false);
+      setMonthlyLoading(false);
     }
-  }, [showWeekly, weekAnchor]);
+  }, [showMonthly, monthAnchor]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadTrend(); }, [loadTrend]);
   useEffect(() => { loadPPContacts(); }, [loadPPContacts]);
   useEffect(() => { loadPPSegments(); }, [loadPPSegments]);
-  useEffect(() => { loadWeekly(); }, [loadWeekly]);
+  useEffect(() => { loadMonthly(); }, [loadMonthly]);
 
   const color = BRAND_COLOR[brand];
 
@@ -327,14 +329,14 @@ export default function BusinessUnitsTab() {
           <div className="flex items-center gap-2">
             {brand === 'etz' && (
               <button
-                onClick={() => setShowWeekly(v => !v)}
+                onClick={() => setShowMonthly(v => !v)}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
-                  showWeekly
+                  showMonthly
                     ? 'bg-indigo-600 text-white border-indigo-600'
                     : 'text-indigo-600 border-indigo-300 hover:bg-indigo-50'
                 }`}
               >
-                {showWeekly ? '✓ Weekly Update' : '📅 Weekly Update'}
+                {showMonthly ? '✓ Monthly Update' : '📅 Monthly Update'}
               </button>
             )}
             <button
@@ -350,15 +352,14 @@ export default function BusinessUnitsTab() {
           </div>
         </div>
 
-        {showWeekly && brand === 'etz' ? (
-          <WeeklyUpdateSection
-            data={weeklyData}
-            loading={weeklyLoading}
-            error={weeklyError}
-            weekAnchor={weekAnchor}
-            onPrevWeek={() => setWeekAnchor(a => addDaysYmd(a, -7))}
-            onNextWeek={() => setWeekAnchor(a => addDaysYmd(a, 7))}
-            onThisWeek={() => setWeekAnchor(todayYmdSydney())}
+        {showMonthly && brand === 'etz' ? (
+          <MonthlyUpdateSection
+            data={monthlyData}
+            loading={monthlyLoading}
+            error={monthlyError}
+            onPrevMonth={() => setMonthAnchor(k => addMonthsToKey(k, -1))}
+            onNextMonth={() => setMonthAnchor(k => addMonthsToKey(k, 1))}
+            onThisMonth={() => setMonthAnchor(todayYmdSydney().slice(0, 7))}
           />
         ) : (
           <>
@@ -559,34 +560,33 @@ export default function BusinessUnitsTab() {
   );
 }
 
-function WeeklyUpdateSection({
-  data, loading, error, onPrevWeek, onNextWeek, onThisWeek,
+function MonthlyUpdateSection({
+  data, loading, error, onPrevMonth, onNextMonth, onThisMonth,
 }: {
-  data: WeeklyUpdateData | null;
+  data: MonthlyUpdateData | null;
   loading: boolean;
   error: string;
-  weekAnchor: string;
-  onPrevWeek: () => void;
-  onNextWeek: () => void;
-  onThisWeek: () => void;
+  onPrevMonth: () => void;
+  onNextMonth: () => void;
+  onThisMonth: () => void;
 }) {
   return (
     <div className="space-y-4">
-      {/* Week navigator */}
+      {/* Month navigator */}
       <div className="flex items-center justify-between gap-4 bg-white rounded-xl border border-gray-200 p-3">
-        <button onClick={onPrevWeek} className="px-3 py-1.5 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-100">
-          ← Prev week
+        <button onClick={onPrevMonth} className="px-3 py-1.5 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-100">
+          ← Prev month
         </button>
         <div className="text-center">
-          <p className="text-sm font-semibold text-gray-900">{data?.week.label ?? 'Loading…'}</p>
-          {data?.week.isPartial && <p className="text-[10px] text-amber-600 mt-0.5">Week in progress — figures will keep changing</p>}
+          <p className="text-sm font-semibold text-gray-900">{data?.month.label ?? 'Loading…'}</p>
+          {data?.month.isPartial && <p className="text-[10px] text-amber-600 mt-0.5">Month in progress — figures will keep changing</p>}
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={onThisWeek} className="px-3 py-1.5 text-xs font-medium rounded-lg text-indigo-600 hover:bg-indigo-50">
-            This week
+          <button onClick={onThisMonth} className="px-3 py-1.5 text-xs font-medium rounded-lg text-indigo-600 hover:bg-indigo-50">
+            This month
           </button>
-          <button onClick={onNextWeek} className="px-3 py-1.5 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-100">
-            Next week →
+          <button onClick={onNextMonth} className="px-3 py-1.5 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-100">
+            Next month →
           </button>
         </div>
       </div>
@@ -598,9 +598,9 @@ function WeeklyUpdateSection({
       ) : data ? (
         <>
           <p className="text-xs text-gray-400">
-            <span className="font-medium text-gray-600">{data.week.label}</span>
+            <span className="font-medium text-gray-600">{data.month.label}</span>
             {' · '}
-            <span className="italic">vs {data.comparisonWeek.label} last year</span>
+            <span className="italic">vs {data.comparisonMonth.label}</span>
           </p>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -622,7 +622,7 @@ function WeeklyUpdateSection({
                     ? `${NUM.format(data.trialToPaid.current.converted)} of ${NUM.format(data.trialToPaid.current.totalEverStarted)} converted`
                     : 'No data'}
                 </p>
-                <p className="text-[10px] text-gray-400 mt-1">This week</p>
+                <p className="text-[10px] text-gray-400 mt-1">{data.month.label}</p>
               </div>
               <div>
                 <p className="text-2xl font-bold text-gray-400">
@@ -633,11 +633,11 @@ function WeeklyUpdateSection({
                     ? `${NUM.format(data.trialToPaid.prior.converted)} of ${NUM.format(data.trialToPaid.prior.totalEverStarted)} converted`
                     : 'No data'}
                 </p>
-                <p className="text-[10px] text-gray-400 mt-1">Same week last year</p>
+                <p className="text-[10px] text-gray-400 mt-1">{data.comparisonMonth.label}</p>
               </div>
             </div>
             <p className="text-[10px] text-gray-400 mt-3">
-              This week&apos;s % is a live snapshot, not a final result — trials still in progress (not yet expired or converted) aren&apos;t counted, so it will keep changing as they resolve. Last year&apos;s figure had a full year to settle and is much closer to final.
+              This month&apos;s % is a live snapshot, not a final result — trials still in progress (not yet expired or converted) aren&apos;t counted, so it will keep changing as they resolve. Last year&apos;s figure had a full year to settle and is much closer to final.
             </p>
           </div>
 
@@ -664,7 +664,7 @@ function WeeklyUpdateSection({
                 ))}
               </div>
             ) : (
-              <p className="text-xs text-gray-400">No channel data for this week.</p>
+              <p className="text-xs text-gray-400">No channel data for this month.</p>
             )}
           </div>
         </>

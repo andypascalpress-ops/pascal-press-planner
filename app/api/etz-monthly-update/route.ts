@@ -1,19 +1,21 @@
 /**
- * GET /api/etz-weekly-update?week=YYYY-MM-DD
+ * GET /api/etz-monthly-update?month=YYYY-MM
  *
- * Answers the standing weekly report questions for Excel Test Zone:
- *   1. Revenue this week vs the same week last year
- *   2. Free trials started this week vs the same week last year
+ * Answers the standing monthly report questions for Excel Test Zone:
+ *   1. Revenue this month vs the same month last year
+ *   2. Free trials started this month vs the same month last year
  *   3. Trial-to-paid % vs last year
  *   4. Best channel driving revenue, by %
  *
- * `week` is any date inside the target week (Mon-Sun, AEST); defaults to
- * today. The comparison week is 364 days earlier (52 weeks), not a plain
- * calendar-year shift, so the same day-of-week lines up on both sides.
+ * `month` defaults to the current calendar month (AEST). The comparison
+ * month is the same calendar month one year earlier (e.g. September 2026
+ * vs September 2025) — a plain year shift, since unlike a week there's no
+ * day-of-week alignment to preserve.
  *
  * Trial-to-paid is a live snapshot, not a matured-cohort result — see
- * lib/hubspot-trials.ts's fetchTrialConversion for why a recent week's %
- * reads artificially high and keeps changing as more of its trials resolve.
+ * lib/hubspot-trials.ts's fetchTrialConversion for why a still-in-progress
+ * month's % reads artificially high and keeps changing as more of its
+ * trials resolve.
  */
 import { NextResponse } from 'next/server';
 import { fetchETZStripeRevenue } from '@/lib/stripe-revenue';
@@ -29,18 +31,8 @@ function toYMD(d: Date): string {
   }).format(d);
 }
 
-function addDays(ymd: string, n: number): string {
-  const d = new Date(`${ymd}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-
-/** Monday of the ISO week containing `ymd`. */
-function mondayOfWeek(ymd: string): string {
-  const d = new Date(`${ymd}T12:00:00Z`);
-  const day = d.getUTCDay(); // 0 = Sunday
-  const diff = day === 0 ? -6 : 1 - day;
-  return addDays(ymd, diff);
+function daysInMonth(year: number, month: number): number {
+  return new Date(year, month, 0).getDate(); // month is 1-based here
 }
 
 function ymdToMsRangeAEST(start: string, end: string): { startMs: number; endMs: number } {
@@ -50,10 +42,11 @@ function ymdToMsRangeAEST(start: string, end: string): { startMs: number; endMs:
   };
 }
 
-function formatLabel(start: string, end: string): string {
-  const fmt = (ymd: string) => new Date(`${ymd}T12:00:00Z`)
-    .toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'UTC' });
-  return `${fmt(start)} – ${fmt(end)}`;
+function monthLabel(month: string): string {
+  const [y, m] = month.split('-').map(Number);
+  return new Date(Date.UTC(y!, m! - 1, 1)).toLocaleDateString('en-AU', {
+    month: 'long', year: 'numeric', timeZone: 'UTC',
+  });
 }
 
 function pctChange(cur: number, prior: number): number | null {
@@ -63,29 +56,34 @@ function pctChange(cur: number, prior: number): number | null {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const todayYmd = toYMD(new Date());
-  const anchor = searchParams.get('week') ?? todayYmd;
+  const currentMonth = todayYmd.slice(0, 7);
+  const month = searchParams.get('month') ?? currentMonth;
 
-  const weekStart = mondayOfWeek(anchor);
-  const fullWeekEnd = addDays(weekStart, 6);
-  // Cap at today if this is the current (in-progress) week
-  const weekEnd = fullWeekEnd > todayYmd ? todayYmd : fullWeekEnd;
-  const isPartial = weekEnd !== fullWeekEnd;
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    return NextResponse.json({ error: 'month param must be YYYY-MM' }, { status: 400 });
+  }
 
-  // Same week last year — shift by 364 days (52 weeks) so day-of-week stays aligned
-  const compStart = addDays(weekStart, -364);
-  const compEnd   = addDays(weekEnd, -364);
+  const [y, m] = month.split('-').map(Number);
+  const monthStart = `${month}-01`;
+  const fullMonthEnd = `${month}-${String(daysInMonth(y!, m!)).padStart(2, '0')}`;
+  // Cap at today if this is the current (in-progress) month
+  const monthEnd = (month === currentMonth && fullMonthEnd > todayYmd) ? todayYmd : fullMonthEnd;
+  const isPartial = monthEnd !== fullMonthEnd;
 
-  const curMonth  = weekStart.slice(0, 7);
-  const compMonth = compStart.slice(0, 7);
-  const { startMs: curStartMs, endMs: curEndMs }   = ymdToMsRangeAEST(weekStart, weekEnd);
-  const { startMs: compStartMs, endMs: compEndMs } = ymdToMsRangeAEST(compStart, compEnd);
+  // Same calendar month, one year earlier
+  const compMonth = `${y! - 1}-${String(m).padStart(2, '0')}`;
+  const compMonthStart = `${compMonth}-01`;
+  const compMonthEnd = `${compMonth}-${String(Math.min(Number(monthEnd.slice(8, 10)), daysInMonth(y! - 1, m!))).padStart(2, '0')}`;
+
+  const { startMs: curStartMs, endMs: curEndMs }   = ymdToMsRangeAEST(monthStart, monthEnd);
+  const { startMs: compStartMs, endMs: compEndMs } = ymdToMsRangeAEST(compMonthStart, compMonthEnd);
 
   const [curRevR, compRevR, curTrialR, compTrialR, channelR] = await Promise.allSettled([
-    fetchETZStripeRevenue(curMonth,  { accurate: false, dateRange: { start: weekStart, end: weekEnd } }),
-    fetchETZStripeRevenue(compMonth, { accurate: false, dateRange: { start: compStart, end: compEnd } }),
+    fetchETZStripeRevenue(month,     { accurate: false, dateRange: { start: monthStart, end: monthEnd } }),
+    fetchETZStripeRevenue(compMonth, { accurate: false, dateRange: { start: compMonthStart, end: compMonthEnd } }),
     fetchTrialConversion('etz', curStartMs, curEndMs),
     fetchTrialConversion('etz', compStartMs, compEndMs),
-    fetchChannelRevenue(weekStart, weekEnd, 'etz'),
+    fetchChannelRevenue(monthStart, monthEnd, 'etz'),
   ]);
 
   const curRev    = curRevR.status    === 'fulfilled' ? curRevR.value    : null;
@@ -105,8 +103,8 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     connected: true,
-    week:           { start: weekStart, end: weekEnd, label: formatLabel(weekStart, weekEnd), isPartial },
-    comparisonWeek: { start: compStart, end: compEnd, label: formatLabel(compStart, compEnd) },
+    month:           { key: month,     start: monthStart,     end: monthEnd,     label: monthLabel(month),     isPartial },
+    comparisonMonth: { key: compMonth, start: compMonthStart, end: compMonthEnd, label: monthLabel(compMonth) },
     revenue: { current: curRevenue, prior: compRevenue, pctChange: pctChange(curRevenue, compRevenue) },
     orders:  { current: curOrders,  prior: compOrders,  pctChange: pctChange(curOrders, compOrders) },
     trials: {
