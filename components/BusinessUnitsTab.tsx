@@ -617,27 +617,29 @@ function MonthlyUpdateSection({
                 <p className="text-2xl font-bold text-gray-900">
                   {data.trialToPaid.current?.pct != null ? `${data.trialToPaid.current.pct}%` : '—'}
                 </p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  {data.trialToPaid.current
-                    ? `${NUM.format(data.trialToPaid.current.converted)} of ${NUM.format(data.trialToPaid.current.totalEverStarted)} converted`
-                    : 'No data'}
-                </p>
+                {data.trialToPaid.current && (
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {NUM.format(data.trialToPaid.current.converted)} converted to paid,{' '}
+                    {NUM.format(data.trials.current)} still trialing or unconverted
+                  </p>
+                )}
                 <p className="text-[10px] text-gray-400 mt-1">{data.month.label}</p>
               </div>
               <div>
                 <p className="text-2xl font-bold text-gray-400">
                   {data.trialToPaid.prior?.pct != null ? `${data.trialToPaid.prior.pct}%` : '—'}
                 </p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  {data.trialToPaid.prior
-                    ? `${NUM.format(data.trialToPaid.prior.converted)} of ${NUM.format(data.trialToPaid.prior.totalEverStarted)} converted`
-                    : 'No data'}
-                </p>
+                {data.trialToPaid.prior && (
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {NUM.format(data.trialToPaid.prior.converted)} converted to paid,{' '}
+                    {NUM.format(data.trials.prior)} still trialing or unconverted
+                  </p>
+                )}
                 <p className="text-[10px] text-gray-400 mt-1">{data.comparisonMonth.label}</p>
               </div>
             </div>
             <p className="text-[10px] text-gray-400 mt-3">
-              This month&apos;s % is a live snapshot, not a final result — trials still in progress (not yet expired or converted) aren&apos;t counted, so it will keep changing as they resolve. Last year&apos;s figure had a full year to settle and is much closer to final. The &quot;of&quot; total here includes trials that already converted to paid, so it won&apos;t match the Trials Started figure above, which only counts trials still sitting in a trial stage.
+              % = converted ÷ (converted + Trials Started above) — e.g. this month: {data.trialToPaid.current ? NUM.format(data.trialToPaid.current.converted) : '—'} converted ÷ ({data.trialToPaid.current ? NUM.format(data.trialToPaid.current.converted) : '—'} + {NUM.format(data.trials.current)} still trialing) = {data.trialToPaid.current?.pct ?? '—'}%. It&apos;s a live snapshot, not final — the still-trialing count keeps shrinking (and converted keeps rising) as this month&apos;s trials resolve, so this % will keep changing. Last year&apos;s had a full year to settle.
             </p>
           </div>
 
