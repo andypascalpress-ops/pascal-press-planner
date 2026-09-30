@@ -12,6 +12,7 @@ import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-reven
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
 import { fetchMetaSpend, META_PP_ACCOUNT_ID, META_ETZ_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
 import { PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
+import { fetchTrialsStartedInRange } from '@/lib/hubspot-trials';
 
 export const dynamic = 'force-dynamic';
 
@@ -306,55 +307,11 @@ async function fetchHubSpotCurrentTrials(pipelineLabel: string): Promise<number>
   } catch { return 0; }
 }
 
-/**
- * Trials started within [startMs, endMs] — deals in a "Trial" stage
- * (Active Trial / Expired Trial), created in the ETZ/EHC HubSpot pipeline
- * during the window.
- *
- * Confirmed via /api/etz-trials-debug against the live account: the
- * earlier "every deal in this pipeline is a trial" assumption (from
- * business-unit-trend's fetchAllTrialsByMonth) counted 642 deals for
- * September, including 245 already-converted "Active Paid" deals and 5
- * "Quote" deals — none of which are trials. Filtering to stages labeled
- * "trial" gave 392 (Active Trial 130 + Expired Trial 262), matching the
- * user's own ETZ trials dashboard (383) far more closely.
- */
-async function fetchTrialsStartedInRange(pipelineLabel: string, startMs: number, endMs: number): Promise<number> {
-  try {
-    const plRes = await fetch(`${HS_BASE}/crm/v3/pipelines/deals`, {
-      headers: hsHeaders(), cache: 'no-store',
-    });
-    if (!plRes.ok) return 0;
-    const { results: pipelines } = await plRes.json() as {
-      results: Array<{ id: string; label: string; stages: Array<{ id: string; label: string }> }>
-    };
-    const pipeline = pipelines.find(p => p.label.toLowerCase().includes(pipelineLabel.toLowerCase()));
-    if (!pipeline) return 0;
-
-    const trialStageIds = pipeline.stages
-      .filter(s => s.label.toLowerCase().includes('trial'))
-      .map(s => s.id);
-    if (trialStageIds.length === 0) return 0;
-
-    const search = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
-      method: 'POST',
-      headers: hsHeaders(),
-      body: JSON.stringify({
-        filterGroups: [{ filters: [
-          { propertyName: 'pipeline',   operator: 'EQ',  value: pipeline.id },
-          { propertyName: 'dealstage',  operator: 'IN',  values: trialStageIds },
-          { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
-          { propertyName: 'createdate', operator: 'LTE', value: String(endMs) },
-        ]}],
-        limit: 1,
-      }),
-      cache: 'no-store',
-    });
-    if (!search.ok) return 0;
-    const { total } = await search.json() as { total: number };
-    return total ?? 0;
-  } catch { return 0; }
-}
+// fetchTrialsStartedInRange moved to lib/hubspot-trials.ts (shared with the
+// new /api/etz-weekly-update route) — filters to stages labeled "trial",
+// not every deal in the pipeline. See that file's comment for the
+// verification against the live account (September was overcounted 642 vs
+// the real 408 before this fix).
 
 async function fetchStripeSubscriptionMetrics(key: string, brand: BrandParam) {
   if (!key) return null;
