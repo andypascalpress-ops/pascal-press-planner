@@ -637,7 +637,7 @@ function MonthlyUpdateSection({
               </div>
             </div>
             <p className="text-[10px] text-gray-400 mt-3">
-              This month&apos;s % is a live snapshot, not a final result — trials still in progress (not yet expired or converted) aren&apos;t counted, so it will keep changing as they resolve. Last year&apos;s figure had a full year to settle and is much closer to final.
+              This month&apos;s % is a live snapshot, not a final result — trials still in progress (not yet expired or converted) aren&apos;t counted, so it will keep changing as they resolve. Last year&apos;s figure had a full year to settle and is much closer to final. The &quot;of&quot; total here includes trials that already converted to paid, so it won&apos;t match the Trials Started figure above, which only counts trials still sitting in a trial stage.
             </p>
           </div>
 
