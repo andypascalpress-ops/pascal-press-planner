@@ -307,11 +307,17 @@ async function fetchHubSpotCurrentTrials(pipelineLabel: string): Promise<number>
 }
 
 /**
- * Trials started within [startMs, endMs] — deals created in the ETZ/EHC
- * HubSpot pipeline during the window. No dealstage or amount filter: every
- * deal in this pipeline represents a trial by design (trial deals may be
- * created with a null amount, not '0'), matching the convention already
- * established in business-unit-trend's fetchAllTrialsByMonth.
+ * Trials started within [startMs, endMs] — deals in a "Trial" stage
+ * (Active Trial / Expired Trial), created in the ETZ/EHC HubSpot pipeline
+ * during the window.
+ *
+ * Confirmed via /api/etz-trials-debug against the live account: the
+ * earlier "every deal in this pipeline is a trial" assumption (from
+ * business-unit-trend's fetchAllTrialsByMonth) counted 642 deals for
+ * September, including 245 already-converted "Active Paid" deals and 5
+ * "Quote" deals — none of which are trials. Filtering to stages labeled
+ * "trial" gave 392 (Active Trial 130 + Expired Trial 262), matching the
+ * user's own ETZ trials dashboard (383) far more closely.
  */
 async function fetchTrialsStartedInRange(pipelineLabel: string, startMs: number, endMs: number): Promise<number> {
   try {
@@ -319,9 +325,16 @@ async function fetchTrialsStartedInRange(pipelineLabel: string, startMs: number,
       headers: hsHeaders(), cache: 'no-store',
     });
     if (!plRes.ok) return 0;
-    const { results: pipelines } = await plRes.json() as { results: Array<{ id: string; label: string }> };
+    const { results: pipelines } = await plRes.json() as {
+      results: Array<{ id: string; label: string; stages: Array<{ id: string; label: string }> }>
+    };
     const pipeline = pipelines.find(p => p.label.toLowerCase().includes(pipelineLabel.toLowerCase()));
     if (!pipeline) return 0;
+
+    const trialStageIds = pipeline.stages
+      .filter(s => s.label.toLowerCase().includes('trial'))
+      .map(s => s.id);
+    if (trialStageIds.length === 0) return 0;
 
     const search = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
       method: 'POST',
@@ -329,6 +342,7 @@ async function fetchTrialsStartedInRange(pipelineLabel: string, startMs: number,
       body: JSON.stringify({
         filterGroups: [{ filters: [
           { propertyName: 'pipeline',   operator: 'EQ',  value: pipeline.id },
+          { propertyName: 'dealstage',  operator: 'IN',  values: trialStageIds },
           { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
           { propertyName: 'createdate', operator: 'LTE', value: String(endMs) },
         ]}],

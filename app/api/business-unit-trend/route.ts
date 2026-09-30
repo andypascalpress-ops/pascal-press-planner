@@ -76,6 +76,12 @@ async function fetchRevenue(brand: BrandParam, month: string): Promise<{ revenue
 /**
  * Single HubSpot search covering all 12 months.
  * Returns a Map<YYYY-MM, count> — one API call instead of 12.
+ *
+ * Only counts deals in a "Trial" stage (Active Trial / Expired Trial), not
+ * every deal in the pipeline. Confirmed via /api/etz-trials-debug against
+ * the live account: counting the whole pipeline included already-converted
+ * "Active Paid" and "Quote" deals, overcounting September by ~65% against
+ * the user's own ETZ trials dashboard.
  */
 async function fetchAllTrialsByMonth(
   pipelineLabel: string,
@@ -83,29 +89,35 @@ async function fetchAllTrialsByMonth(
 ): Promise<Map<string, number>> {
   const map = new Map<string, number>();
   try {
-    // Resolve pipeline ID
+    // Resolve pipeline ID and its trial-labeled stages
     const plRes = await fetch(`${HS_BASE}/crm/v3/pipelines/deals`, {
       headers: hsHeaders(), cache: 'no-store',
     });
     if (!plRes.ok) return map;
     const { results: pipelines } = await plRes.json() as {
-      results: Array<{ id: string; label: string }>
+      results: Array<{ id: string; label: string; stages: Array<{ id: string; label: string }> }>
     };
     const pipeline = pipelines.find(p => p.label.toLowerCase().includes(pipelineLabel.toLowerCase()));
     if (!pipeline) return map;
+
+    const trialStageIds = pipeline.stages
+      .filter(s => s.label.toLowerCase().includes('trial'))
+      .map(s => s.id);
+    if (trialStageIds.length === 0) return map;
 
     const [y, m] = startMonth.split('-').map(Number);
     const startMs = new Date(Date.UTC(y!, m! - 1, 1)).getTime();
     const nowMs   = Date.now();
 
-    // Paginate through ALL deals in the pipeline created in the last 12 months.
-    // No amount filter — trial deals may be created with null amount (not '0'),
-    // and all ETZ/EHC pipeline deals represent trials by design.
+    // Paginate through ALL trial-stage deals in the pipeline created in the
+    // last 12 months. No amount filter — trial deals may be created with
+    // null amount, not '0'.
     let after: string | undefined;
     do {
       const body: Record<string, unknown> = {
         filterGroups: [{ filters: [
           { propertyName: 'pipeline',   operator: 'EQ',  value: pipeline.id     },
+          { propertyName: 'dealstage',  operator: 'IN',  values: trialStageIds  },
           { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
           { propertyName: 'createdate', operator: 'LTE', value: String(nowMs)   },
         ]}],
