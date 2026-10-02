@@ -17,6 +17,13 @@
  *   - exclusiveByBrand[brand] — tagged with that brand and no other
  *   - multipleBrands          — tagged with 2+ brands
  *   - unattributed            — no brand ticked at all
+ *
+ * Queries run SEQUENTIALLY, not via Promise.all. An earlier version fired
+ * all ~13 HubSpot search calls at once and silently got back a mix of
+ * rate-limited (429) responses — countContacts swallows a failed request
+ * as 0 rather than throwing, so the bug showed up as plausible-looking but
+ * wrong zeros, not a visible error. Sequential calls (plus a couple of
+ * retries on transient failures) cost a few extra seconds but are correct.
  */
 import { NextResponse } from 'next/server';
 
@@ -30,18 +37,31 @@ function hsHeaders() {
   };
 }
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function countContacts(filters: object[]): Promise<number> {
-  try {
-    const res = await fetch(`${HS_BASE}/crm/v3/objects/contacts/search`, {
-      method: 'POST',
-      headers: hsHeaders(),
-      body: JSON.stringify({ filterGroups: [{ filters }], limit: 1 }),
-      cache: 'no-store',
-    });
-    if (!res.ok) return 0;
-    const json = await res.json() as { total: number };
-    return json.total ?? 0;
-  } catch { return 0; }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${HS_BASE}/crm/v3/objects/contacts/search`, {
+        method: 'POST',
+        headers: hsHeaders(),
+        body: JSON.stringify({ filterGroups: [{ filters }], limit: 1 }),
+        cache: 'no-store',
+      });
+      if (res.status === 429 || res.status >= 500) {
+        await sleep(300 * (attempt + 1));
+        continue;
+      }
+      if (!res.ok) return 0;
+      const json = await res.json() as { total: number };
+      return json.total ?? 0;
+    } catch {
+      await sleep(300 * (attempt + 1));
+    }
+  }
+  return 0;
 }
 
 interface BrandOption { label: string; value: string }
@@ -62,34 +82,35 @@ export async function GET() {
 
   const MARKETABLE = { propertyName: 'hs_marketable_status', operator: 'EQ', value: 'true' };
 
-  const [total, unattributed, anyBrand, exclusiveEntries, overlapEntries] = await Promise.all([
-    countContacts([MARKETABLE]),
-    countContacts([MARKETABLE, { propertyName: 'brand', operator: 'NOT_HAS_PROPERTY' }]),
-    countContacts([MARKETABLE, { propertyName: 'brand', operator: 'HAS_PROPERTY' }]),
-    Promise.all(brandNames.map(async name => {
-      const others = brandNames.filter(n => n !== name);
+  const total        = await countContacts([MARKETABLE]);
+  const unattributed = await countContacts([MARKETABLE, { propertyName: 'brand', operator: 'NOT_HAS_PROPERTY' }]);
+  const anyBrand     = await countContacts([MARKETABLE, { propertyName: 'brand', operator: 'HAS_PROPERTY' }]);
+
+  const exclusiveByBrand: Record<string, number> = {};
+  for (const name of brandNames) {
+    const others = brandNames.filter(n => n !== name);
+    exclusiveByBrand[name] = await countContacts([
+      MARKETABLE,
+      { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: name },
+      ...others.map(o => ({ propertyName: 'brand', operator: 'NOT_CONTAINS_TOKEN', value: o })),
+    ]);
+  }
+
+  const overlapPairs: Array<{ a: string; b: string; count: number }> = [];
+  for (let i = 0; i < brandNames.length; i++) {
+    for (let j = i + 1; j < brandNames.length; j++) {
+      const a = brandNames[i]!, b = brandNames[j]!;
       const count = await countContacts([
         MARKETABLE,
-        { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: name },
-        ...others.map(o => ({ propertyName: 'brand', operator: 'NOT_CONTAINS_TOKEN', value: o })),
+        { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: a },
+        { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: b },
       ]);
-      return [name, count] as const;
-    })),
-    Promise.all(
-      brandNames.flatMap((a, i) => brandNames.slice(i + 1).map(b => [a, b] as const))
-        .map(async ([a, b]) => {
-          const count = await countContacts([
-            MARKETABLE,
-            { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: a },
-            { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: b },
-          ]);
-          return { a, b, count };
-        }),
-    ),
-  ]);
+      if (count > 0) overlapPairs.push({ a, b, count });
+    }
+  }
+  overlapPairs.sort((a, b) => b.count - a.count);
 
-  const exclusiveByBrand = Object.fromEntries(exclusiveEntries);
-  const sumExclusive = exclusiveEntries.reduce((s, [, c]) => s + c, 0);
+  const sumExclusive = Object.values(exclusiveByBrand).reduce((s, c) => s + c, 0);
   const multipleBrands = anyBrand - sumExclusive;
 
   return NextResponse.json({
@@ -98,7 +119,7 @@ export async function GET() {
     exclusiveByBrand,
     multipleBrands,
     unattributed,
-    overlapPairs: overlapEntries.filter(o => o.count > 0).sort((a, b) => b.count - a.count),
+    overlapPairs,
     reconciliation: {
       cleanPartitionSum: sumExclusive + multipleBrands + unattributed,
     },
