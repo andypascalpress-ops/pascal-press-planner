@@ -97,14 +97,21 @@ export async function GET() {
     await sleep(150);
   }
 
-  // PP's product line is branded "Excel" (e.g. "Excel NAPLAN Book Pack Year 3").
-  // Check how many of the untagged-with-a-purchase contacts bought an
-  // Excel-branded product, vs some other brand's naming.
+  // PP sells under two imprints seen in this project's own product
+  // breakdowns: "Excel" (e.g. "Excel NAPLAN Book Pack Year 3") and
+  // "Targeting" (e.g. "Targeting English Book Pack Year 3"). Checking only
+  // "Excel" would undercount genuine PP purchasers.
   let untaggedWithExcelProduct: number | null = null;
+  let untaggedWithTargetingProduct: number | null = null;
   if (productsProp) {
     untaggedWithExcelProduct = await countContacts([
       MARKETABLE, NO_BRAND,
       { propertyName: productsProp.name, operator: 'CONTAINS_TOKEN', value: 'Excel' },
+    ]);
+    await sleep(150);
+    untaggedWithTargetingProduct = await countContacts([
+      MARKETABLE, NO_BRAND,
+      { propertyName: productsProp.name, operator: 'CONTAINS_TOKEN', value: 'Targeting' },
     ]);
   }
 
@@ -119,5 +126,6 @@ export async function GET() {
     untaggedWithAnySourceStore,
     untaggedWithAnyProductsBought,
     untaggedWithExcelProduct,
+    untaggedWithTargetingProduct,
   });
 }
