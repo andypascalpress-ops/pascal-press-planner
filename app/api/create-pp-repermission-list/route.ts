@@ -54,16 +54,17 @@ export async function GET() {
               filterType: 'PROPERTY',
               property: 'brand',
               operation: {
-                propertyType: 'enumeration',
-                operator: 'IS_ANY_OF',
+                operationType: 'ENUMERATION',
+                operator: 'IS_EQUAL_TO',
                 values: ['Pascal Press'],
+                includeObjectsWithNoValueSet: false,
               },
             },
             {
               filterType: 'PROPERTY',
               property: 'hs_marketable_status',
               operation: {
-                propertyType: 'bool',
+                operationType: 'BOOL',
                 operator: 'IS_NOT_EQUAL_TO',
                 value: true,
                 includeObjectsWithNoValueSet: true,
@@ -73,7 +74,7 @@ export async function GET() {
               filterType: 'PROPERTY',
               property: 'hs_email_optout',
               operation: {
-                propertyType: 'bool',
+                operationType: 'BOOL',
                 operator: 'IS_NOT_EQUAL_TO',
                 value: true,
                 includeObjectsWithNoValueSet: true,
@@ -83,8 +84,9 @@ export async function GET() {
               filterType: 'PROPERTY',
               property: PRODUCT_PROPERTY,
               operation: {
-                propertyType: 'alltypes',
+                operationType: 'ALL_PROPERTY',
                 operator: 'IS_KNOWN',
+                includeObjectsWithNoValueSet: false,
               },
             },
           ],
