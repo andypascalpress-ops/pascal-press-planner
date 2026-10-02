@@ -16,7 +16,17 @@
  * Buckets:
  *   - exclusiveByBrand[brand] — tagged with that brand and no other
  *   - multipleBrands          — tagged with 2+ brands
- *   - unattributed            — no brand ticked at all
+ *   - unattributed.total      — no brand ticked at all
+ *   - unattributed.likelyPascalPress — of the untagged contacts, those
+ *     whose Unific purchase history ("Last Product Bought") matches one of
+ *     PP's two imprints ("Excel" or "Targeting"). PP's tagging rate has
+ *     been consistently lower than ETZ's since 2022 (verified separately),
+ *     and ~46% of untagged contacts turned out to have a PP-branded
+ *     purchase — strong evidence the Brand checkbox misses real PP
+ *     customers rather than PP genuinely having fewer. This is a
+ *     corroborated estimate, not a confirmed tag, so it's broken out
+ *     rather than folded into exclusiveByBrand.
+ *   - unattributed.unknown    — untagged with no identifiable brand signal
  *
  * This needs ~14 sequential HubSpot search calls (one per bucket/overlap
  * pair). Two earlier versions returned plausible-looking but wrong data:
@@ -79,6 +89,16 @@ async function countContactsThrottled(filters: object[]): Promise<number | null>
 }
 
 interface BrandOption { label: string; value: string }
+interface HubSpotProperty { name: string; label: string }
+
+async function findProperty(labelPattern: RegExp): Promise<HubSpotProperty | null> {
+  const res = await fetch(`${HS_BASE}/crm/v3/properties/contacts?limit=500`, {
+    headers: hsHeaders(), cache: 'no-store',
+  });
+  if (!res.ok) return null;
+  const { results } = await res.json() as { results: HubSpotProperty[] };
+  return results.find(p => labelPattern.test(p.label)) ?? null;
+}
 
 export async function GET() {
   if (!process.env.HUBSPOT_CRM_TOKEN && !process.env.HUBSPOT_API_KEY) {
@@ -93,6 +113,7 @@ export async function GET() {
   }
   const brandProp = await propRes.json() as { options?: BrandOption[] };
   const brandNames = (brandProp.options ?? []).map(o => o.value);
+  const productsProp = await findProperty(/products?\s*(bought|purchased)/i);
 
   const MARKETABLE = { propertyName: 'hs_marketable_status', operator: 'EQ', value: 'true' };
   const failedQueries: string[] = [];
@@ -101,9 +122,33 @@ export async function GET() {
     return n ?? 0;
   };
 
+  const NO_BRAND = { propertyName: 'brand', operator: 'NOT_HAS_PROPERTY' };
+
   const total        = need('total',        await countContactsThrottled([MARKETABLE]));
-  const unattributed = need('unattributed', await countContactsThrottled([MARKETABLE, { propertyName: 'brand', operator: 'NOT_HAS_PROPERTY' }]));
+  const unattributed = need('unattributed', await countContactsThrottled([MARKETABLE, NO_BRAND]));
   const anyBrand     = need('anyBrand',     await countContactsThrottled([MARKETABLE, { propertyName: 'brand', operator: 'HAS_PROPERTY' }]));
+
+  // Of the untagged contacts, how many have a purchase history (via Unific)
+  // showing a Pascal Press-branded product? PP sells under two imprints
+  // seen in this project's own product breakdowns — "Excel" and
+  // "Targeting" — so a contact matching either is very likely a genuine
+  // PP customer the Brand checkbox never got set for. Confirmed via a
+  // one-off diagnostic against the live account before building this in:
+  // ~46% of the untagged bucket matched one of these two imprints.
+  let likelyPascalPress = 0;
+  if (productsProp) {
+    const excelMatch = need('unattributed:excel', await countContactsThrottled([
+      MARKETABLE, NO_BRAND,
+      { propertyName: productsProp.name, operator: 'CONTAINS_TOKEN', value: 'Excel' },
+    ]));
+    const targetingMatch = need('unattributed:targeting', await countContactsThrottled([
+      MARKETABLE, NO_BRAND,
+      { propertyName: productsProp.name, operator: 'CONTAINS_TOKEN', value: 'Targeting' },
+    ]));
+    // "Last Product Bought" holds one value per contact, so a name can't
+    // match both imprints at once — safe to add directly, no overlap.
+    likelyPascalPress = excelMatch + targetingMatch;
+  }
 
   const exclusiveByBrand: Record<string, number> = {};
   for (const name of brandNames) {
@@ -144,9 +189,16 @@ export async function GET() {
     total,
     exclusiveByBrand,
     multipleBrands,
-    unattributed,
+    unattributed: {
+      total: unattributed,
+      likelyPascalPress,
+      unknown: unattributed - likelyPascalPress,
+    },
     overlapPairs,
     reconciliation: {
+      // likelyPascalPress is a sub-split of unattributed, not a new
+      // category — it must not be added again here or the total would
+      // double-count those contacts.
       cleanPartitionSum: sumExclusive + multipleBrands + unattributed,
     },
   });
