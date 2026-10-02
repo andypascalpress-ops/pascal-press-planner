@@ -94,6 +94,18 @@ export async function GET() {
       MARKETABLE, NO_BRAND,
       { propertyName: productsProp.name, operator: 'HAS_PROPERTY' },
     ]);
+    await sleep(150);
+  }
+
+  // PP's product line is branded "Excel" (e.g. "Excel NAPLAN Book Pack Year 3").
+  // Check how many of the untagged-with-a-purchase contacts bought an
+  // Excel-branded product, vs some other brand's naming.
+  let untaggedWithExcelProduct: number | null = null;
+  if (productsProp) {
+    untaggedWithExcelProduct = await countContacts([
+      MARKETABLE, NO_BRAND,
+      { propertyName: productsProp.name, operator: 'CONTAINS_TOKEN', value: 'Excel' },
+    ]);
   }
 
   return NextResponse.json({
@@ -106,5 +118,6 @@ export async function GET() {
     untaggedWithPascalPressSourceStore,
     untaggedWithAnySourceStore,
     untaggedWithAnyProductsBought,
+    untaggedWithExcelProduct,
   });
 }
