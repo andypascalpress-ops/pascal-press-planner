@@ -198,6 +198,24 @@ interface MonthlyUpdateData {
   channels: MonthlyChannel[];
 }
 
+interface ContactsBreakdownData {
+  connected: boolean;
+  error?: string;
+  total: number;
+  exclusiveByBrand: Record<string, number>;
+  multipleBrands: number;
+  unattributed: number;
+  overlapPairs: Array<{ a: string; b: string; count: number }>;
+  reconciliation: { cleanPartitionSum: number };
+}
+
+const HS_BRAND_TO_KEY: Record<string, BrandKey> = {
+  'Pascal Press':      'pp',
+  'Excel Test Zone':   'etz',
+  'Blake Education':   'blake',
+  'Excel HSC Copilot': 'ehc',
+};
+
 function todayYmdSydney(): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -223,6 +241,11 @@ export default function BusinessUnitsTab() {
   const [monthlyData,    setMonthlyData]    = useState<MonthlyUpdateData | null>(null);
   const [monthlyLoading, setMonthlyLoading] = useState(false);
   const [monthlyError,   setMonthlyError]   = useState('');
+
+  const [showContactsBreakdown,    setShowContactsBreakdown]    = useState(false);
+  const [contactsBreakdownData,    setContactsBreakdownData]    = useState<ContactsBreakdownData | null>(null);
+  const [contactsBreakdownLoading, setContactsBreakdownLoading] = useState(false);
+  const [contactsBreakdownError,   setContactsBreakdownError]   = useState('');
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
 
@@ -299,11 +322,28 @@ export default function BusinessUnitsTab() {
     }
   }, [showMonthly, monthAnchor]);
 
+  const loadContactsBreakdown = useCallback(async () => {
+    if (!showContactsBreakdown) return;
+    setContactsBreakdownLoading(true);
+    setContactsBreakdownError('');
+    try {
+      const res = await fetch('/api/hubspot-contacts-breakdown');
+      const json = await res.json();
+      if (!res.ok || json.connected === false) throw new Error(json.error ?? `HTTP ${res.status}`);
+      setContactsBreakdownData(json);
+    } catch (e) {
+      setContactsBreakdownError(e instanceof Error ? e.message : 'Failed to load');
+    } finally {
+      setContactsBreakdownLoading(false);
+    }
+  }, [showContactsBreakdown]);
+
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadTrend(); }, [loadTrend]);
   useEffect(() => { loadPPContacts(); }, [loadPPContacts]);
   useEffect(() => { loadPPSegments(); }, [loadPPSegments]);
   useEffect(() => { loadMonthly(); }, [loadMonthly]);
+  useEffect(() => { loadContactsBreakdown(); }, [loadContactsBreakdown]);
 
   const color = BRAND_COLOR[brand];
 
@@ -327,9 +367,19 @@ export default function BusinessUnitsTab() {
             ))}
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setShowContactsBreakdown(v => !v); setShowMonthly(false); }}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+                showContactsBreakdown
+                  ? 'bg-teal-600 text-white border-teal-600'
+                  : 'text-teal-600 border-teal-300 hover:bg-teal-50'
+              }`}
+            >
+              {showContactsBreakdown ? '✓ HubSpot Marketing Contacts' : '👥 HubSpot Marketing Contacts'}
+            </button>
             {brand === 'etz' && (
               <button
-                onClick={() => setShowMonthly(v => !v)}
+                onClick={() => { setShowMonthly(v => !v); setShowContactsBreakdown(false); }}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
                   showMonthly
                     ? 'bg-indigo-600 text-white border-indigo-600'
@@ -352,7 +402,13 @@ export default function BusinessUnitsTab() {
           </div>
         </div>
 
-        {showMonthly && brand === 'etz' ? (
+        {showContactsBreakdown ? (
+          <ContactsBreakdownSection
+            data={contactsBreakdownData}
+            loading={contactsBreakdownLoading}
+            error={contactsBreakdownError}
+          />
+        ) : showMonthly && brand === 'etz' ? (
           <MonthlyUpdateSection
             data={monthlyData}
             loading={monthlyLoading}
@@ -556,6 +612,113 @@ export default function BusinessUnitsTab() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function ContactsBreakdownSection({
+  data, loading, error,
+}: {
+  data: ContactsBreakdownData | null;
+  loading: boolean;
+  error: string;
+}) {
+  if (loading && !data) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <div className="flex items-center justify-center py-20 text-sm text-gray-400">Loading…</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+        Could not load the breakdown — {error}
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const brandRows = Object.entries(data.exclusiveByBrand)
+    .map(([name, count]) => ({ name, count, key: HS_BRAND_TO_KEY[name] }))
+    .sort((a, b) => b.count - a.count);
+
+  const rows = [
+    ...brandRows.map(r => ({ label: r.name, count: r.count, color: r.key ? BRAND_COLOR[r.key] : '#6b7280' })),
+    { label: 'Multiple business units', count: data.multipleBrands, color: '#9ca3af' },
+    { label: 'No business unit tagged', count: data.unattributed,   color: '#d1d5db' },
+  ];
+
+  const reconciles = data.reconciliation.cleanPartitionSum === data.total;
+
+  return (
+    <div className="space-y-4">
+      {/* Explanation */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">What this is</p>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          HubSpot&apos;s <span className="font-medium">&quot;marketing contact&quot;</span> count ({NUM.format(data.total)}) is every contact with <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">hs_marketable_status = true</code> — HubSpot&apos;s own flag for billable, opted-in contacts. To see which business unit each contact belongs to, we use the <span className="font-medium">Brand</span> property.
+        </p>
+        <p className="text-sm text-gray-700 leading-relaxed mt-2">
+          The catch: Brand is a <span className="font-medium">multi-select checkbox</span>, not a single dropdown — a contact can be tagged with more than one business unit at once (e.g. someone who bought from both Pascal Press and Excel Test Zone). So there&apos;s no honest way to force everyone into exactly one of four buckets. Instead, each brand below counts only contacts tagged with <span className="font-medium">that brand and no other</span>, with the overlapping and untagged contacts broken out as their own categories — so it adds up exactly, with nothing hidden or forced.
+        </p>
+      </div>
+
+      {/* Total + reconciliation check */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between">
+        <div>
+          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Total Marketing Contacts</p>
+          <p className="text-3xl font-bold text-gray-900 mt-1">{NUM.format(data.total)}</p>
+        </div>
+        <div className="text-right">
+          <p className={`text-xs font-semibold ${reconciles ? 'text-emerald-600' : 'text-red-500'}`}>
+            {reconciles ? '✓ Adds up exactly' : '⚠ Does not reconcile'}
+          </p>
+          <p className="text-[11px] text-gray-400 mt-0.5">{NUM.format(data.reconciliation.cleanPartitionSum)} across all categories</p>
+        </div>
+      </div>
+
+      {/* Breakdown bars */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Breakdown</p>
+        <div className="space-y-3">
+          {rows.map(r => {
+            const pct = data.total > 0 ? Math.round((r.count / data.total) * 100) : 0;
+            return (
+              <div key={r.label} className="flex items-center gap-3">
+                <span className="text-sm text-gray-700 w-48 shrink-0">{r.label}</span>
+                <div className="flex-1 relative h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${pct}%`, backgroundColor: r.color }} />
+                </div>
+                <span className="text-xs text-gray-500 w-10 text-right">{pct}%</span>
+                <span className="text-sm font-semibold text-gray-900 w-16 text-right">{NUM.format(r.count)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Overlap detail */}
+      {data.overlapPairs.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            Overlap detail — who&apos;s tagged with which combination
+          </p>
+          <div className="space-y-1.5">
+            {data.overlapPairs.map(o => (
+              <div key={`${o.a}+${o.b}`} className="flex items-center justify-between text-sm">
+                <span className="text-gray-700">{o.a} + {o.b}</span>
+                <span className="font-medium text-gray-900">{NUM.format(o.count)}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-gray-400 mt-3">
+            These pairs (plus any contacts tagged with 3 or 4 brands at once) are what makes up the &quot;Multiple business units&quot; total above.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
