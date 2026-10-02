@@ -79,6 +79,29 @@ export async function GET() {
     { propertyName: 'brand',                operator: 'HAS_PROPERTY' },
   ]);
 
+  // 6. Pairwise overlaps — how many marketable contacts have BOTH of each pair checked
+  const brandNames = (brandProp?.options ?? []).map(o => o.value);
+  const pairwiseOverlap: Record<string, number> = {};
+  for (let i = 0; i < brandNames.length; i++) {
+    for (let j = i + 1; j < brandNames.length; j++) {
+      const a = brandNames[i]!, b = brandNames[j]!;
+      pairwiseOverlap[`${a} + ${b}`] = await countContacts([
+        { propertyName: 'hs_marketable_status', operator: 'EQ', value: 'true' },
+        { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: a },
+        { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: b },
+      ]);
+    }
+  }
+
+  // 7. Contacts with ALL FOUR checked (needed to correctly apply inclusion-exclusion)
+  const allFour = brandNames.length === 4 ? await countContacts([
+    { propertyName: 'hs_marketable_status', operator: 'EQ', value: 'true' },
+    { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: brandNames[0]! },
+    { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: brandNames[1]! },
+    { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: brandNames[2]! },
+    { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: brandNames[3]! },
+  ]) : null;
+
   return NextResponse.json({
     connected: true,
     totalMarketable,
@@ -86,6 +109,8 @@ export async function GET() {
     perBrandValue,
     brandNotSet,
     brandIsSet,
+    pairwiseOverlap,
+    allFour,
     reconciliation: {
       sumOfBrandValues: Object.values(perBrandValue).reduce((a, b) => a + b, 0),
       brandIsSetPlusNotSet: brandIsSet + brandNotSet,
