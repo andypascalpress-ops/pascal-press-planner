@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  ComposedChart, Bar,
+  ComposedChart, Bar, LineChart, Line, Legend,
 } from 'recharts';
 
 type BrandKey = 'pp' | 'etz' | 'ehc' | 'blake';
@@ -204,9 +204,16 @@ interface ContactsBreakdownData {
   total: number;
   exclusiveByBrand: Record<string, number>;
   multipleBrands: number;
-  unattributed: number;
+  unattributed: { total: number; likelyPascalPress: number; unknown: number };
   overlapPairs: Array<{ a: string; b: string; count: number }>;
   reconciliation: { cleanPartitionSum: number };
+}
+
+interface ContactsGrowthData {
+  connected: boolean;
+  error?: string;
+  months: string[];
+  series: Record<string, number[]>;
 }
 
 const HS_BRAND_TO_KEY: Record<string, BrandKey> = {
@@ -246,6 +253,10 @@ export default function BusinessUnitsTab() {
   const [contactsBreakdownData,    setContactsBreakdownData]    = useState<ContactsBreakdownData | null>(null);
   const [contactsBreakdownLoading, setContactsBreakdownLoading] = useState(false);
   const [contactsBreakdownError,   setContactsBreakdownError]   = useState('');
+
+  const [contactsGrowthData,    setContactsGrowthData]    = useState<ContactsGrowthData | null>(null);
+  const [contactsGrowthLoading, setContactsGrowthLoading] = useState(false);
+  const [contactsGrowthError,   setContactsGrowthError]   = useState('');
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
 
@@ -338,12 +349,29 @@ export default function BusinessUnitsTab() {
     }
   }, [showContactsBreakdown]);
 
+  const loadContactsGrowth = useCallback(async () => {
+    if (!showContactsBreakdown) return;
+    setContactsGrowthLoading(true);
+    setContactsGrowthError('');
+    try {
+      const res = await fetch('/api/hubspot-contacts-growth');
+      const json = await res.json();
+      if (!res.ok || json.connected === false) throw new Error(json.error ?? `HTTP ${res.status}`);
+      setContactsGrowthData(json);
+    } catch (e) {
+      setContactsGrowthError(e instanceof Error ? e.message : 'Failed to load');
+    } finally {
+      setContactsGrowthLoading(false);
+    }
+  }, [showContactsBreakdown]);
+
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadTrend(); }, [loadTrend]);
   useEffect(() => { loadPPContacts(); }, [loadPPContacts]);
   useEffect(() => { loadPPSegments(); }, [loadPPSegments]);
   useEffect(() => { loadMonthly(); }, [loadMonthly]);
   useEffect(() => { loadContactsBreakdown(); }, [loadContactsBreakdown]);
+  useEffect(() => { loadContactsGrowth(); }, [loadContactsGrowth]);
 
   const color = BRAND_COLOR[brand];
 
@@ -407,6 +435,9 @@ export default function BusinessUnitsTab() {
             data={contactsBreakdownData}
             loading={contactsBreakdownLoading}
             error={contactsBreakdownError}
+            growthData={contactsGrowthData}
+            growthLoading={contactsGrowthLoading}
+            growthError={contactsGrowthError}
           />
         ) : showMonthly && brand === 'etz' ? (
           <MonthlyUpdateSection
@@ -617,11 +648,14 @@ export default function BusinessUnitsTab() {
 }
 
 function ContactsBreakdownSection({
-  data, loading, error,
+  data, loading, error, growthData, growthLoading, growthError,
 }: {
   data: ContactsBreakdownData | null;
   loading: boolean;
   error: string;
+  growthData: ContactsGrowthData | null;
+  growthLoading: boolean;
+  growthError: string;
 }) {
   if (loading && !data) {
     return (
@@ -647,11 +681,21 @@ function ContactsBreakdownSection({
 
   const rows = [
     ...brandRows.map(r => ({ label: r.name, count: r.count, color: r.key ? BRAND_COLOR[r.key] : '#6b7280' })),
-    { label: 'Multiple business units', count: data.multipleBrands, color: '#9ca3af' },
-    { label: 'No business unit tagged', count: data.unattributed,   color: '#d1d5db' },
+    { label: 'Multiple business units',               count: data.multipleBrands,                color: '#9ca3af' },
+    { label: 'Likely Pascal Press (unconfirmed)',      count: data.unattributed.likelyPascalPress, color: '#93c5fd' },
+    { label: 'No business unit identified',            count: data.unattributed.unknown,           color: '#d1d5db' },
   ];
 
   const reconciles = data.reconciliation.cleanPartitionSum === data.total;
+  const growthMonths = growthData?.months.map(m => {
+    const [y, mo] = m.split('-');
+    return `${mo}/${y!.slice(2)}`;
+  }) ?? [];
+  const growthChartData = growthData?.months.map((m, i) => {
+    const point: Record<string, string | number> = { month: growthMonths[i]! };
+    for (const [brand, values] of Object.entries(growthData.series)) point[brand] = values[i] ?? 0;
+    return point;
+  }) ?? [];
 
   return (
     <div className="space-y-4">
@@ -663,6 +707,9 @@ function ContactsBreakdownSection({
         </p>
         <p className="text-sm text-gray-700 leading-relaxed mt-2">
           The catch: Brand is a <span className="font-medium">multi-select checkbox</span>, not a single dropdown — a contact can be tagged with more than one business unit at once (e.g. someone who bought from both Pascal Press and Excel Test Zone). So there&apos;s no honest way to force everyone into exactly one of four buckets. Instead, each brand below counts only contacts tagged with <span className="font-medium">that brand and no other</span>, with the overlapping and untagged contacts broken out as their own categories — so it adds up exactly, with nothing hidden or forced.
+        </p>
+        <p className="text-sm text-gray-700 leading-relaxed mt-2">
+          One more wrinkle: Pascal Press&apos;s tagging rate has been consistently lower than ETZ&apos;s since 2022, and checking a sample of the untagged contacts found ~46% of them have a purchase history matching one of PP&apos;s own product imprints (&quot;Excel&quot; or &quot;Targeting&quot;) — strong evidence the Brand checkbox misses real PP customers, not that PP genuinely has fewer. Those are shown separately below as <span className="font-medium">&quot;Likely Pascal Press (unconfirmed)&quot;</span> rather than folded into the confirmed PP count.
         </p>
       </div>
 
@@ -719,6 +766,43 @@ function ContactsBreakdownSection({
           </p>
         </div>
       )}
+
+      {/* Growth over time */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Growth Over Time — Last 12 Months</p>
+        <p className="text-[11px] text-gray-400 mb-3">
+          Each line is the cumulative count of contacts tagged with that brand (any tag — overlapping contacts count toward each brand they&apos;re tagged with) who were currently marketable and had signed up by that month. HubSpot doesn&apos;t keep historical snapshots, so this is based on signup date, not a point-in-time record — early months may slightly undercount contacts who have since unsubscribed.
+        </p>
+        {growthLoading && !growthData ? (
+          <div className="h-56 flex items-center justify-center text-sm text-gray-400">Loading — this one takes a bit longer…</div>
+        ) : growthError ? (
+          <p className="text-xs text-red-600">Could not load growth data — {growthError}</p>
+        ) : growthData ? (
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={growthChartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+              <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} width={40}
+                tickFormatter={v => v >= 1000 ? `${Math.round(v / 1000)}k` : `${v}`} />
+              <Tooltip
+                formatter={(v, name) => [NUM.format(Number(v ?? 0)), name]}
+                contentStyle={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,.08)' }}
+              />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              {Object.keys(growthData.series).map(brand => (
+                <Line
+                  key={brand}
+                  type="monotone"
+                  dataKey={brand}
+                  stroke={HS_BRAND_TO_KEY[brand] ? BRAND_COLOR[HS_BRAND_TO_KEY[brand]!] : '#6b7280'}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        ) : null}
+      </div>
     </div>
   );
 }
