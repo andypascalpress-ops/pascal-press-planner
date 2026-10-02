@@ -102,6 +102,23 @@ export async function GET() {
     { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: brandNames[3]! },
   ]) : null;
 
+  // 8. Contacts tagged with EXACTLY ONE brand (clean, non-overlapping per-brand counts)
+  const exactlyOneBrand: Record<string, number> = {};
+  for (const target of brandNames) {
+    const others = brandNames.filter(n => n !== target);
+    exactlyOneBrand[target] = await countContacts([
+      { propertyName: 'hs_marketable_status', operator: 'EQ', value: 'true' },
+      { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: target },
+      ...others.map(o => ({ propertyName: 'brand', operator: 'NOT_CONTAINS_TOKEN', value: o })),
+    ]);
+  }
+
+  // Multiple-brands bucket derived by subtraction: brandIsSet (any brand
+  // checked) minus exactlyOneBrand (precisely one brand checked) = contacts
+  // with 2+ checked.
+  const sumExactlyOne = Object.values(exactlyOneBrand).reduce((a, b) => a + b, 0);
+  const multipleBrands = brandIsSet - sumExactlyOne;
+
   return NextResponse.json({
     connected: true,
     totalMarketable,
@@ -111,9 +128,13 @@ export async function GET() {
     brandIsSet,
     pairwiseOverlap,
     allFour,
+    exactlyOneBrand,
+    multipleBrands,
     reconciliation: {
       sumOfBrandValues: Object.values(perBrandValue).reduce((a, b) => a + b, 0),
       brandIsSetPlusNotSet: brandIsSet + brandNotSet,
+      sumExactlyOne,
+      cleanPartitionSum: sumExactlyOne + multipleBrands + brandNotSet,
       shouldEqualTotal: totalMarketable,
     },
   });
