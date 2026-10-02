@@ -18,12 +18,17 @@
  *   - multipleBrands          — tagged with 2+ brands
  *   - unattributed            — no brand ticked at all
  *
- * Queries run SEQUENTIALLY, not via Promise.all. An earlier version fired
- * all ~13 HubSpot search calls at once and silently got back a mix of
- * rate-limited (429) responses — countContacts swallows a failed request
- * as 0 rather than throwing, so the bug showed up as plausible-looking but
- * wrong zeros, not a visible error. Sequential calls (plus a couple of
- * retries on transient failures) cost a few extra seconds but are correct.
+ * This needs ~14 sequential HubSpot search calls (one per bucket/overlap
+ * pair). Two earlier versions returned plausible-looking but wrong data:
+ * firing them all via Promise.all hit HubSpot's rate limit, and even
+ * sequential calls with a 3-attempt/300ms retry still occasionally hit a
+ * persistent 429 and silently returned 0 for whichever query happened to
+ * fail that request — a different field zeroed out each time, which is
+ * what exposed it as a reliability bug rather than a logic bug. Fixed by:
+ * a small delay between every call (not just retries), stronger
+ * backoff, and — critically — countContacts returns `null` on a genuine
+ * failure instead of 0, so a partial failure surfaces as `connected:
+ * false` rather than confidently-wrong numbers.
  */
 import { NextResponse } from 'next/server';
 
@@ -41,8 +46,9 @@ function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function countContacts(filters: object[]): Promise<number> {
-  for (let attempt = 0; attempt < 3; attempt++) {
+/** Returns null (not 0) if every attempt fails — a real failure must never look like a valid zero count. */
+async function countContacts(filters: object[]): Promise<number | null> {
+  for (let attempt = 0; attempt < 5; attempt++) {
     try {
       const res = await fetch(`${HS_BASE}/crm/v3/objects/contacts/search`, {
         method: 'POST',
@@ -51,17 +57,25 @@ async function countContacts(filters: object[]): Promise<number> {
         cache: 'no-store',
       });
       if (res.status === 429 || res.status >= 500) {
-        await sleep(300 * (attempt + 1));
+        await sleep(500 * Math.pow(2, attempt)); // 500ms, 1s, 2s, 4s, 8s
         continue;
       }
-      if (!res.ok) return 0;
-      const json = await res.json() as { total: number };
-      return json.total ?? 0;
+      if (!res.ok) return null;
+      const json = await res.json() as { total?: number };
+      if (typeof json.total !== 'number') return null;
+      return json.total;
     } catch {
-      await sleep(300 * (attempt + 1));
+      await sleep(500 * Math.pow(2, attempt));
     }
   }
-  return 0;
+  return null;
+}
+
+/** Small gap between every sequential call to stay well under HubSpot's rate limit, not just react to it. */
+async function countContactsThrottled(filters: object[]): Promise<number | null> {
+  const result = await countContacts(filters);
+  await sleep(150);
+  return result;
 }
 
 interface BrandOption { label: string; value: string }
@@ -81,34 +95,46 @@ export async function GET() {
   const brandNames = (brandProp.options ?? []).map(o => o.value);
 
   const MARKETABLE = { propertyName: 'hs_marketable_status', operator: 'EQ', value: 'true' };
+  const failedQueries: string[] = [];
+  const need = (label: string, n: number | null): number => {
+    if (n === null) failedQueries.push(label);
+    return n ?? 0;
+  };
 
-  const total        = await countContacts([MARKETABLE]);
-  const unattributed = await countContacts([MARKETABLE, { propertyName: 'brand', operator: 'NOT_HAS_PROPERTY' }]);
-  const anyBrand     = await countContacts([MARKETABLE, { propertyName: 'brand', operator: 'HAS_PROPERTY' }]);
+  const total        = need('total',        await countContactsThrottled([MARKETABLE]));
+  const unattributed = need('unattributed', await countContactsThrottled([MARKETABLE, { propertyName: 'brand', operator: 'NOT_HAS_PROPERTY' }]));
+  const anyBrand     = need('anyBrand',     await countContactsThrottled([MARKETABLE, { propertyName: 'brand', operator: 'HAS_PROPERTY' }]));
 
   const exclusiveByBrand: Record<string, number> = {};
   for (const name of brandNames) {
     const others = brandNames.filter(n => n !== name);
-    exclusiveByBrand[name] = await countContacts([
+    exclusiveByBrand[name] = need(`exclusive:${name}`, await countContactsThrottled([
       MARKETABLE,
       { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: name },
       ...others.map(o => ({ propertyName: 'brand', operator: 'NOT_CONTAINS_TOKEN', value: o })),
-    ]);
+    ]));
   }
 
   const overlapPairs: Array<{ a: string; b: string; count: number }> = [];
   for (let i = 0; i < brandNames.length; i++) {
     for (let j = i + 1; j < brandNames.length; j++) {
       const a = brandNames[i]!, b = brandNames[j]!;
-      const count = await countContacts([
+      const count = need(`overlap:${a}+${b}`, await countContactsThrottled([
         MARKETABLE,
         { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: a },
         { propertyName: 'brand', operator: 'CONTAINS_TOKEN', value: b },
-      ]);
+      ]));
       if (count > 0) overlapPairs.push({ a, b, count });
     }
   }
   overlapPairs.sort((a, b) => b.count - a.count);
+
+  if (failedQueries.length > 0) {
+    return NextResponse.json({
+      connected: false,
+      error: `HubSpot query failed after retries: ${failedQueries.join(', ')}`,
+    }, { status: 502 });
+  }
 
   const sumExclusive = Object.values(exclusiveByBrand).reduce((s, c) => s + c, 0);
   const multipleBrands = anyBrand - sumExclusive;
