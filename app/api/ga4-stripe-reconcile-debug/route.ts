@@ -57,7 +57,7 @@ export async function GET(request: Request) {
       unmatched: unmatched.length, unmatchedRevenue: sum(unmatched, 1),
       unmatchedSample: unmatched.slice(0, 25).map(r => ({ id: r.d[0], date: r.d[1], tx: r.m[0], rev: r.m[1] })),
     },
-    byEvent: ga.byEvent, byHost: ga.byHost, byDate: ga.byDate,
+    byHost: ga.byHost, sessionsByHost: ga.byDate, byHostMonth: (ga as unknown as { byHostMonth: unknown }).byHostMonth,
     stripeUnmatchedByGa4: ok.filter(c => !real.some(r => r.d[0] === c.id || r.d[0] === c.payment_intent || r.d[0] === c.invoice)).length,
   });
 }
