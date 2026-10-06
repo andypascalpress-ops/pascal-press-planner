@@ -1,9 +1,11 @@
 /**
- * GET /api/etz-weekly-report[?start=YYYY-MM-DD&end=YYYY-MM-DD]
+ * GET /api/etz-weekly-report[?start=YYYY-MM-DD&end=YYYY-MM-DD[&compStart=..&compEnd=..]]
  *
- * Everything the weekly Excel Test Zone performance deck needs, for one
- * reporting week versus the immediately preceding equal-length period.
- * Defaults to the last full Monday–Sunday week (AEST). Read-only.
+ * Everything the weekly Excel Test Zone performance deck needs. With no
+ * params it reports month to date versus the same days last month — the same
+ * windows as the dashboard's MTD card. With start/end it reports that range
+ * versus the immediately preceding equal-length period (or compStart/compEnd).
+ * Read-only.
  */
 import { NextResponse } from 'next/server';
 import { fetchETZStripeRevenue, fetchStripeProductMap, zonedDateTimeToUnix } from '@/lib/stripe-revenue';
@@ -42,11 +44,12 @@ function msRange(start: string, end: string) {
   };
 }
 
-function lastFullWeek(): { start: string; end: string } {
-  const today = toYMD(new Date());
-  const dow = new Date(`${today}T12:00:00Z`).getUTCDay();   // 0 = Sunday
-  const thisMonday = addDays(today, -((dow + 6) % 7));
-  return { start: addDays(thisMonday, -7), end: addDays(thisMonday, -1) };
+function subMonths(ymd: string, n: number): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  let nm = m! - n, ny = y!;
+  while (nm < 1) { nm += 12; ny--; }
+  const last = new Date(ny, nm, 0).getDate();
+  return `${ny}-${String(nm).padStart(2, '0')}-${String(Math.min(d!, last)).padStart(2, '0')}`;
 }
 
 async function etzSpend(start: string, end: string) {
@@ -71,16 +74,18 @@ const pct = (cur: number, prev: number) => (prev > 0 ? Math.round(((cur - prev) 
 
 export async function GET(request: Request) {
   const sp = new URL(request.url).searchParams;
-  const def = lastFullWeek();
-  const start = sp.get('start') ?? def.start;
-  const end = sp.get('end') ?? def.end;
+  const today = toYMD(new Date());
+  const isMtd = !sp.get('start') && !sp.get('end');
+  const start = sp.get('start') ?? `${today.slice(0, 7)}-01`;
+  const end = sp.get('end') ?? today;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || start > end) {
     return NextResponse.json({ error: 'start/end must be YYYY-MM-DD with start <= end' }, { status: 400 });
   }
 
   const len = dayDiff(start, end) + 1;
-  const pStart = addDays(start, -len);
-  const pEnd = addDays(start, -1);
+  const pStart = sp.get('compStart') ?? (isMtd ? subMonths(start, 1) : addDays(start, -len));
+  const pEnd = sp.get('compEnd') ?? (isMtd ? subMonths(end, 1) : addDays(start, -1));
+  const comparisonLabel = isMtd ? 'same days last month' : 'previous period';
   const month = end.slice(0, 7);
   const monthStart = `${month}-01`;
   const monthNum = Number(month.slice(5, 7));
@@ -192,7 +197,7 @@ export async function GET(request: Request) {
     connected: true,
     failed,
     period: { start, end, days: len },
-    comparison: { start: pStart, end: pEnd },
+    comparison: { start: pStart, end: pEnd, label: comparisonLabel },
     revenue: { current: revenue, prior: revenueP, pctChange: pct(revenue, revenueP) },
     orders: { current: orders, prior: ordersP, pctChange: pct(orders, ordersP) },
     aov: { current: aov, prior: aovP, pctChange: pct(aov, aovP) },
