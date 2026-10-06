@@ -210,7 +210,8 @@ export async function GET(request: Request) {
     monthToDate: {
       month, throughDate: end,
       revenue: mtd?.totalRevenue ?? null, monthlyTarget,
-      spend: mtdS?.total ?? null, monthlyBudget,
+      spend: mtdS?.total ?? null, googleSpend: mtdS?.google ?? null, metaSpend: mtdS?.meta ?? null,
+      monthlyGoogleBudget: monthlyBudget,
     },
     channels,
     ga4Totals: { revenue: ch?.totalRevenue ?? null, orders: (ch?.items ?? []).reduce((s, r) => s + r.transactions, 0) },
