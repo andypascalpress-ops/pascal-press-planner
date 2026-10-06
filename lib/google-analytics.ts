@@ -1464,3 +1464,35 @@ export function matchRevenue(
   });
   return partial ?? null;
 }
+
+// TEMPORARY diagnostic — remove after the GA4 vs Stripe reconciliation.
+export async function etzPurchaseDiagnostics(startDate: string, endDate: string) {
+  const token = await getAccessToken();
+  const dr = [{ startDate, endDate }];
+  const [byTx, byEvent, byHost, byDate] = await Promise.all([
+    runReportOnProperty(token, GA4_ETZ_BASE, {
+      dateRanges: dr, dimensions: [{ name: 'transactionId' }, { name: 'date' }],
+      metrics: [{ name: 'transactions' }, { name: 'totalRevenue' }, { name: 'purchaseRevenue' }],
+      orderBys: [{ metric: { metricName: 'totalRevenue' }, desc: true }], limit: 1000,
+    }),
+    runReportOnProperty(token, GA4_ETZ_BASE, {
+      dateRanges: dr, dimensions: [{ name: 'eventName' }],
+      metrics: [{ name: 'eventCount' }, { name: 'totalRevenue' }, { name: 'transactions' }],
+      dimensionFilter: { filter: { fieldName: 'totalRevenue', numericFilter: { operation: 'GREATER_THAN', value: { doubleValue: 0 } } } },
+      limit: 50,
+    }).catch((e: unknown) => ({ error: String(e) })),
+    runReportOnProperty(token, GA4_ETZ_BASE, {
+      dateRanges: dr, dimensions: [{ name: 'hostname' }],
+      metrics: [{ name: 'transactions' }, { name: 'totalRevenue' }, { name: 'purchaseRevenue' }], limit: 20,
+    }),
+    runReportOnProperty(token, GA4_ETZ_BASE, {
+      dateRanges: dr, dimensions: [{ name: 'date' }],
+      metrics: [{ name: 'transactions' }, { name: 'totalRevenue' }], orderBys: [{ dimension: { dimensionName: 'date' } }], limit: 40,
+    }),
+  ]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows = (r: any) => (r?.rows ?? []).map((x: any) => ({
+    d: (x.dimensionValues ?? []).map((v: any) => v.value), m: (x.metricValues ?? []).map((v: any) => v.value),
+  }));
+  return { byTx: rows(byTx), byEvent: (byEvent as any).error ? byEvent : rows(byEvent), byHost: rows(byHost), byDate: rows(byDate) };
+}
