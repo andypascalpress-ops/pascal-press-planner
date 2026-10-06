@@ -10,6 +10,7 @@
  * Credentials stay server-side via env vars — nothing is exposed to the browser.
  */
 
+import { scopeEtzProdHosts } from '@/lib/ga4-scope';
 import Anthropic from '@anthropic-ai/sdk';
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
@@ -81,7 +82,7 @@ async function runGA4Report(
     {
       method:  'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body:    JSON.stringify(reportRequest),
+      body:    JSON.stringify(account === 'etz' ? scopeEtzProdHosts(reportRequest) : reportRequest),
       cache:   'no-store',
     },
   );

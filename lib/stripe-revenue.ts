@@ -34,7 +34,7 @@ function stripeHeaders(key: string) {
  * Convert a local calendar date/time in `timeZone` to a Unix timestamp (seconds).
  * Handles AEST/AEDT transitions via Intl — do not hardcode +10/+11.
  */
-function zonedDateTimeToUnix(ymd: string, hms: string, timeZone = ACCOUNT_TZ): number {
+export function zonedDateTimeToUnix(ymd: string, hms: string, timeZone = ACCOUNT_TZ): number {
   const [Y, M, D] = ymd.split('-').map(Number);
   const [h, m, s] = hms.split(':').map(Number);
   const desiredAsUtcMs = Date.UTC(Y!, M! - 1, D!, h!, m!, s!);
@@ -474,8 +474,8 @@ export async function fetchStripeProductMap(
   const map = new Map<string, { revenue: number; qty: number }>();
   if (!key) return map;
   try {
-    const gte = Math.floor(new Date(`${start}T00:00:00+10:00`).getTime() / 1000);
-    const lte = Math.floor(new Date(`${end}T23:59:59+10:00`).getTime() / 1000);
+    const gte = zonedDateTimeToUnix(start, '00:00:00');
+    const lte = zonedDateTimeToUnix(end, '23:59:59');
 
     let startingAfter: string | undefined;
     let pages = 0;

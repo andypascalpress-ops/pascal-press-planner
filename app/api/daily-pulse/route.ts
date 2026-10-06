@@ -10,6 +10,7 @@
  *   traffic – GA4 sessions by channel (PP + ETZ combined) vs 7 days ago
  */
 
+import { scopeEtzProdHosts } from '@/lib/ga4-scope';
 import { NextResponse } from 'next/server';
 import { fetchPPRevenue }       from '@/lib/bigcommerce-revenue';
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
@@ -101,13 +102,16 @@ async function ga4ChannelSessions(base: string, token: string, startDate: string
   const res = await fetch(`${base}:runReport`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: 'sessionDefaultChannelGroup' }],
-      metrics:    [{ name: 'sessions' }],
-      orderBys:   [{ metric: { metricName: 'sessions' }, desc: true }],
-      limit: 20,
-    }),
+    body: JSON.stringify((() => {
+      const req = {
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [{ name: 'sessionDefaultChannelGroup' }],
+        metrics:    [{ name: 'sessions' }],
+        orderBys:   [{ metric: { metricName: 'sessions' }, desc: true }],
+        limit: 20,
+      };
+      return base === GA4_ETZ_BASE ? scopeEtzProdHosts(req) : req;
+    })()),
     cache: 'no-store',
   });
   if (!res.ok) return [];

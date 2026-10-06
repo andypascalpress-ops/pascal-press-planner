@@ -6,7 +6,7 @@
  * Defaults to the last full Monday–Sunday week (AEST). Read-only.
  */
 import { NextResponse } from 'next/server';
-import { fetchETZStripeRevenue, fetchStripeProductMap } from '@/lib/stripe-revenue';
+import { fetchETZStripeRevenue, fetchStripeProductMap, zonedDateTimeToUnix } from '@/lib/stripe-revenue';
 import { fetchChannelRevenue, fetchEtzFunnelTraffic, fetchEtzAppTraffic } from '@/lib/google-analytics';
 import { fetchTrialConversion } from '@/lib/hubspot-trials';
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
@@ -37,8 +37,8 @@ function dayDiff(a: string, b: string): number {
 
 function msRange(start: string, end: string) {
   return {
-    startMs: new Date(`${start}T00:00:00+10:00`).getTime(),
-    endMs:   new Date(`${end}T23:59:59+10:00`).getTime(),
+    startMs: zonedDateTimeToUnix(start, '00:00:00') * 1000,
+    endMs:   zonedDateTimeToUnix(end, '23:59:59') * 1000,
   };
 }
 

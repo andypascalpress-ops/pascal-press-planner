@@ -14,6 +14,7 @@
  *   medium = "email"   → email campaigns (HubSpot)
  */
 
+import { scopeEtzProdHosts } from './ga4-scope';
 import crypto from 'crypto';
 
 const GA4_PROPERTY_ID     = '354651290'; // Pascal Press (pascalpress.com.au)
@@ -489,11 +490,11 @@ export async function fetchETZGA4Revenue(month: string): Promise<GA4ChannelReven
         Authorization:  `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
+      body: JSON.stringify(scopeEtzProdHosts({
         dateRanges: [{ startDate, endDate }],
         dimensions: [{ name: 'sessionMedium' }],
         metrics:    [{ name: 'totalRevenue' }],
-      }),
+      })),
       cache: 'no-store',
     });
 
@@ -539,14 +540,14 @@ export async function fetchETZGA4RevenueHistory(
         Authorization:  `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
+      body: JSON.stringify(scopeEtzProdHosts({
         dateRanges: [{ startDate, endDate }],
         dimensions: [
           { name: 'yearMonth' },
           { name: 'sessionMedium' },
         ],
         metrics: [{ name: 'totalRevenue' }],
-      }),
+      })),
       cache: 'no-store',
     });
 
@@ -604,13 +605,14 @@ async function runReportOnProperty(
   propertyBase: string,
   body: object,
 ): Promise<any> {
+  const scoped = propertyBase === GA4_ETZ_BASE ? scopeEtzProdHosts(body) : body;
   const res = await fetch(`${propertyBase}:runReport`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(scoped),
     cache: 'no-store',
   });
   if (!res.ok) {
