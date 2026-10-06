@@ -462,3 +462,55 @@ export async function fetchETZCustomerTrend(months: string[]): Promise<Record<st
 export async function fetchHSCCustomerTrend(months: string[]): Promise<Record<string, CustomerTrendMonth>> {
   return fetchStripeCustomerTrend(STRIPE_HSC_SECRET_KEY, months);
 }
+
+/**
+ * Revenue and charge count per product description for every succeeded charge
+ * in [start, end] (YYYY-MM-DD, AEST). Fully paginated — a single page would
+ * silently drop earlier charges in any busy period.
+ */
+export async function fetchStripeProductMap(
+  key: string, start: string, end: string,
+): Promise<Map<string, { revenue: number; qty: number }>> {
+  const map = new Map<string, { revenue: number; qty: number }>();
+  if (!key) return map;
+  try {
+    const gte = Math.floor(new Date(`${start}T00:00:00+10:00`).getTime() / 1000);
+    const lte = Math.floor(new Date(`${end}T23:59:59+10:00`).getTime() / 1000);
+
+    let startingAfter: string | undefined;
+    let pages = 0;
+    while (true) {
+      pages++;
+      if (pages > 50) break; // hard safety cap (5,000 charges)
+
+      const params = new URLSearchParams({
+        'created[gte]': String(gte),
+        'created[lte]': String(lte),
+        limit: '100',
+      });
+      if (startingAfter) params.set('starting_after', startingAfter);
+
+      const res = await fetch(`https://api.stripe.com/v1/charges?${params}`, {
+        headers: { Authorization: `Bearer ${key}` }, cache: 'no-store',
+      });
+      if (!res.ok) break;
+      const { data: charges, has_more } = await res.json() as {
+        data: { id: string; status: string; description: string | null; amount: number; amount_refunded: number }[];
+        has_more: boolean;
+      };
+
+      for (const c of charges) {
+        if (c.status !== 'succeeded') continue;
+        const net = (c.amount - (c.amount_refunded ?? 0)) / 100;
+        if (net <= 0) continue;
+        const name  = c.description || 'Other';
+        const entry = map.get(name) ?? { revenue: 0, qty: 0 };
+        map.set(name, { revenue: entry.revenue + net, qty: entry.qty + 1 });
+      }
+
+      if (!has_more || charges.length === 0) break;
+      startingAfter = charges[charges.length - 1]!.id;
+    }
+  } catch { /* return what we have */ }
+  return map;
+}

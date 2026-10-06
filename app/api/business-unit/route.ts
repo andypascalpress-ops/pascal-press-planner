@@ -8,7 +8,7 @@
  */
 import { NextResponse } from 'next/server';
 import { fetchPPRevenue, fetchBlakeRevenue } from '@/lib/bigcommerce-revenue';
-import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-revenue';
+import { fetchETZStripeRevenue, fetchHSCStripeRevenue, fetchStripeProductMap } from '@/lib/stripe-revenue';
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
 import { fetchMetaSpend, META_PP_ACCOUNT_ID, META_ETZ_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
 import { PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
@@ -186,56 +186,6 @@ async function fetchBCProductMap(
   return map;
 }
 
-async function fetchStripeProductMap(
-  key: string, start: string, end: string
-): Promise<ProductMap> {
-  const map: ProductMap = new Map();
-  if (!key) return map;
-  try {
-    const gte = Math.floor(new Date(`${start}T00:00:00+10:00`).getTime() / 1000);
-    const lte = Math.floor(new Date(`${end}T23:59:59+10:00`).getTime() / 1000);
-
-    // Paginate through ALL charges in the window — a single limit=100 page
-    // silently dropped the earliest charges of any period with >100 charges
-    // (e.g. a 134-order month), undercounting or entirely missing whichever
-    // products happened to sell early in the period.
-    let startingAfter: string | undefined;
-    let pages = 0;
-    while (true) {
-      pages++;
-      if (pages > 50) break; // hard safety cap (5,000 charges)
-
-      const params = new URLSearchParams({
-        'created[gte]': String(gte),
-        'created[lte]': String(lte),
-        limit: '100',
-      });
-      if (startingAfter) params.set('starting_after', startingAfter);
-
-      const res = await fetch(`https://api.stripe.com/v1/charges?${params}`, {
-        headers: { Authorization: `Bearer ${key}` }, cache: 'no-store',
-      });
-      if (!res.ok) break;
-      const { data: charges, has_more } = await res.json() as {
-        data: { id: string; status: string; description: string | null; amount: number; amount_refunded: number }[];
-        has_more: boolean;
-      };
-
-      for (const c of charges) {
-        if (c.status !== 'succeeded') continue;
-        const net = (c.amount - (c.amount_refunded ?? 0)) / 100;
-        if (net <= 0) continue;
-        const name  = c.description || 'Other';
-        const entry = map.get(name) ?? { revenue: 0, qty: 0 };
-        map.set(name, { revenue: entry.revenue + net, qty: entry.qty + 1 });
-      }
-
-      if (!has_more || charges.length === 0) break;
-      startingAfter = charges[charges.length - 1]!.id;
-    }
-  } catch { /* return what we have */ }
-  return map;
-}
 
 interface ProductRow {
   name: string;
