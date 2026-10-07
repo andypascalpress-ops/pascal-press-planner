@@ -1466,25 +1466,3 @@ export function matchRevenue(
   });
   return partial ?? null;
 }
-
-// TEMPORARY diagnostic (unfiltered) — remove after use.
-export async function etzChannelByHostDiag(startDate: string, endDate: string) {
-  const token = await getAccessToken();
-  const res = await fetch(`${GA4_ETZ_BASE}:runReport`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: 'sessionDefaultChannelGroup' }, { name: 'hostname' }],
-      metrics: [{ name: 'sessions' }, { name: 'transactions' }, { name: 'totalRevenue' }],
-      limit: 500,
-    }),
-    cache: 'no-store',
-  });
-  const j = await res.json();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (j.rows ?? []).map((r: any) => ({
-    channel: r.dimensionValues[0].value, host: r.dimensionValues[1].value,
-    sessions: Number(r.metricValues[0].value), tx: Number(r.metricValues[1].value), rev: Number(r.metricValues[2].value),
-  }));
-}
