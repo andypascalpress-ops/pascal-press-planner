@@ -25,47 +25,65 @@ export interface TrialPipeline {
   paidStageIds: string[];
 }
 
-export async function resolveTrialPipeline(pipelineLabel: string): Promise<TrialPipeline | null> {
-  try {
-    const res = await fetch(`${HS_BASE}/crm/v3/pipelines/deals`, { headers: hsHeaders(), cache: 'no-store' });
-    if (!res.ok) return null;
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+/** fetch with exponential backoff on 429/5xx; throws when it cannot get a usable response. */
+async function hsFetchRetry(url: string, init: RequestInit): Promise<Response> {
+  let last = 0;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const res = await fetch(url, init);
+    if (res.ok) return res;
+    last = res.status;
+    if (res.status !== 429 && res.status < 500) break;
+    await sleep(400 * Math.pow(2, attempt));
+  }
+  throw new Error(`HubSpot request failed (${last}) ${url}`);
+}
+
+const pipelineCache = new Map<string, { at: number; p: Promise<TrialPipeline | null> }>();
+
+export function resolveTrialPipeline(pipelineLabel: string): Promise<TrialPipeline | null> {
+  const hit = pipelineCache.get(pipelineLabel);
+  if (hit && Date.now() - hit.at < 60_000) return hit.p;
+  const p = (async () => {
+    const res = await hsFetchRetry(`${HS_BASE}/crm/v3/pipelines/deals`, { headers: hsHeaders(), cache: 'no-store' });
     const { results } = await res.json() as {
       results: Array<{ id: string; label: string; stages: Array<{ id: string; label: string }> }>
     };
-    const pipeline = results.find(p => p.label.toLowerCase().includes(pipelineLabel.toLowerCase()));
+    const pipeline = results.find(pl => pl.label.toLowerCase().includes(pipelineLabel.toLowerCase()));
     if (!pipeline) return null;
     return {
       id: pipeline.id,
-      trialStageIds: pipeline.stages.filter(s => s.label.toLowerCase().includes('trial')).map(s => s.id),
-      paidStageIds:  pipeline.stages.filter(s => s.label.toLowerCase().includes('paid')).map(s => s.id),
+      trialStageIds: pipeline.stages.filter(st => st.label.toLowerCase().includes('trial')).map(st => st.id),
+      paidStageIds:  pipeline.stages.filter(st => st.label.toLowerCase().includes('paid')).map(st => st.id),
     };
-  } catch { return null; }
+  })();
+  p.catch(() => pipelineCache.delete(pipelineLabel));
+  pipelineCache.set(pipelineLabel, { at: Date.now(), p });
+  return p;
 }
 
 async function countDealsByStage(
   pipelineId: string, stageIds: string[], startMs: number, endMs: number, extraFilters: object[] = [],
 ): Promise<number> {
   if (stageIds.length === 0) return 0;
-  try {
-    const res = await fetch(`${HS_BASE}/crm/v3/objects/deals/search`, {
-      method: 'POST',
-      headers: hsHeaders(),
-      body: JSON.stringify({
-        filterGroups: [{ filters: [
-          { propertyName: 'pipeline',   operator: 'EQ',  value: pipelineId },
-          { propertyName: 'dealstage',  operator: 'IN',  values: stageIds },
-          { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
-          { propertyName: 'createdate', operator: 'LTE', value: String(endMs) },
-          ...extraFilters,
-        ]}],
-        limit: 1,
-      }),
-      cache: 'no-store',
-    });
-    if (!res.ok) return 0;
-    const json = await res.json() as { total: number };
-    return json.total ?? 0;
-  } catch { return 0; }
+  const res = await hsFetchRetry(`${HS_BASE}/crm/v3/objects/deals/search`, {
+    method: 'POST',
+    headers: hsHeaders(),
+    body: JSON.stringify({
+      filterGroups: [{ filters: [
+        { propertyName: 'pipeline',   operator: 'EQ',  value: pipelineId },
+        { propertyName: 'dealstage',  operator: 'IN',  values: stageIds },
+        { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
+        { propertyName: 'createdate', operator: 'LTE', value: String(endMs) },
+        ...extraFilters,
+      ]}],
+      limit: 1,
+    }),
+    cache: 'no-store',
+  });
+  const json = await res.json() as { total: number };
+  return json.total ?? 0;
 }
 
 /** Deals created in [startMs, endMs] currently sitting in a trial stage. */
