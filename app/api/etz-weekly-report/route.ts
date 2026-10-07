@@ -10,7 +10,7 @@
 import { NextResponse } from 'next/server';
 import { fetchETZStripeRevenue, fetchStripeProductMap, zonedDateTimeToUnix } from '@/lib/stripe-revenue';
 import { fetchChannelRevenue, fetchEtzFunnelTraffic, fetchEtzAppTraffic } from '@/lib/google-analytics';
-import { fetchTrialConversion } from '@/lib/hubspot-trials';
+import { fetchTrialConversion, fetchOfflineTrials } from '@/lib/hubspot-trials';
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
 import { fetchMetaSpend, META_ETZ_ACCOUNT_ID } from '@/lib/meta-ads';
 import { ETZ_MONTHLY_REVENUE_TARGETS, MONTHLY_GOOGLE_BUDGETS, ETZ_CHATGPT_SPEND } from '@/lib/constants';
@@ -96,7 +96,7 @@ export async function GET(request: Request) {
   const [
     revC, revP, trialC, trialP,
     siteAllC, siteAllP, siteMainC, siteMainP, appC, appP,
-    chanRev, spendC, spendP, prodC, prodP, mtdRev, mtdSpend,
+    chanRev, spendC, spendP, prodC, prodP, mtdRev, mtdSpend, offC, offP, appLoginC, appLoginP,
   ] = await Promise.allSettled([
     fetchETZStripeRevenue(end.slice(0, 7), { accurate: false, dateRange: { start, end } }),
     fetchETZStripeRevenue(pEnd.slice(0, 7), { accurate: false, dateRange: { start: pStart, end: pEnd } }),
@@ -115,14 +115,18 @@ export async function GET(request: Request) {
     fetchStripeProductMap(STRIPE_ETZ, pStart, pEnd),
     fetchETZStripeRevenue(month, { accurate: false, dateRange: { start: monthStart, end } }),
     etzSpend(monthStart, end),
+    fetchOfflineTrials('etz', c.startMs, c.endMs),
+    fetchOfflineTrials('etz', p.startMs, p.endMs),
+    fetchEtzAppTraffic(start, end, true),
+    fetchEtzAppTraffic(pStart, pEnd, true),
   ]);
 
   const ok = <T,>(r: PromiseSettledResult<T>): T | null => (r.status === 'fulfilled' ? r.value : null);
   const failed: string[] = [];
   const names = ['revC', 'revP', 'trialC', 'trialP', 'siteAllC', 'siteAllP', 'siteMainC', 'siteMainP', 'appC', 'appP',
-    'chanRev', 'spendC', 'spendP', 'prodC', 'prodP', 'mtdRev', 'mtdSpend'];
+    'chanRev', 'spendC', 'spendP', 'prodC', 'prodP', 'mtdRev', 'mtdSpend', 'offC', 'offP', 'appLoginC', 'appLoginP'];
   [revC, revP, trialC, trialP, siteAllC, siteAllP, siteMainC, siteMainP, appC, appP,
-    chanRev, spendC, spendP, prodC, prodP, mtdRev, mtdSpend].forEach((r, i) => {
+    chanRev, spendC, spendP, prodC, prodP, mtdRev, mtdSpend, offC, offP, appLoginC, appLoginP].forEach((r, i) => {
     if (r.status === 'rejected') failed.push(names[i]!);
   });
 
@@ -131,6 +135,7 @@ export async function GET(request: Request) {
   const ac = ok(appC), ap = ok(appP);
   const sac = ok(siteAllC), sap = ok(siteAllP), smc = ok(siteMainC), smp = ok(siteMainP);
   const ch = ok(chanRev);
+  const oc = ok(offC), op = ok(offP), alc = ok(appLoginC), alp = ok(appLoginP);
 
   const revenue = rc?.totalRevenue ?? 0, revenueP = rp?.totalRevenue ?? 0;
   const orders = rc?.totalOrders ?? 0, ordersP = rp?.totalOrders ?? 0;
@@ -202,9 +207,12 @@ export async function GET(request: Request) {
     orders: { current: orders, prior: ordersP, pctChange: pct(orders, ordersP) },
     aov: { current: aov, prior: aovP, pctChange: pct(aov, aovP) },
     trials: { current: trials, prior: trialsP, pctChange: pct(trials, trialsP),
-      stillTrialing: tc?.trialsStarted ?? 0, stillTrialingPrior: tp?.trialsStarted ?? 0 },
+      stillTrialing: tc?.trialsStarted ?? 0, stillTrialingPrior: tp?.trialsStarted ?? 0,
+      offline: oc?.ever ?? 0, offlinePrior: op?.ever ?? 0,
+      offlineStillTrialing: oc?.stillTrialing ?? 0, offlineStillTrialingPrior: op?.stillTrialing ?? 0 },
     appVisitorToTrial: { current: appConv, prior: appConvP, appSessions: appSess, appSessionsPrior: appSessP,
-      appNewUsers: ac?.totalNewUsers ?? 0, appNewUsersPrior: ap?.totalNewUsers ?? 0 },
+      appNewUsers: ac?.totalNewUsers ?? 0, appNewUsersPrior: ap?.totalNewUsers ?? 0,
+      appNewUsersExLogin: alc?.totalNewUsers ?? 0, appNewUsersExLoginPrior: alp?.totalNewUsers ?? 0 },
     trialToPaid: {
       current: tc ? { converted: tc.converted, measured: tc.totalEverStarted, pct: tc.pct } : null,
       prior: tp ? { converted: tp.converted, measured: tp.totalEverStarted, pct: tp.pct } : null,

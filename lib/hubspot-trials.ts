@@ -43,7 +43,7 @@ export async function resolveTrialPipeline(pipelineLabel: string): Promise<Trial
 }
 
 async function countDealsByStage(
-  pipelineId: string, stageIds: string[], startMs: number, endMs: number,
+  pipelineId: string, stageIds: string[], startMs: number, endMs: number, extraFilters: object[] = [],
 ): Promise<number> {
   if (stageIds.length === 0) return 0;
   try {
@@ -56,6 +56,7 @@ async function countDealsByStage(
           { propertyName: 'dealstage',  operator: 'IN',  values: stageIds },
           { propertyName: 'createdate', operator: 'GTE', value: String(startMs) },
           { propertyName: 'createdate', operator: 'LTE', value: String(endMs) },
+          ...extraFilters,
         ]}],
         limit: 1,
       }),
@@ -108,4 +109,28 @@ export async function fetchTrialConversion(
   const totalEverStarted = trialsStarted + converted;
   const pct = totalEverStarted > 0 ? Math.round((converted / totalEverStarted) * 100) : null;
   return { trialsStarted, converted, totalEverStarted, pct };
+}
+
+export interface OfflineTrials {
+  /** OFFLINE-source (bulk school import) deals created in the range, in a trial or paid stage. */
+  ever: number;
+  /** Of those, still in a trial stage. */
+  stillTrialing: number;
+}
+
+/**
+ * Bulk school imports are created with hs_analytics_source = OFFLINE and never visit the app,
+ * so they should not count towards visitor-to-trial rates (same rule as the dashboard's Prospects view).
+ */
+export async function fetchOfflineTrials(
+  pipelineLabel: string, startMs: number, endMs: number,
+): Promise<OfflineTrials> {
+  const pipeline = await resolveTrialPipeline(pipelineLabel);
+  if (!pipeline) return { ever: 0, stillTrialing: 0 };
+  const offline = [{ propertyName: 'hs_analytics_source', operator: 'EQ', value: 'OFFLINE' }];
+  const [ever, stillTrialing] = await Promise.all([
+    countDealsByStage(pipeline.id, [...pipeline.trialStageIds, ...pipeline.paidStageIds], startMs, endMs, offline),
+    countDealsByStage(pipeline.id, pipeline.trialStageIds, startMs, endMs, offline),
+  ]);
+  return { ever, stillTrialing };
 }
