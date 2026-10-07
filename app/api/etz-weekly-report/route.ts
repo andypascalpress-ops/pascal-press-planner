@@ -9,7 +9,7 @@
  */
 import { NextResponse } from 'next/server';
 import { fetchETZStripeRevenue, fetchStripeProductMap, zonedDateTimeToUnix } from '@/lib/stripe-revenue';
-import { fetchChannelRevenue, fetchEtzFunnelTraffic, fetchEtzAppTraffic } from '@/lib/google-analytics';
+import { fetchChannelRevenue, fetchEtzFunnelTraffic, fetchEtzAppTraffic, fetchEtzSiteEngagement } from '@/lib/google-analytics';
 import { fetchTrialConversion, fetchOfflineTrials } from '@/lib/hubspot-trials';
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
 import { fetchMetaSpend, META_ETZ_ACCOUNT_ID } from '@/lib/meta-ads';
@@ -96,7 +96,7 @@ export async function GET(request: Request) {
   const [
     revC, revP, trialC, trialP,
     siteAllC, siteAllP, siteMainC, siteMainP, appC, appP,
-    chanRev, spendC, spendP, prodC, prodP, mtdRev, mtdSpend, offC, offP, appLoginC, appLoginP,
+    chanRev, spendC, spendP, prodC, prodP, mtdRev, mtdSpend, offC, offP, appLoginC, appLoginP, engMainC, engMainP, engAllC, engAllP,
   ] = await Promise.allSettled([
     fetchETZStripeRevenue(end.slice(0, 7), { accurate: false, dateRange: { start, end } }),
     fetchETZStripeRevenue(pEnd.slice(0, 7), { accurate: false, dateRange: { start: pStart, end: pEnd } }),
@@ -119,14 +119,18 @@ export async function GET(request: Request) {
     fetchOfflineTrials('etz', p.startMs, p.endMs),
     fetchEtzAppTraffic(start, end, true),
     fetchEtzAppTraffic(pStart, pEnd, true),
+    fetchEtzSiteEngagement(start, end, true),
+    fetchEtzSiteEngagement(pStart, pEnd, true),
+    fetchEtzSiteEngagement(start, end, false),
+    fetchEtzSiteEngagement(pStart, pEnd, false),
   ]);
 
   const ok = <T,>(r: PromiseSettledResult<T>): T | null => (r.status === 'fulfilled' ? r.value : null);
   const failed: string[] = [];
   const names = ['revC', 'revP', 'trialC', 'trialP', 'siteAllC', 'siteAllP', 'siteMainC', 'siteMainP', 'appC', 'appP',
-    'chanRev', 'spendC', 'spendP', 'prodC', 'prodP', 'mtdRev', 'mtdSpend', 'offC', 'offP', 'appLoginC', 'appLoginP'];
+    'chanRev', 'spendC', 'spendP', 'prodC', 'prodP', 'mtdRev', 'mtdSpend', 'offC', 'offP', 'appLoginC', 'appLoginP', 'engMainC', 'engMainP', 'engAllC', 'engAllP'];
   [revC, revP, trialC, trialP, siteAllC, siteAllP, siteMainC, siteMainP, appC, appP,
-    chanRev, spendC, spendP, prodC, prodP, mtdRev, mtdSpend, offC, offP, appLoginC, appLoginP].forEach((r, i) => {
+    chanRev, spendC, spendP, prodC, prodP, mtdRev, mtdSpend, offC, offP, appLoginC, appLoginP, engMainC, engMainP, engAllC, engAllP].forEach((r, i) => {
     if (r.status === 'rejected') failed.push(names[i]!);
   });
 
@@ -136,6 +140,7 @@ export async function GET(request: Request) {
   const sac = ok(siteAllC), sap = ok(siteAllP), smc = ok(siteMainC), smp = ok(siteMainP);
   const ch = ok(chanRev);
   const oc = ok(offC), op = ok(offP), alc = ok(appLoginC), alp = ok(appLoginP);
+  const emc = ok(engMainC), emp = ok(engMainP), eac = ok(engAllC), eap = ok(engAllP);
 
   const revenue = rc?.totalRevenue ?? 0, revenueP = rp?.totalRevenue ?? 0;
   const orders = rc?.totalOrders ?? 0, ordersP = rp?.totalOrders ?? 0;
@@ -226,6 +231,10 @@ export async function GET(request: Request) {
       revenue: mtd?.totalRevenue ?? null, monthlyTarget,
       spend: mtdS?.total ?? null, googleSpend: mtdS?.google ?? null, metaSpend: mtdS?.meta ?? null,
       monthlyGoogleBudget: monthlyBudget,
+    },
+    engagement: {
+      mainSite: { current: emc, prior: emp },
+      allSites: { current: eac, prior: eap },
     },
     channels,
     ga4Totals: { revenue: ch?.totalRevenue ?? null, orders: (ch?.items ?? []).reduce((s, r) => s + r.transactions, 0) },

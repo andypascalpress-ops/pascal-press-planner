@@ -1466,3 +1466,48 @@ export function matchRevenue(
   });
   return partial ?? null;
 }
+
+// ---------------------------------------------------------------------------
+// ETZ site engagement — bounce rate and average session duration for a date range
+// ---------------------------------------------------------------------------
+
+export interface EtzEngagement {
+  sessions: number;
+  /** Share of sessions that were not engaged, 0-100 (GA4: 1 - engagement rate). */
+  bounceRate: number;
+  avgSessionSeconds: number;
+}
+
+/**
+ * Production hostnames only (staging is excluded centrally). `mainSiteOnly` limits this to the
+ * marketing website (exceltestzone.com.au), leaving out the app where students sit long sessions.
+ */
+export async function fetchEtzSiteEngagement(
+  startDate: string, endDate: string, mainSiteOnly = false,
+): Promise<EtzEngagement> {
+  if (!isETZConnected()) throw new Error('ETZ GA4 is not connected');
+  const accessToken = await getAccessToken();
+  const body: Record<string, unknown> = {
+    dateRanges: [{ startDate, endDate }],
+    metrics: [{ name: 'sessions' }, { name: 'bounceRate' }, { name: 'averageSessionDuration' }],
+    limit: 1,
+  };
+  if (mainSiteOnly) {
+    body.dimensionFilter = {
+      orGroup: {
+        expressions: [
+          { filter: { fieldName: 'hostname', stringFilter: { matchType: 'EXACT', value: 'exceltestzone.com.au' } } },
+          { filter: { fieldName: 'hostname', stringFilter: { matchType: 'EXACT', value: 'www.exceltestzone.com.au' } } },
+        ],
+      },
+    };
+  }
+  const data = await runReportOnProperty(accessToken, GA4_ETZ_BASE, body);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const m: any[] = data.rows?.[0]?.metricValues ?? [];
+  return {
+    sessions: parseInt(m[0]?.value ?? '0', 10) || 0,
+    bounceRate: (parseFloat(m[1]?.value ?? '0') || 0) * 100,
+    avgSessionSeconds: parseFloat(m[2]?.value ?? '0') || 0,
+  };
+}
