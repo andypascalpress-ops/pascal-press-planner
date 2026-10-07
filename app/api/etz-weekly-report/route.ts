@@ -203,7 +203,8 @@ export async function GET(request: Request) {
     aov: { current: aov, prior: aovP, pctChange: pct(aov, aovP) },
     trials: { current: trials, prior: trialsP, pctChange: pct(trials, trialsP),
       stillTrialing: tc?.trialsStarted ?? 0, stillTrialingPrior: tp?.trialsStarted ?? 0 },
-    appVisitorToTrial: { current: appConv, prior: appConvP, appSessions: appSess, appSessionsPrior: appSessP },
+    appVisitorToTrial: { current: appConv, prior: appConvP, appSessions: appSess, appSessionsPrior: appSessP,
+      appNewUsers: ac?.totalNewUsers ?? 0, appNewUsersPrior: ap?.totalNewUsers ?? 0 },
     trialToPaid: {
       current: tc ? { converted: tc.converted, measured: tc.totalEverStarted, pct: tc.pct } : null,
       prior: tp ? { converted: tp.converted, measured: tp.totalEverStarted, pct: tp.pct } : null,
