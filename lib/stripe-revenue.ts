@@ -514,3 +514,59 @@ export async function fetchStripeProductMap(
   } catch { /* return what we have */ }
   return map;
 }
+
+export interface DailyRevenue { revenue: number; orders: number }
+
+const sydneyYmd = new Intl.DateTimeFormat('en-CA', {
+  timeZone: ACCOUNT_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+/**
+ * Net revenue and charge count per Sydney calendar day for [start, end] (YYYY-MM-DD).
+ * Uses the same rules as fetchStripeRevenueWithKey (paid + succeeded charges, net of refunds),
+ * so the daily figures add up to the period totals shown elsewhere. Throws on API failure.
+ */
+export async function fetchStripeDailyRevenue(
+  secretKey: string, start: string, end: string,
+): Promise<Record<string, DailyRevenue>> {
+  const out: Record<string, DailyRevenue> = {};
+  if (!secretKey) return out;
+  const gte = zonedDateTimeToUnix(start, '00:00:00');
+  const lte = zonedDateTimeToUnix(end, '23:59:59');
+
+  let startingAfter: string | null = null;
+  for (let page = 0; page < 100; page++) {
+    const params = new URLSearchParams({ 'created[gte]': String(gte), 'created[lte]': String(lte), limit: '100' });
+    if (startingAfter) params.set('starting_after', startingAfter);
+
+    let res: Response | null = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      res = await fetch(`${STRIPE_BASE}/charges?${params}`, { headers: stripeHeaders(secretKey), cache: 'no-store' });
+      if (res.ok) break;
+      if (res.status !== 429 && res.status < 500) break;
+      await sleep(400 * Math.pow(2, attempt));
+    }
+    if (!res || !res.ok) throw new Error(`Stripe charges error (${res?.status ?? 'no response'})`);
+
+    const data = await res.json() as { data: (StripeCharge & { created: number })[]; has_more: boolean };
+    for (const c of data.data) {
+      if (!c.paid || c.status !== 'succeeded') continue;
+      const day = sydneyYmd.format(new Date(c.created * 1000));
+      const cell = (out[day] ??= { revenue: 0, orders: 0 });
+      cell.revenue += ((c.amount ?? 0) - (c.amount_refunded ?? 0)) / 100;
+      cell.orders += 1;
+    }
+    if (!data.has_more || data.data.length === 0) break;
+    startingAfter = data.data[data.data.length - 1]!.id;
+  }
+  for (const k of Object.keys(out)) out[k]!.revenue = Math.round(out[k]!.revenue * 100) / 100;
+  return out;
+}
+
+export async function fetchETZDailyRevenue(start: string, end: string) {
+  return fetchStripeDailyRevenue(STRIPE_SECRET_KEY, start, end);
+}
+
+export async function fetchHSCDailyRevenue(start: string, end: string) {
+  return fetchStripeDailyRevenue(STRIPE_HSC_SECRET_KEY, start, end);
+}

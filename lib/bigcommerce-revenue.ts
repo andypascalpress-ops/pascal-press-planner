@@ -400,3 +400,47 @@ export function placeholderETZRevenue(): RevenueData {
     connected: false,
   };
 }
+
+/**
+ * Revenue and order count per Sydney calendar day for [start, end] (YYYY-MM-DD).
+ * Same order filtering as fetchBCRevenue (excluded statuses, total_inc_tax) so the daily
+ * figures add up to the period totals shown elsewhere. Throws on API failure.
+ */
+async function fetchBCDailyRevenue(
+  storeHash: string, token: string, start: string, end: string,
+): Promise<Record<string, { revenue: number; orders: number }>> {
+  const out: Record<string, { revenue: number; orders: number }> = {};
+  if (!storeHash || !token) return out;
+
+  const excludedStatuses = new Set([
+    'Cancelled', 'Refunded', 'Incomplete', 'Awaiting Payment', 'Manual Verification Required',
+  ]);
+  let cur = start.slice(0, 7);
+  const endMonth = end.slice(0, 7);
+  while (cur <= endMonth) {
+    const monthOrders = await fetchAllPages<BCOrder>(storeHash, token, '/orders', {
+      min_date_created: toRFC2822(`${cur}-01`),
+      max_date_created: toRFC2822(lastDayOfMonth(cur), true),
+    });
+    for (const o of monthOrders) {
+      if (excludedStatuses.has(o.status)) continue;
+      const day = orderDateSydney(o.date_created);
+      if (day < start || day > end) continue;
+      const cell = (out[day] ??= { revenue: 0, orders: 0 });
+      cell.revenue += parseFloat(o.total_inc_tax || '0');
+      cell.orders += 1;
+    }
+    const [y, m] = cur.split('-').map(Number);
+    cur = m! === 12 ? `${y! + 1}-01` : `${y}-${String(m! + 1).padStart(2, '0')}`;
+  }
+  for (const k of Object.keys(out)) out[k]!.revenue = Math.round(out[k]!.revenue * 100) / 100;
+  return out;
+}
+
+export async function fetchPPDailyRevenue(start: string, end: string) {
+  return fetchBCDailyRevenue(PP_STORE_HASH, PP_ACCESS_TOKEN, start, end);
+}
+
+export async function fetchBlakeDailyRevenue(start: string, end: string) {
+  return fetchBCDailyRevenue(BLAKE_STORE_HASH, BLAKE_ACCESS_TOKEN, start, end);
+}

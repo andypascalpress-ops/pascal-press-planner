@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
+import DailyRevenueTrend from './DailyRevenueTrend';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ComposedChart, Bar, LineChart, Line, Legend,
@@ -551,6 +552,8 @@ export default function BusinessUnitsTab() {
                 </ResponsiveContainer>
               </div>
             )}
+
+            <DailyRevenueTrend brand={brand} color={color} />
 
             {/* Subscription metrics (ETZ / EHC) */}
             {data.subscriptions && (
