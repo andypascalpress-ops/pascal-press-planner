@@ -503,7 +503,8 @@ export async function fetchStripeProductMap(
         if (c.status !== 'succeeded') continue;
         const net = (c.amount - (c.amount_refunded ?? 0)) / 100;
         if (net <= 0) continue;
-        const name  = c.description || 'Other';
+        // Subscription charge descriptions contain the customer's email address; never surface it.
+        const name  = (c.description || 'Other').replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, 'a customer');
         const entry = map.get(name) ?? { revenue: 0, qty: 0 };
         map.set(name, { revenue: entry.revenue + net, qty: entry.qty + 1 });
       }
