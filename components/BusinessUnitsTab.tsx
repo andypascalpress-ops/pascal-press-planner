@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import DailyRevenueTrend from './DailyRevenueTrend';
+import EhcHubspotOverview from './EhcHubspotOverview';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ComposedChart, Bar, LineChart, Line, Legend,
@@ -554,6 +555,8 @@ export default function BusinessUnitsTab() {
             )}
 
             <DailyRevenueTrend brand={brand} color={color} />
+
+            {brand === 'ehc' && <EhcHubspotOverview />}
 
             {/* Subscription metrics (ETZ / EHC) */}
             {data.subscriptions && (
