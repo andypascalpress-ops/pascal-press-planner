@@ -82,6 +82,20 @@ export async function GET(request: Request) {
     return NextResponse.json(out);
   }
 
+  if (part === 'probe') {
+    const course = (sp.get('course') ?? 'Biology');
+    const f = { propertyName: 'ehc_courses', operator: 'CONTAINS_TOKEN', value: course };
+    const stage = { propertyName: 'dealstage', operator: 'EQ', value: stageId('Active Subscription') };
+    const out: Record<string, number> = {};
+    for (const d of [30, 60, 90, 120, 150, 180, 270, 365, 540]) out[`last${d}d`] = await count([inPipe, stage, f, ...created(addDays(today, -(d - 1)), today)]);
+    for (const since of ['2026-01-01', '2026-07-01', '2025-07-01', '2025-10-01', '2026-04-01']) out[`since${since}`] = await count([inPipe, stage, f, ...created(since, today)]);
+    out.withVoucher = await count([inPipe, stage, f, { propertyName: 'voucher_code', operator: 'HAS_PROPERTY' }]);
+    out.withoutVoucher = await count([inPipe, stage, f, { propertyName: 'voucher_code', operator: 'NOT_HAS_PROPERTY' }]);
+    out.amountPositive = await count([inPipe, stage, f, { propertyName: 'amount', operator: 'GT', value: '0' }]);
+    out.amountZero = await count([inPipe, stage, f, { propertyName: 'amount', operator: 'EQ', value: '0' }]);
+    return NextResponse.json({ course, ...out });
+  }
+
   // subjects: Active Subscription deals per EHC course
   const props = await call(`${HS}/crm/v3/properties/deals/ehc_courses`, { headers: H() });
   const courses = (props.options as { value: string }[]).map(o => o.value);
