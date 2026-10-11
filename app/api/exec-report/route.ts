@@ -24,7 +24,8 @@ function authorised(request: Request, token: string): boolean {
 }
 
 export async function GET(request: Request) {
-  const token = process.env.REPORT_TOKEN ?? '';
+  // Tolerate whitespace or wrapping quotes pasted into the Vercel value.
+  const token = (process.env.REPORT_TOKEN ?? '').trim().replace(/^["']|["']$/g, '');
   if (token.length < 24) {
     return NextResponse.json({ error: 'Report endpoint is not configured (REPORT_TOKEN missing or too short).' }, { status: 503 });
   }
