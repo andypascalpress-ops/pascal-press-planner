@@ -30,17 +30,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Report endpoint is not configured (REPORT_TOKEN missing or too short).' }, { status: 503 });
   }
   if (!authorised(request, token)) {
-    // TEMPORARY diagnostic (lengths only, never the values): remove once the token is confirmed working.
-    const header = request.headers.get('authorization') ?? '';
-    return NextResponse.json({
-      error: 'Unauthorised',
-      hint: {
-        headerReceived: header.length > 0,
-        startsWithBearer: header.startsWith('Bearer '),
-        receivedTokenLength: header.startsWith('Bearer ') ? header.slice(7).trim().length : 0,
-        expectedTokenLength: token.length,
-      },
-    }, { status: 401 });
+    return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
   }
 
   try {
