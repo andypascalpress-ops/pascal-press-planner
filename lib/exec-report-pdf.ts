@@ -138,9 +138,9 @@ function delta(cur: number, prior: number, fmt: (n: number) => string, lowerIsBe
 }
 
 function niceMax(v: number): number {
-  if (v <= 0) return 10;
-  const pow = Math.pow(10, Math.floor(Math.log10(v)));
-  for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (m * pow >= v) return m * pow;
+  if (v <= 0) return 4;
+  const pow = Math.pow(10, Math.floor(Math.log10(v / 4)));
+  for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (4 * m * pow >= v) return 4 * m * pow;
   return v;
 }
 
@@ -237,11 +237,11 @@ function etzPage(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReportDat
   // legend
   c.rect(W - M - 150, chTop + 3, 8, 8, BLUE, 0.3); c.text('Daily revenue', W - M - 138, chTop + 3, 7.5, MUTED);
   c.line(W - M - 72, chTop + 7, W - M - 58, chTop + 7, BLUE, 1.7); c.text('7-day average', W - M - 54, chTop + 3, 7.5, MUTED);
-  dailyRevenueChart(c, e, M + 30, chTop + 36, CW - 30, 235);
-  c.text('The faint last bar is today so far and is not in the averages.', M + 30, chTop + 36 + 235 + 18, 7, MUTED);
+  dailyRevenueChart(c, e, M + 30, chTop + 36, CW - 30, 280);
+  c.text('The faint last bar is today so far and is not in the averages.', M + 30, chTop + 36 + 280 + 18, 7, MUTED);
 
   // notes
-  const nTop = 640;
+  const nTop = 662;
   c.rrect(M, nTop, CW, 112, 7, '#F6F8FA');
   c.text('How to read these numbers', M + 14, nTop + 12, 9, NAVY, { bold: true });
   const notes = [
@@ -280,10 +280,10 @@ function ehcPage(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReportDat
   c.rect(lx + 58, chTop + 3, 8, 8, EHC); c.text('New Deal, paid', lx + 70, chTop + 3, 7.5, MUTED);
   c.rect(lx + 140, chTop + 3, 8, 8, DEAL_BLUE); c.text('New Deal, $0', lx + 152, chTop + 3, 7.5, MUTED);
   c.text('Weeks starting Monday, last 14 weeks', M, chTop + 15, 8.5, MUTED);
-  weeklyDealsChart(c, e.weekly, M + 26, chTop + 36, CW - 26, 150);
+  weeklyDealsChart(c, e.weekly, M + 26, chTop + 36, CW - 26, 175);
 
   // two columns: stages, subjects
-  const colTop = 468, colW = (CW - 24) / 2;
+  const colTop = 494, colW = (CW - 24) / 2;
   c.text('Deals by current stage (all time)', M, colTop, 10, NAVY, { bold: true });
   barList(c, e.stages, M, colTop + 20, colW, '#64748B');
   c.text('Paid active subscriptions by subject', M + colW + 24, colTop, 10, NAVY, { bold: true });
@@ -291,7 +291,7 @@ function ehcPage(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReportDat
   c.text('A subscription covering several subjects counts once per subject.', M + colW + 24, colTop + 20 + 8 * 15 + 4, 7, MUTED);
 
   // trial note
-  const nTop = 626;
+  const nTop = 662;
   const g = e.trialGap;
   const noteH = 94;
   c.rrect(M, nTop, CW, noteH, 7, WARN_BG, WARN_LINE);
