@@ -1,15 +1,22 @@
 /**
- * Executive summary PDF (2 pages, A4): Excel Test Zone free trials and orders, Excel HSC Copilot deals and
+ * Executive summary PDF (2 pages, A4): Excel Test Zone free trials and orders, Excel HSC Copilot orders and
  * subscriptions. Pure rendering: ExecReportData in, PDF bytes out. Uses only pdf-lib and the standard
  * Helvetica fonts, so it runs anywhere (Vercel serverless included) with no files or browsers.
+ *
+ * The report is emailed at about 9:30am and covers complete days only: a "yesterday" block, and month to date
+ * through the end of yesterday compared with the same dates last year.
  */
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb, RGB } from 'pdf-lib';
 
+interface OrdersAndRevenue { orders: number; revenue: number }
+
 export interface ExecReportData {
-  preparedLabel: string;      // e.g. "11 Oct 2026, 7:30am Sydney time"
-  periodLabel: string;        // e.g. "1-11 Oct 2026"
-  comparisonLabel: string;    // e.g. "1-11 Sep 2026"
+  preparedLabel: string;      // e.g. "12 Oct 2026, 9:30 am (Sydney time)"
+  yesterdayLabel: string;     // e.g. "Sunday 11 Oct 2026"
+  periodLabel: string;        // month to date through yesterday, e.g. "1-11 Oct 2026"
+  comparisonLabel: string;    // same dates last year, e.g. "1-11 Oct 2025"
   etz: {
+    yesterday: { revenue: number; orders: number; avg7: number };
     revenue: { cur: number; prior: number };
     orders: { cur: number; prior: number };
     aov: { cur: number; prior: number };
@@ -20,11 +27,14 @@ export interface ExecReportData {
     trend: { last30Avg: number; prior30Avg: number; last30Change: number | null };
   };
   ehc: {
+    yesterday: { revenue: number; orders: number; new: number; recurring: number; annual: number };
     revenue: { cur: number; prior: number };
     orders: { cur: number; prior: number };
+    mix: { new: OrdersAndRevenue; recurring: OrdersAndRevenue; annual: OrdersAndRevenue; other: OrdersAndRevenue };
+    mixPrior: { new: OrdersAndRevenue; recurring: OrdersAndRevenue; annual: OrdersAndRevenue; other: OrdersAndRevenue };
+    weeklyOrders: { week: string; new: number; recurring: number; annual: number; other: number }[];
     paidActiveSubscriptions: number;
     last30: { newPaid: number; newZero: number; freeTrial: number; total: number };
-    weekly: { week: string; freeTrial: number; newPaid: number; newZero: number }[];
     stages: { label: string; count: number }[];
     subjects: { subject: string; count: number }[];
     trialGap: { lastFreeTrialWeek: string | null; weeks: number; zeroDealsFirstWeekAfter: number | null };
@@ -35,7 +45,7 @@ export interface ExecReportData {
 const INK = '#142C3D', MUTED = '#5D7080', HAIR = '#DCE6F0', WHITE = '#FFFFFF';
 const NAVY = '#0B2A4A', BLUE = '#1B72BD', TINT = '#EBF4FF';
 const EHC = '#047857', EHC_TINT = '#ECFDF5';
-const AMBER = '#D97706', DEAL_BLUE = '#2563EB';
+const C_NEW = '#047857', C_RECUR = '#2563EB', C_ANNUAL = '#D97706', C_OTHER = '#7C3AED';
 const GOOD = '#2F7D32', BAD = '#B4500B', WARN_BG = '#FFF7E6', WARN_LINE = '#F3D49B', WARN_TEXT = '#7A4A06';
 
 const W = 595.28, H = 841.89, M = 40;
@@ -57,8 +67,6 @@ class Canvas {
   constructor(public page: PDFPage, public reg: PDFFont, public bold: PDFFont) {}
 
   y(top: number) { return H - top; }
-
-  width(s: string, size: number, bold = false) { return (bold ? this.bold : this.reg).widthOfTextAtSize(safe(s), size); }
 
   text(s: string, x: number, top: number, size: number, color = INK, o: { bold?: boolean; align?: 'left' | 'right' | 'center'; maxW?: number } = {}) {
     let str = safe(s);
@@ -112,9 +120,9 @@ class Canvas {
 function header(c: Canvas, kicker: string, title: string, d: ExecReportData, accent: string) {
   c.spaced(kicker, M, 36, 8, accent, 1.6);
   c.text(title, M, 52, 22, NAVY, { bold: true });
-  c.text(`${d.periodLabel}, month to date`, W - M, 38, 10, INK, { bold: true, align: 'right' });
-  c.text(`compared with ${d.comparisonLabel}`, W - M, 52, 8.5, MUTED, { align: 'right' });
-  c.text(`Prepared ${d.preparedLabel}`, W - M, 64, 8.5, MUTED, { align: 'right' });
+  c.text(`Month to date: ${d.periodLabel}`, W - M, 38, 10, INK, { bold: true, align: 'right' });
+  c.text(`compared with ${d.comparisonLabel} (same period last year)`, W - M, 52, 8.5, MUTED, { align: 'right' });
+  c.text(`Prepared ${d.preparedLabel}, includes sales up to the end of yesterday`, W - M, 64, 8, MUTED, { align: 'right' });
 }
 
 function footer(c: Canvas, n: number, sources: string) {
@@ -127,14 +135,13 @@ function tile(c: Canvas, x: number, top: number, w: number, h: number, label: st
   c.rrect(x, top, w, h, 7, fill);
   c.spaced(label.toUpperCase(), x + 12, top + 11, 6.8, MUTED, 0.9);
   c.text(value, x + 12, top + 24, 22, NAVY, { bold: true });
-  c.text(sub, x + 12, top + h - 15, 7.8, subColor, { maxW: w - 24 });
+  c.text(sub, x + 12, top + h - 15, 7.6, subColor, { maxW: w - 24 });
 }
 
-function delta(cur: number, prior: number, fmt: (n: number) => string, lowerIsBetter = false): { text: string; color: string } {
+function vsLastYear(cur: number, prior: number, fmt: (n: number) => string): { text: string; color: string } {
   const p = pctChange(cur, prior);
-  if (p === null) return { text: 'no comparison', color: MUTED };
-  const good = lowerIsBetter ? p <= 0 : p >= 0;
-  return { text: `${signed(p)} vs ${fmt(prior)}`, color: good ? GOOD : BAD };
+  if (p === null) return { text: 'no comparison last year', color: MUTED };
+  return { text: `${signed(p)} vs ${fmt(prior)} last year`, color: p >= 0 ? GOOD : BAD };
 }
 
 function niceMax(v: number): number {
@@ -162,7 +169,7 @@ function dailyRevenueChart(c: Canvas, d: ExecReportData['etz'], x: number, top: 
   const step = w / n, bw = step * 0.66;
   d.daily.forEach((p, i) => {
     const bh = (p.revenue / max) * h;
-    c.rect(x + i * step + (step - bw) / 2, top + h - bh, bw, bh, BLUE, p.partial ? 0.14 : 0.3);
+    c.rect(x + i * step + (step - bw) / 2, top + h - bh, bw, bh, BLUE, 0.3);
   });
   let prev: { x: number; y: number } | null = null;
   d.daily.forEach((p, i) => {
@@ -176,18 +183,20 @@ function dailyRevenueChart(c: Canvas, d: ExecReportData['etz'], x: number, top: 
   });
 }
 
-function weeklyDealsChart(c: Canvas, weekly: ExecReportData['ehc']['weekly'], x: number, top: number, w: number, h: number) {
-  const max = niceMax(Math.max(1, ...weekly.map(wk => wk.freeTrial + wk.newPaid + wk.newZero)));
+function weeklyOrdersChart(c: Canvas, weekly: ExecReportData['ehc']['weeklyOrders'], x: number, top: number, w: number, h: number) {
+  const total = (wk: (typeof weekly)[number]) => wk.new + wk.recurring + wk.annual + wk.other;
+  const max = niceMax(Math.max(1, ...weekly.map(total)));
   gridAndAxis(c, x, top, w, h, max, v => String(Math.round(v)));
-  const n = weekly.length, step = w / n, bw = step * 0.66;
+  const n = weekly.length, step = w / n, bw = step * 0.62;
   weekly.forEach((wk, i) => {
     let base = top + h;
     const bx = x + i * step + (step - bw) / 2;
-    for (const [val, col] of [[wk.freeTrial, AMBER], [wk.newPaid, EHC], [wk.newZero, DEAL_BLUE]] as [number, string][]) {
+    for (const [val, col] of [[wk.new, C_NEW], [wk.recurring, C_RECUR], [wk.annual, C_ANNUAL], [wk.other, C_OTHER]] as [number, string][]) {
       const bh = (val / max) * h;
       if (bh > 0) { c.rect(bx, base - bh, bw, bh, col); c.page.drawRectangle({ x: bx, y: c.y(base - bh) - bh, width: bw, height: bh, borderColor: hex(WHITE), borderWidth: 0.6 }); }
       base -= bh;
     }
+    c.text(String(total(wk)), bx + bw / 2, base - 10, 7, INK, { bold: true, align: 'center' });
     c.text(shortDate(wk.week), bx + bw / 2, top + h + 5, 6.5, MUTED, { align: 'center' });
   });
 }
@@ -204,53 +213,58 @@ function barList(c: Canvas, rows: { label: string; count: number }[], x: number,
   });
 }
 
+/** Rounded callout sized to its text. Returns the bottom edge. */
+function callout(c: Canvas, top: number, title: string, paragraphs: string[], fill: string, line: string | undefined, titleColor: string, textColor: string): number {
+  const size = 8.3, lead = 1.35, pad = 12, inner = CW - 28;
+  const lines = paragraphs.map(p => c.wrap(p, size, inner));
+  const textH = lines.reduce((a, l) => a + l.length * size * lead, 0) + (paragraphs.length - 1) * 5;
+  const h = pad + 13 + textH + pad - 2;
+  c.rrect(M, top, CW, h, 7, fill, line);
+  c.text(title, M + 14, top + pad, 9, titleColor, { bold: true });
+  let ty = top + pad + 17;
+  lines.forEach(ls => { ls.forEach((l, i) => c.text(l, M + 14, ty + i * size * lead, size, textColor)); ty += ls.length * size * lead + 5; });
+  return top + h;
+}
+
 function etzPage(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReportData) {
   const page = pdf.addPage([W, H]);
   const c = new Canvas(page, reg, bold);
   const e = d.etz;
   header(c, 'EXECUTIVE SUMMARY  |  EXCEL TEST ZONE', 'Free trials and orders', d, BLUE);
 
-  // tiles 3 x 2
   const gap = 10, tw = (CW - 2 * gap) / 3, th = 66, top1 = 86, top2 = top1 + th + gap;
-  const rev = delta(e.revenue.cur, e.revenue.prior, money);
-  const ord = delta(e.orders.cur, e.orders.prior, v => NUM.format(v));
-  const aov = delta(e.aov.cur, e.aov.prior, money);
-  const trl = delta(e.trials.cur, e.trials.prior, v => NUM.format(v));
+  const rev = vsLastYear(e.revenue.cur, e.revenue.prior, money);
+  const ord = vsLastYear(e.orders.cur, e.orders.prior, v => NUM.format(v));
+  const trl = vsLastYear(e.trials.cur, e.trials.prior, v => NUM.format(v));
   const ttpDiff = e.trialToPaid.cur - e.trialToPaid.prior;
-  tile(c, M, top1, tw, th, 'Revenue', money(e.revenue.cur), rev.text, rev.color, TINT);
-  tile(c, M + tw + gap, top1, tw, th, 'Paid orders', NUM.format(e.orders.cur), ord.text, ord.color, TINT);
-  tile(c, M + 2 * (tw + gap), top1, tw, th, 'Average order value', money(e.aov.cur), aov.text, aov.color, TINT);
-  tile(c, M, top2, tw, th, 'New free trials', NUM.format(e.trials.cur), trl.text, trl.color, TINT);
+  const yLabel = d.yesterdayLabel.replace(/ \d{4}$/, '');
+  tile(c, M, top1, tw, th, `Yesterday, ${yLabel}`, money(e.yesterday.revenue), `${NUM.format(e.yesterday.orders)} orders | 7-day avg ${money(e.yesterday.avg7)} a day`, MUTED, TINT);
+  tile(c, M + tw + gap, top1, tw, th, 'Revenue, month to date', money(e.revenue.cur), rev.text, rev.color, TINT);
+  tile(c, M + 2 * (tw + gap), top1, tw, th, 'Paid orders, month to date', NUM.format(e.orders.cur), `${ord.text.replace(' last year', '')} | AOV ${money(e.aov.cur)}`, ord.color, TINT);
+  tile(c, M, top2, tw, th, 'New free trials, month to date', NUM.format(e.trials.cur), trl.text, trl.color, TINT);
   tile(c, M + tw + gap, top2, tw, th, 'Free trial to paid', `${Math.round(e.trialToPaid.cur)}%`,
-    `${ttpDiff >= 0 ? '+' : '-'}${Math.abs(ttpDiff).toFixed(0)} pts vs ${Math.round(e.trialToPaid.prior)}%`, ttpDiff >= 0 ? GOOD : BAD, TINT);
+    e.trials.prior > 0 ? `${ttpDiff >= 0 ? '+' : '-'}${Math.abs(ttpDiff).toFixed(0)} pts vs ${Math.round(e.trialToPaid.prior)}% last year` : 'no comparison last year',
+    e.trials.prior > 0 ? (ttpDiff >= 0 ? GOOD : BAD) : MUTED, TINT);
   const pctOfTarget = e.target.monthlyTarget > 0 ? (e.revenue.cur / e.target.monthlyTarget) * 100 : 0;
   tile(c, M + 2 * (tw + gap), top2, tw, th, 'Month revenue target', `${Math.round(pctOfTarget)}%`,
     `${money(e.revenue.cur)} of ${money(e.target.monthlyTarget)} (${Math.round(e.target.monthPctElapsed)}% of month gone)`, MUTED, TINT);
 
-  // chart
   const chTop = 252;
   c.text('Daily revenue, last 90 days', M, chTop, 11, NAVY, { bold: true });
   const t = e.trend;
-  const chg = t.last30Change;
-  const trendWord = chg === null ? '' : chg >= 5 ? 'rising' : chg <= -5 ? 'falling' : 'flat';
-  c.text(`Last 30 days: ${money(t.last30Avg)} a day vs ${money(t.prior30Avg)} in the 30 before (${signed(chg)}), ${trendWord}`, M, chTop + 15, 8.5, MUTED);
-  // legend
+  const trendWord = t.last30Change === null ? '' : t.last30Change >= 5 ? ', rising' : t.last30Change <= -5 ? ', falling' : ', flat';
+  c.text(`Last 30 days: ${money(t.last30Avg)} a day vs ${money(t.prior30Avg)} in the 30 before (${signed(t.last30Change)})${trendWord}`, M, chTop + 15, 8.5, MUTED);
   c.rect(W - M - 150, chTop + 3, 8, 8, BLUE, 0.3); c.text('Daily revenue', W - M - 138, chTop + 3, 7.5, MUTED);
   c.line(W - M - 72, chTop + 7, W - M - 58, chTop + 7, BLUE, 1.7); c.text('7-day average', W - M - 54, chTop + 3, 7.5, MUTED);
-  dailyRevenueChart(c, e, M + 30, chTop + 36, CW - 30, 280);
-  c.text('The faint last bar is today so far and is not in the averages.', M + 30, chTop + 36 + 280 + 18, 7, MUTED);
+  dailyRevenueChart(c, e, M + 30, chTop + 36, CW - 30, 270);
+  c.text('Complete days only: the chart ends yesterday.', M + 30, chTop + 36 + 270 + 18, 7, MUTED);
 
-  // notes
-  const nTop = 662;
-  c.rrect(M, nTop, CW, 112, 7, '#F6F8FA');
-  c.text('How to read these numbers', M + 14, nTop + 12, 9, NAVY, { bold: true });
-  const notes = [
+  callout(c, 650, 'How to read these numbers', [
+    `Yesterday is the full previous day (Sydney time). Month to date runs from the 1st through the end of yesterday and is compared with the same dates last year.`,
     `New free trials counts every trial started in the period, including those that have already paid. ${NUM.format(e.trials.schoolImports)} of this period's ${NUM.format(e.trials.cur)} are bulk school imports.`,
     'Free trial to paid is paid orders divided by trials started in the same period. It is a simple ratio, not a strict conversion rate: some buyers never had a trial, and one order can cover several products.',
     'Revenue and orders come from Stripe (net of refunds). Trials come from HubSpot deals, which are under review; a direct feed from the user system is planned.',
-  ];
-  let ny = nTop + 28;
-  for (const n of notes) { c.text('•', M + 14, ny, 8, MUTED); ny += c.paragraph(n, M + 26, ny, 8, CW - 40, INK, 1.32) + 4; }
+  ], '#F6F8FA', undefined, NAVY, INK);
 
   footer(c, 1, 'Sources: Stripe, HubSpot');
 }
@@ -259,52 +273,55 @@ function ehcPage(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReportDat
   const page = pdf.addPage([W, H]);
   const c = new Canvas(page, reg, bold);
   const e = d.ehc;
-  header(c, 'EXECUTIVE SUMMARY  |  EXCEL HSC COPILOT', 'Deals and subscriptions', d, EHC);
+  header(c, 'EXECUTIVE SUMMARY  |  EXCEL HSC COPILOT', 'Orders and subscriptions', d, EHC);
 
   const gap = 10, tw = (CW - 2 * gap) / 3, th = 66, top1 = 86, top2 = top1 + th + gap;
-  const rev = delta(e.revenue.cur, e.revenue.prior, money);
-  const ord = delta(e.orders.cur, e.orders.prior, v => NUM.format(v));
-  tile(c, M, top1, tw, th, 'Revenue (Stripe)', money(e.revenue.cur), rev.text, rev.color, EHC_TINT);
-  tile(c, M + tw + gap, top1, tw, th, 'Orders (Stripe)', NUM.format(e.orders.cur), ord.text, ord.color, EHC_TINT);
-  tile(c, M + 2 * (tw + gap), top1, tw, th, 'Paid active subscriptions', NUM.format(e.paidActiveSubscriptions), 'HubSpot, deals with a payment', MUTED, EHC_TINT);
-  tile(c, M, top2, tw, th, 'New paid deals, 30 days', NUM.format(e.last30.newPaid), `of ${NUM.format(e.last30.total)} deals created`, MUTED, EHC_TINT);
-  tile(c, M + tw + gap, top2, tw, th, '$0 new deals, 30 days', NUM.format(e.last30.newZero), 'free sign-ups recorded as New Deals', MUTED, EHC_TINT);
-  tile(c, M + 2 * (tw + gap), top2, tw, th, 'Free Trial deals, 30 days', NUM.format(e.last30.freeTrial),
-    e.last30.freeTrial === 0 ? 'none created, see note below' : 'trial-type deals created', e.last30.freeTrial === 0 ? BAD : MUTED, EHC_TINT);
+  const rev = vsLastYear(e.revenue.cur, e.revenue.prior, money);
+  const ord = vsLastYear(e.orders.cur, e.orders.prior, v => NUM.format(v));
+  const y = e.yesterday;
+  const yLabel = d.yesterdayLabel.replace(/ \d{4}$/, '');
+  tile(c, M, top1, tw, th, `Yesterday, ${yLabel}`, money(y.revenue), `${NUM.format(y.orders)} orders: ${y.new} new, ${y.recurring} renewals, ${y.annual} annual`, MUTED, EHC_TINT);
+  tile(c, M + tw + gap, top1, tw, th, 'Revenue, month to date', money(e.revenue.cur), rev.text, rev.color, EHC_TINT);
+  tile(c, M + 2 * (tw + gap), top1, tw, th, 'Orders, month to date', NUM.format(e.orders.cur), ord.text, ord.color, EHC_TINT);
+  const mixTile = (x: number, label: string, k: 'new' | 'recurring' | 'annual') => {
+    const cur = e.mix[k], pr = e.mixPrior[k];
+    tile(c, x, top2, tw, th, label, NUM.format(cur.orders), `${money(cur.revenue)} | ${NUM.format(pr.orders)} last year`, MUTED, EHC_TINT);
+  };
+  mixTile(M, 'New orders (new subscribers)', 'new');
+  mixTile(M + tw + gap, 'Recurring orders (renewals)', 'recurring');
+  mixTile(M + 2 * (tw + gap), 'Annual plan orders', 'annual');
 
-  // weekly chart
   const chTop = 252;
-  c.text('New deals per week, by type', M, chTop, 11, NAVY, { bold: true });
-  const lx = W - M - 215;
-  c.rect(lx, chTop + 3, 8, 8, AMBER); c.text('Free Trial', lx + 12, chTop + 3, 7.5, MUTED);
-  c.rect(lx + 58, chTop + 3, 8, 8, EHC); c.text('New Deal, paid', lx + 70, chTop + 3, 7.5, MUTED);
-  c.rect(lx + 140, chTop + 3, 8, 8, DEAL_BLUE); c.text('New Deal, $0', lx + 152, chTop + 3, 7.5, MUTED);
-  c.text('Weeks starting Monday, last 14 weeks', M, chTop + 15, 8.5, MUTED);
-  weeklyDealsChart(c, e.weekly, M + 26, chTop + 36, CW - 26, 175);
+  c.text('Orders per week, by type', M, chTop, 11, NAVY, { bold: true });
+  c.text('Complete weeks (Monday to Sunday), last 12 weeks. The number above each bar is the week\'s total.', M, chTop + 15, 8.5, MUTED);
+  const hasOther = e.weeklyOrders.some(w => w.other > 0);
+  const items: [string, string][] = [['New', C_NEW], ['Renewals', C_RECUR], ['Annual', C_ANNUAL]];
+  if (hasOther) items.push(['Other', C_OTHER]);
+  let lx = W - M - items.length * 62;
+  for (const [label, col] of items) { c.rect(lx, chTop + 3, 8, 8, col); c.text(label, lx + 12, chTop + 3, 7.5, MUTED); lx += 62; }
+  weeklyOrdersChart(c, e.weeklyOrders, M + 26, chTop + 40, CW - 26, 140);
 
-  // two columns: stages, subjects
-  const colTop = 494, colW = (CW - 24) / 2;
-  c.text('Deals by current stage (all time)', M, colTop, 10, NAVY, { bold: true });
+  const colTop = 468, colW = (CW - 24) / 2;
+  c.text('HubSpot deals by current stage (all time)', M, colTop, 10, NAVY, { bold: true });
   barList(c, e.stages, M, colTop + 20, colW, '#64748B');
   c.text('Paid active subscriptions by subject', M + colW + 24, colTop, 10, NAVY, { bold: true });
-  barList(c, e.subjects.slice(0, 8).map(s => ({ label: s.subject, count: s.count })), M + colW + 24, colTop + 20, colW, EHC);
-  c.text('A subscription covering several subjects counts once per subject.', M + colW + 24, colTop + 20 + 8 * 15 + 4, 7, MUTED);
+  barList(c, e.subjects.slice(0, 7).map(s => ({ label: s.subject, count: s.count })), M + colW + 24, colTop + 20, colW, EHC);
+  c.text(`${NUM.format(e.paidActiveSubscriptions)} paid active subscriptions in HubSpot. A subscription covering several subjects counts once per subject.`, M + colW + 24, colTop + 20 + 7 * 15 + 3, 6.8, MUTED, { maxW: colW });
 
-  // trial note
-  const nTop = 662;
   const g = e.trialGap;
-  const noteH = 94;
-  c.rrect(M, nTop, CW, noteH, 7, WARN_BG, WARN_LINE);
-  c.text('Note on trials', M + 14, nTop + 12, 9, WARN_TEXT, { bold: true });
+  let top = 612;
+  top = callout(c, top, 'How orders and deals differ', [
+    'Orders are payments in Stripe: the first payment of a new subscription (new), renewals, and annual plans. New + renewals + annual always add up to total orders.',
+    `HubSpot deals are records created for new sign-ups, so renewals never appear as deals and the two counts are not meant to match. In the last 30 days HubSpot created ${NUM.format(e.last30.total)} deals: ${NUM.format(e.last30.newPaid)} paid, ${NUM.format(e.last30.newZero)} at $0 and ${NUM.format(e.last30.freeTrial)} Free Trial. A returning subscriber who starts a fresh subscription counts as new.`,
+  ], '#F6F8FA', undefined, NAVY, INK) + 8;
   const gapText = g.lastFreeTrialWeek
     ? `No Free Trial deals have been created since the week of ${shortDate(g.lastFreeTrialWeek)} (${g.weeks} weeks). ` +
       (g.zeroDealsFirstWeekAfter !== null ? `In that week, $0 New Deal records rose to ${NUM.format(g.zeroDealsFirstWeekAfter)}, so free sign-ups now appear to be recorded that way. ` : '') +
       'Reports filtered on trial stages or the Free Trial type therefore show no data. The cause is still to be confirmed with the EHC system owner.'
     : 'Free Trial deals are still being created as normal.';
-  const used = c.paragraph(gapText, M + 14, nTop + 28, 8.5, CW - 28, WARN_TEXT, 1.35);
-  c.paragraph('Counts come from HubSpot deals. Revenue and orders come from Stripe.', M + 14, nTop + 28 + used + 6, 8, CW - 28, MUTED, 1.3);
+  callout(c, top, 'Note on trials', [gapText], WARN_BG, WARN_LINE, WARN_TEXT, WARN_TEXT);
 
-  footer(c, 2, 'Sources: HubSpot, Stripe');
+  footer(c, 2, 'Sources: Stripe, HubSpot');
 }
 
 export async function renderExecReport(d: ExecReportData): Promise<Uint8Array> {

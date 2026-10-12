@@ -571,3 +571,84 @@ export async function fetchETZDailyRevenue(start: string, end: string) {
 export async function fetchHSCDailyRevenue(start: string, end: string) {
   return fetchStripeDailyRevenue(STRIPE_HSC_SECRET_KEY, start, end);
 }
+
+export interface OrderBucket { orders: number; revenue: number }
+export interface ClassifiedDay {
+  revenue: number;
+  orders: number;
+  /** First payment of a new subscription. */
+  new: OrderBucket;
+  /** Renewal payment of an existing monthly subscription. */
+  recurring: OrderBucket;
+  /** Any payment on an annual plan (new or renewal). */
+  annual: OrderBucket;
+  /** One-off charges and anything else not on a subscription invoice. */
+  other: OrderBucket;
+}
+
+const emptyBucket = (): OrderBucket => ({ orders: 0, revenue: 0 });
+
+/**
+ * Per Sydney day: revenue and order counts split into new / recurring / annual / other for [start, end].
+ * Same charge rules as fetchStripeRevenueWithKey (paid + succeeded, net of refunds), so the split always adds up
+ * to the same total orders and revenue. Classification comes from the subscription invoice behind each charge:
+ *  - annual:    the invoice line's price recurs yearly
+ *  - new:       billing_reason = subscription_create (first payment of a subscription)
+ *  - recurring: billing_reason = subscription_cycle (renewal)
+ *  - other:     no invoice, or any other reason
+ * A returning customer who starts a fresh subscription counts as "new". Throws on API failure.
+ */
+export async function fetchStripeClassifiedDaily(
+  secretKey: string, start: string, end: string,
+): Promise<Record<string, ClassifiedDay>> {
+  const out: Record<string, ClassifiedDay> = {};
+  if (!secretKey) return out;
+  const gte = zonedDateTimeToUnix(start, '00:00:00');
+  const lte = zonedDateTimeToUnix(end, '23:59:59');
+
+  type Inv = { billing_reason?: string; lines?: { data?: { price?: { recurring?: { interval?: string } }; plan?: { interval?: string } }[] } };
+  let startingAfter: string | null = null;
+  for (let page = 0; page < 150; page++) {
+    const params = new URLSearchParams({ 'created[gte]': String(gte), 'created[lte]': String(lte), limit: '100' });
+    params.append('expand[]', 'data.invoice');
+    if (startingAfter) params.set('starting_after', startingAfter);
+
+    let res: Response | null = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      res = await fetch(`${STRIPE_BASE}/charges?${params}`, { headers: stripeHeaders(secretKey), cache: 'no-store' });
+      if (res.ok) break;
+      if (res.status !== 429 && res.status < 500) break;
+      await sleep(400 * Math.pow(2, attempt));
+    }
+    if (!res || !res.ok) throw new Error(`Stripe charges error (${res?.status ?? 'no response'})`);
+
+    const data = await res.json() as { data: (StripeCharge & { created: number; invoice: Inv | string | null })[]; has_more: boolean };
+    for (const c of data.data) {
+      if (!c.paid || c.status !== 'succeeded') continue;
+      const day = sydneyYmd.format(new Date(c.created * 1000));
+      const cell = (out[day] ??= { revenue: 0, orders: 0, new: emptyBucket(), recurring: emptyBucket(), annual: emptyBucket(), other: emptyBucket() });
+      const net = ((c.amount ?? 0) - (c.amount_refunded ?? 0)) / 100;
+      cell.revenue += net;
+      cell.orders += 1;
+
+      const inv = c.invoice && typeof c.invoice === 'object' ? c.invoice : null;
+      const line = inv?.lines?.data?.[0];
+      const interval = line?.price?.recurring?.interval ?? line?.plan?.interval;
+      const kind: 'new' | 'recurring' | 'annual' | 'other' =
+        !inv ? 'other' : interval === 'year' ? 'annual' : inv.billing_reason === 'subscription_create' ? 'new' : inv.billing_reason === 'subscription_cycle' ? 'recurring' : 'other';
+      cell[kind].orders += 1;
+      cell[kind].revenue += net;
+    }
+    if (!data.has_more || data.data.length === 0) break;
+    startingAfter = data.data[data.data.length - 1]!.id;
+  }
+  for (const d of Object.values(out)) {
+    d.revenue = Math.round(d.revenue * 100) / 100;
+    for (const k of ['new', 'recurring', 'annual', 'other'] as const) d[k].revenue = Math.round(d[k].revenue * 100) / 100;
+  }
+  return out;
+}
+
+export async function fetchHSCClassifiedDaily(start: string, end: string) {
+  return fetchStripeClassifiedDaily(STRIPE_HSC_SECRET_KEY, start, end);
+}
