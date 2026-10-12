@@ -66,6 +66,21 @@ export async function GET() {
       periodAhead[b] = (periodAhead[b] ?? 0) + 1;
     }
   }
+  // what each paying monthly subscription was actually charged on its latest invoice
+  const hist: Record<string, number> = {};
+  let monthlyBilledNow = 0, monthlyAtList = 0, annualBilledPerMonth = 0;
+  for (const s of subs) {
+    const item = s.items?.data?.[0];
+    const unit = (item?.price?.unit_amount ?? 0) / 100;
+    if (unit <= 0) continue;
+    const inv = s.latest_invoice && typeof s.latest_invoice === 'object' ? s.latest_invoice : null;
+    if (item?.price?.recurring?.interval === 'year') { annualBilledPerMonth += unit / 12; continue; }
+    const paid = inv ? (inv.amount_paid ?? 0) / 100 : 0;
+    const key = String(Math.round(paid));
+    hist[key] = (hist[key] ?? 0) + 1;
+    monthlyBilledNow += paid;
+    monthlyAtList += unit;
+  }
   const rows = Object.entries(groups).sort((a, b) => b[1].n - a[1].n);
-  return NextResponse.json({ activeOrPastDuePaidPrice: subs.length, groups: Object.fromEntries(rows), monthlyNextRenewalWindow: periodAhead });
+  return NextResponse.json({ latestInvoiceAmountCounts: hist, monthlyBilledNow: Math.round(monthlyBilledNow), monthlyAtList: Math.round(monthlyAtList), annualBilledPerMonth: Math.round(annualBilledPerMonth), activeOrPastDuePaidPrice: subs.length, groups: Object.fromEntries(rows), monthlyNextRenewalWindow: periodAhead });
 }
