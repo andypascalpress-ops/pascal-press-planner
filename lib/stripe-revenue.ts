@@ -690,7 +690,7 @@ export async function fetchStripeSubscriptionSummary(secretKey: string, since?: 
   const statuses = since ? ['all'] : ['active', 'past_due'];
 
   type Sub = {
-    id: string; status: string; created: number; canceled_at: number | null; cancel_at_period_end: boolean;
+    id: string; status: string; created: number; canceled_at: number | null; ended_at?: number | null; cancel_at_period_end: boolean;
     items?: { data?: { price?: { unit_amount?: number; recurring?: { interval?: string; interval_count?: number } } }[] };
     latest_invoice?: { amount_paid?: number } | string | null;
   };
@@ -711,7 +711,8 @@ export async function fetchStripeSubscriptionSummary(secretKey: string, since?: 
       const data = await res.json() as { data: Sub[]; has_more: boolean };
       for (const sub of data.data) {
         if (since && sub.created >= sinceUnix && sub.status !== 'incomplete' && sub.status !== 'incomplete_expired') out.started += 1;
-        if (since && sub.canceled_at && sub.canceled_at >= sinceUnix) out.cancelled += 1;
+        // only subscriptions that have actually ended; canceled_at is also stamped when someone merely asks to cancel at period end
+        if (since && sub.status === 'canceled' && (sub.ended_at ?? sub.canceled_at ?? 0) >= sinceUnix) out.cancelled += 1;
         if (sub.status !== 'active' && sub.status !== 'past_due') continue;
         const price = sub.items?.data?.[0]?.price;
         const unit = (price?.unit_amount ?? 0) / 100;
