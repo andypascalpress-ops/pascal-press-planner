@@ -170,18 +170,11 @@ function dailyRevenueChart(c: Canvas, daily: DailyPoint[], color: string, x: num
   const n = daily.length;
   const max = niceMax(Math.max(1, ...daily.map(p => p.revenue)));
   gridAndAxis(c, x, top, w, h, max, axisMoney);
-  const step = w / n, bw = step * 0.66;
-  daily.forEach((p, i) => {
-    const bh = (p.revenue / max) * h;
-    c.rect(x + i * step + (step - bw) / 2, top + h - bh, bw, bh, color, 0.3);
-  });
-  let prev: { x: number; y: number } | null = null;
-  daily.forEach((p, i) => {
-    if (p.ma7 === null) { prev = null; return; }
-    const pt = { x: x + i * step + step / 2, y: top + h - (p.ma7 / max) * h };
-    if (prev) c.line(prev.x, prev.y, pt.x, pt.y, color, 1.7);
-    prev = pt;
-  });
+  const step = w / n;
+  const pts = daily.map((p, i) => ({ x: x + i * step + step / 2, y: top + h - (p.revenue / max) * h }));
+  pts.forEach((pt, i) => { if (i > 0) c.line(pts[i - 1]!.x, pts[i - 1]!.y, pt.x, pt.y, color, 1.5); });
+  const last = pts[pts.length - 1];
+  if (last) c.page.drawCircle({ x: last.x, y: c.y(last.y), size: 2.6, color: hex(color) });
   daily.forEach((p, i) => {
     if ((n - 1 - i) % 14 === 0) c.text(shortDate(p.date), x + i * step + step / 2, top + h + 5, 7, MUTED, { align: 'center' });
   });
@@ -191,10 +184,8 @@ function dailyChartBlock(c: Canvas, daily: DailyPoint[], trend: Trend, color: st
   c.text('Daily revenue, last 90 days', M, top, 11, NAVY, { bold: true });
   const word = trend.last30Change === null ? '' : trend.last30Change >= 5 ? ', rising' : trend.last30Change <= -5 ? ', falling' : ', flat';
   c.text(`Last 30 days: ${money(trend.last30Avg)} a day vs ${money(trend.prior30Avg)} in the 30 before (${signed(trend.last30Change)})${word}`, M, top + 15, 8.5, MUTED);
-  c.rect(W - M - 150, top + 3, 8, 8, color, 0.3); c.text('Daily revenue', W - M - 138, top + 3, 7.5, MUTED);
-  c.line(W - M - 72, top + 7, W - M - 58, top + 7, color, 1.7); c.text('7-day average', W - M - 54, top + 3, 7.5, MUTED);
   dailyRevenueChart(c, daily, color, M + 30, top + 36, CW - 30, chartH);
-  c.text('Complete days only: the chart ends yesterday.', M + 30, top + 36 + chartH + 18, 7, MUTED);
+  c.text('Each point is one day of sales. Complete days only: the chart ends yesterday.', M + 30, top + 36 + chartH + 18, 7, MUTED);
 }
 
 function weeklyOrdersChart(c: Canvas, weekly: ExecReportData['ehc']['weeklyOrders'], x: number, top: number, w: number, h: number) {
