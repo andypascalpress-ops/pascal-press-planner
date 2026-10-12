@@ -286,7 +286,7 @@ function ehcPageOne(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReport
     `• Yesterday (${yLabel}): ${money(e.yesterday.revenue)} from ${e.yesterday.orders} orders (${e.yesterday.new} new, ${e.yesterday.recurring} renewals, ${e.yesterday.annual} annual).`,
     `• Month to date: ${money(e.revenue.cur)} from ${NUM.format(e.orders.cur)} orders${revChange === null ? '' : `, ${signed(revChange)} on the same period last year`}.` +
       (t.monthlyTarget > 0 ? ` At the current daily pace the month ends near ${money(t.projected)} against a ${money(t.monthlyTarget)} target.` : ''),
-    `• Subscribers: ${NUM.format(e.subscriptions.paying)} people currently have a paid subscription (${NUM.format(e.subscriptions.monthly)} on the monthly plan, ${NUM.format(e.subscriptions.yearly)} on the annual plan). ${e.subscriptions.started} subscriptions started and ${e.subscriptions.cancelled} were cancelled this month.`,
+    `• Subscribers: ${NUM.format(e.subscriptions.paying)} active paid subscribers (${NUM.format(e.subscriptions.monthly)} on the monthly plan, ${NUM.format(e.subscriptions.yearly)} on the annual plan). ${e.subscriptions.started} subscriptions started and ${e.subscriptions.cancelled} were cancelled this month.`,
     `• Payments: ${NUM.format(e.marketing.failedPayments)} payment attempts failed this month; Stripe retries these automatically.`,
   ];
   let top = callout(c, 84, 'At a glance', bullets, EHC_TINT, undefined, EHC, INK, 8.6) + 10;
@@ -300,7 +300,7 @@ function ehcPageOne(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReport
   tile(c, M + 2 * (tw + gap), top, tw, th, 'Month-end outlook', money(t.projected),
     t.monthlyTarget > 0 ? `target ${money(t.monthlyTarget)} | ${Math.round(pctTarget)}% reached so far` : 'straight-line projection', MUTED, EHC_TINT);
   top += th + gap;
-  tile(c, M, top, tw, th, 'Paying subscriptions', NUM.format(e.subscriptions.paying), `${NUM.format(e.subscriptions.monthly)} monthly plan | ${NUM.format(e.subscriptions.yearly)} annual plan`, MUTED, EHC_TINT);
+  tile(c, M, top, tw, th, 'Active paid subscribers', NUM.format(e.subscriptions.paying), `${NUM.format(e.subscriptions.monthly)} monthly plan | ${NUM.format(e.subscriptions.yearly)} annual plan`, MUTED, EHC_TINT);
   tile(c, M + tw + gap, top, tw, th, 'Subscriptions started', NUM.format(e.subscriptions.started), 'new paid subscriptions this month', MUTED, EHC_TINT);
   tile(c, M + 2 * (tw + gap), top, tw, th, 'Subscriptions cancelled', NUM.format(e.subscriptions.cancelled), 'ended this month', MUTED, EHC_TINT);
   top += th + 22;
@@ -369,7 +369,7 @@ function ehcPageTwo(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReport
   callout(c, top, 'How to read these numbers', [
     'Yesterday is the full previous day (Sydney time). Month to date runs from the 1st through the end of yesterday and is compared with the same dates last year. Revenue is net of refunds.',
     'Orders are Stripe payments: new (the first payment of a new subscription), renewals, and annual plans. A returning subscriber who starts a fresh subscription counts as new.',
-    'Paying subscriptions are people with an active Stripe subscription on a paid plan today: monthly subscribers are charged every month, annual subscribers are charged once a year, so most annual plans do not appear in the orders for a given month. Started and cancelled count paid subscriptions that began or ended this month. The month-end outlook is a straight-line projection, not a forecast, and ignores seasonality.',
+    'Active paid subscribers are all people with an active Stripe subscription on a paid plan today: monthly subscribers are charged every month, annual subscribers are charged once a year, so most annual plans do not appear in the orders for a given month. Started and cancelled count paid subscriptions that began or ended this month. The month-end outlook is a straight-line projection, not a forecast, and ignores seasonality.',
   ], '#F6F8FA', undefined, NAVY, INK, 7.8);
 
   footer(c, n, total, 'Sources: Stripe, HubSpot, Google Ads');
