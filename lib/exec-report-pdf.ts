@@ -25,7 +25,7 @@ export interface ExecReportData {
     mix: Mix;
     mixPrior: Mix;
     target: { monthlyTarget: number; monthPctElapsed: number; projected: number; daysElapsed: number; daysInMonth: number };
-    subscriptions: { paying: number; monthly: number; yearly: number; mrr: number; pendingCancel: number; started: number; cancelled: number };
+    subscriptions: { paying: number; monthly: number; yearly: number; mrr: number; mrrAtList: number; intro: number; pendingCancel: number; started: number; cancelled: number };
     marketing: { adSpend: number | null; failedPayments: number };
     daily: DailyPoint[];
     trend: Trend;
@@ -266,7 +266,7 @@ function ehcPageOne(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReport
     `• Yesterday (${yLabel}): ${money(e.yesterday.revenue)} from ${e.yesterday.orders} orders (${e.yesterday.new} new, ${e.yesterday.recurring} renewals, ${e.yesterday.annual} annual).`,
     `• Month to date: ${money(e.revenue.cur)} from ${NUM.format(e.orders.cur)} orders${revChange === null ? '' : `, ${signed(revChange)} on the same period last year`}.` +
       (t.monthlyTarget > 0 ? ` At the current daily pace the month ends near ${money(t.projected)} against a ${money(t.monthlyTarget)} target.` : ''),
-    `• Subscribers: ${NUM.format(e.subscriptions.paying)} paying subscriptions worth about ${money(e.subscriptions.mrr)} a month. ${e.subscriptions.started} started and ${e.subscriptions.cancelled} were cancelled this month (net ${net >= 0 ? '+' : ''}${net}); ${e.subscriptions.pendingCancel} more are set to end at their next renewal.`,
+    `• Subscribers: ${NUM.format(e.subscriptions.paying)} paying subscriptions bringing in about ${money(e.subscriptions.mrr)} a month at today's prices${e.subscriptions.intro > 0 ? ` (${e.subscriptions.intro} are on the introductory first-month price; if they stay, this rises to about ${money(e.subscriptions.mrrAtList)})` : ''}. ${e.subscriptions.started} started and ${e.subscriptions.cancelled} were cancelled this month (net ${net >= 0 ? '+' : ''}${net}); ${e.subscriptions.pendingCancel} more are set to end at their next renewal.`,
     `• Payments: ${NUM.format(e.marketing.failedPayments)} payment attempts failed this month; Stripe retries these automatically.`,
   ];
   let top = callout(c, 84, 'At a glance', bullets, EHC_TINT, undefined, EHC, INK, 8.6) + 10;
@@ -281,7 +281,7 @@ function ehcPageOne(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReport
     t.monthlyTarget > 0 ? `target ${money(t.monthlyTarget)} | ${Math.round(pctTarget)}% reached so far` : 'straight-line projection', MUTED, EHC_TINT);
   top += th + gap;
   tile(c, M, top, tw, th, 'Paying subscriptions', NUM.format(e.subscriptions.paying), `${NUM.format(e.subscriptions.monthly)} monthly | ${NUM.format(e.subscriptions.yearly)} annual`, MUTED, EHC_TINT);
-  tile(c, M + tw + gap, top, tw, th, 'Recurring revenue a month', money(e.subscriptions.mrr), 'at list price, annual plans divided by 12', MUTED, EHC_TINT);
+  tile(c, M + tw + gap, top, tw, th, 'Recurring revenue a month', money(e.subscriptions.mrr), e.subscriptions.intro > 0 ? `${e.subscriptions.intro} on intro price; ${money(e.subscriptions.mrrAtList)} at full price` : 'annual plans divided by 12', MUTED, EHC_TINT);
   tile(c, M + 2 * (tw + gap), top, tw, th, 'Net new subscriptions', `${net >= 0 ? '+' : ''}${net}`,
     `${e.subscriptions.started} started, ${e.subscriptions.cancelled} cancelled this month`, net >= 0 ? GOOD : BAD, EHC_TINT);
   top += th + 22;

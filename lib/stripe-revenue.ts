@@ -661,8 +661,12 @@ export interface SubscriptionSummary {
   paying: number;
   monthly: number;
   yearly: number;
-  /** Monthly recurring revenue at list price (yearly plans divided by 12). */
+  /** Monthly recurring revenue as billed today: monthly plans at what they last paid, yearly plans divided by 12. */
   mrr: number;
+  /** Same, but with every monthly plan at full list price (what intro-offer subscribers step up to). */
+  mrrAtList: number;
+  /** Monthly subscriptions whose latest payment was well below list price (introductory offer). */
+  intro: number;
   /** Paying subscriptions set to end at their next renewal date. */
   pendingCancel: number;
   /** Only with history: subscriptions started / cancelled since the given date. */
@@ -675,7 +679,7 @@ export interface SubscriptionSummary {
  * and reads all statuses; without it only active and past-due subscriptions are read.
  */
 export async function fetchStripeSubscriptionSummary(secretKey: string, since?: string): Promise<SubscriptionSummary> {
-  const out: SubscriptionSummary = { paying: 0, monthly: 0, yearly: 0, mrr: 0, pendingCancel: 0, started: 0, cancelled: 0 };
+  const out: SubscriptionSummary = { paying: 0, monthly: 0, yearly: 0, mrr: 0, mrrAtList: 0, intro: 0, pendingCancel: 0, started: 0, cancelled: 0 };
   if (!secretKey) return out;
   const sinceUnix = since ? zonedDateTimeToUnix(since, '00:00:00') : 0;
   const statuses = since ? ['all'] : ['active', 'past_due'];
@@ -683,11 +687,13 @@ export async function fetchStripeSubscriptionSummary(secretKey: string, since?: 
   type Sub = {
     id: string; status: string; created: number; canceled_at: number | null; cancel_at_period_end: boolean;
     items?: { data?: { price?: { unit_amount?: number; recurring?: { interval?: string; interval_count?: number } } }[] };
+    latest_invoice?: { amount_paid?: number } | string | null;
   };
   for (const status of statuses) {
     let startingAfter: string | null = null;
     for (let page = 0; page < 200; page++) {
       const params = new URLSearchParams({ status, limit: '100' });
+      params.append('expand[]', 'data.latest_invoice');
       if (startingAfter) params.set('starting_after', startingAfter);
       let res: Response | null = null;
       for (let attempt = 0; attempt < 5; attempt++) {
@@ -707,14 +713,24 @@ export async function fetchStripeSubscriptionSummary(secretKey: string, since?: 
         if (unit <= 0) continue;
         out.paying += 1;
         if (sub.cancel_at_period_end) out.pendingCancel += 1;
-        if (price?.recurring?.interval === 'year') { out.yearly += 1; out.mrr += unit / 12; }
-        else { out.monthly += 1; out.mrr += unit / (price?.recurring?.interval_count ?? 1); }
+        if (price?.recurring?.interval === 'year') {
+          out.yearly += 1; out.mrr += unit / 12; out.mrrAtList += unit / 12;
+        } else {
+          const list = unit / (price?.recurring?.interval_count ?? 1);
+          const inv = sub.latest_invoice && typeof sub.latest_invoice === 'object' ? sub.latest_invoice : null;
+          const paid = (inv?.amount_paid ?? 0) / 100;
+          // what this subscriber pays now; an unpaid or missing latest invoice falls back to list price
+          const now = paid > 0 ? Math.min(paid, list) : list;
+          if (paid > 0 && paid < list * 0.5) out.intro += 1;
+          out.monthly += 1; out.mrr += now; out.mrrAtList += list;
+        }
       }
       if (!data.has_more || data.data.length === 0) break;
       startingAfter = data.data[data.data.length - 1]!.id;
     }
   }
   out.mrr = Math.round(out.mrr);
+  out.mrrAtList = Math.round(out.mrrAtList);
   return out;
 }
 
