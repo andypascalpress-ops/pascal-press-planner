@@ -1,43 +1,47 @@
 /**
- * Executive summary PDF (2 pages, A4): Excel Test Zone free trials and orders, Excel HSC Copilot orders and
- * subscriptions. Pure rendering: ExecReportData in, PDF bytes out. Uses only pdf-lib and the standard
- * Helvetica fonts, so it runs anywhere (Vercel serverless included) with no files or browsers.
+ * Executive summary PDF (A4): Excel HSC Copilot sales and subscriptions. Pure rendering: ExecReportData in,
+ * PDF bytes out. Uses only pdf-lib and the standard Helvetica fonts, so it runs anywhere (Vercel serverless
+ * included) with no files or browsers. An Excel Test Zone page is rendered only when `etz` data is supplied.
  *
- * The report is emailed at about 9:30am and covers complete days only: a "yesterday" block, and month to date
+ * The report is emailed at about 9:30am and covers complete days only: a "yesterday" figure, and month to date
  * through the end of yesterday compared with the same dates last year.
  */
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb, RGB } from 'pdf-lib';
 
 interface OrdersAndRevenue { orders: number; revenue: number }
+type Mix = { new: OrdersAndRevenue; recurring: OrdersAndRevenue; annual: OrdersAndRevenue; other: OrdersAndRevenue };
+interface DailyPoint { date: string; revenue: number; ma7: number | null; partial: boolean }
+interface Trend { last30Avg: number; prior30Avg: number; last30Change: number | null }
 
 export interface ExecReportData {
   preparedLabel: string;      // e.g. "12 Oct 2026, 9:30 am (Sydney time)"
   yesterdayLabel: string;     // e.g. "Sunday 11 Oct 2026"
   periodLabel: string;        // month to date through yesterday, e.g. "1-11 Oct 2026"
   comparisonLabel: string;    // same dates last year, e.g. "1-11 Oct 2025"
-  etz: {
+  ehc: {
+    yesterday: { revenue: number; orders: number; new: number; recurring: number; annual: number; avg7: number };
+    revenue: { cur: number; prior: number };
+    orders: { cur: number; prior: number };
+    mix: Mix;
+    mixPrior: Mix;
+    target: { monthlyTarget: number; monthPctElapsed: number; projected: number; daysElapsed: number; daysInMonth: number };
+    subscriptions: { paying: number; monthly: number; yearly: number; mrr: number; pendingCancel: number; started: number; cancelled: number };
+    marketing: { adSpend: number | null; failedPayments: number };
+    daily: DailyPoint[];
+    trend: Trend;
+    weeklyOrders: { week: string; new: number; recurring: number; annual: number; other: number }[];
+    deals: { total: number; freeTrial: number; newPaid: number; newZero: number; subjects: { subject: string; count: number }[]; lastFreeTrialDate: string | null };
+  };
+  etz?: {
     yesterday: { revenue: number; orders: number; avg7: number };
     revenue: { cur: number; prior: number };
     orders: { cur: number; prior: number };
     aov: { cur: number; prior: number };
     trials: { cur: number; prior: number; schoolImports: number };
-    trialToPaid: { cur: number; prior: number };            // percent, paid orders / trials started
+    trialToPaid: { cur: number; prior: number };
     target: { monthlyTarget: number; monthPctElapsed: number };
-    daily: { date: string; revenue: number; ma7: number | null; partial: boolean }[];
-    trend: { last30Avg: number; prior30Avg: number; last30Change: number | null };
-  };
-  ehc: {
-    yesterday: { revenue: number; orders: number; new: number; recurring: number; annual: number };
-    revenue: { cur: number; prior: number };
-    orders: { cur: number; prior: number };
-    mix: { new: OrdersAndRevenue; recurring: OrdersAndRevenue; annual: OrdersAndRevenue; other: OrdersAndRevenue };
-    mixPrior: { new: OrdersAndRevenue; recurring: OrdersAndRevenue; annual: OrdersAndRevenue; other: OrdersAndRevenue };
-    weeklyOrders: { week: string; new: number; recurring: number; annual: number; other: number }[];
-    paidActiveSubscriptions: number;
-    last30: { newPaid: number; newZero: number; freeTrial: number; total: number };
-    stages: { label: string; count: number }[];
-    subjects: { subject: string; count: number }[];
-    trialGap: { lastFreeTrialWeek: string | null; weeks: number; zeroDealsFirstWeekAfter: number | null };
+    daily: DailyPoint[];
+    trend: Trend;
   };
 }
 
@@ -125,10 +129,10 @@ function header(c: Canvas, kicker: string, title: string, d: ExecReportData, acc
   c.text(`Prepared ${d.preparedLabel.replace(' (Sydney time)', '')}`, W - M, 64, 8, MUTED, { align: 'right' });
 }
 
-function footer(c: Canvas, n: number, sources: string) {
+function footer(c: Canvas, n: number, total: number, sources: string) {
   c.line(M, H - 44, W - M, H - 44, HAIR);
   c.text(`Pascal Press and Blake Education  |  Internal  |  ${sources}`, M, H - 36, 7.5, MUTED);
-  c.text(`Page ${n} of 2`, W - M, H - 36, 7.5, MUTED, { align: 'right' });
+  c.text(`Page ${n} of ${total}`, W - M, H - 36, 7.5, MUTED, { align: 'right' });
 }
 
 function tile(c: Canvas, x: number, top: number, w: number, h: number, label: string, value: string, sub: string, subColor: string, fill: string) {
@@ -162,25 +166,35 @@ function gridAndAxis(c: Canvas, x: number, top: number, w: number, h: number, ma
   }
 }
 
-function dailyRevenueChart(c: Canvas, d: ExecReportData['etz'], x: number, top: number, w: number, h: number) {
-  const n = d.daily.length;
-  const max = niceMax(Math.max(1, ...d.daily.map(p => p.revenue)));
+function dailyRevenueChart(c: Canvas, daily: DailyPoint[], color: string, x: number, top: number, w: number, h: number) {
+  const n = daily.length;
+  const max = niceMax(Math.max(1, ...daily.map(p => p.revenue)));
   gridAndAxis(c, x, top, w, h, max, axisMoney);
   const step = w / n, bw = step * 0.66;
-  d.daily.forEach((p, i) => {
+  daily.forEach((p, i) => {
     const bh = (p.revenue / max) * h;
-    c.rect(x + i * step + (step - bw) / 2, top + h - bh, bw, bh, BLUE, 0.3);
+    c.rect(x + i * step + (step - bw) / 2, top + h - bh, bw, bh, color, 0.3);
   });
   let prev: { x: number; y: number } | null = null;
-  d.daily.forEach((p, i) => {
+  daily.forEach((p, i) => {
     if (p.ma7 === null) { prev = null; return; }
     const pt = { x: x + i * step + step / 2, y: top + h - (p.ma7 / max) * h };
-    if (prev) c.line(prev.x, prev.y, pt.x, pt.y, BLUE, 1.7);
+    if (prev) c.line(prev.x, prev.y, pt.x, pt.y, color, 1.7);
     prev = pt;
   });
-  d.daily.forEach((p, i) => {
+  daily.forEach((p, i) => {
     if ((n - 1 - i) % 14 === 0) c.text(shortDate(p.date), x + i * step + step / 2, top + h + 5, 7, MUTED, { align: 'center' });
   });
+}
+
+function dailyChartBlock(c: Canvas, daily: DailyPoint[], trend: Trend, color: string, top: number, chartH: number) {
+  c.text('Daily revenue, last 90 days', M, top, 11, NAVY, { bold: true });
+  const word = trend.last30Change === null ? '' : trend.last30Change >= 5 ? ', rising' : trend.last30Change <= -5 ? ', falling' : ', flat';
+  c.text(`Last 30 days: ${money(trend.last30Avg)} a day vs ${money(trend.prior30Avg)} in the 30 before (${signed(trend.last30Change)})${word}`, M, top + 15, 8.5, MUTED);
+  c.rect(W - M - 150, top + 3, 8, 8, color, 0.3); c.text('Daily revenue', W - M - 138, top + 3, 7.5, MUTED);
+  c.line(W - M - 72, top + 7, W - M - 58, top + 7, color, 1.7); c.text('7-day average', W - M - 54, top + 3, 7.5, MUTED);
+  dailyRevenueChart(c, daily, color, M + 30, top + 36, CW - 30, chartH);
+  c.text('Complete days only: the chart ends yesterday.', M + 30, top + 36 + chartH + 18, 7, MUTED);
 }
 
 function weeklyOrdersChart(c: Canvas, weekly: ExecReportData['ehc']['weeklyOrders'], x: number, top: number, w: number, h: number) {
@@ -206,7 +220,7 @@ function barList(c: Canvas, rows: { label: string; count: number }[], x: number,
   const labelW = 110, valW = 34, barX = x + labelW, barW = w - labelW - valW - 6;
   rows.forEach((r, i) => {
     const ty = top + i * rowH;
-    c.text(r.label.replace(' (EHC Pipeline Status)', ''), x, ty, 8, INK, { maxW: labelW - 6 });
+    c.text(r.label, x, ty, 8, INK, { maxW: labelW - 6 });
     c.rrect(barX, ty + 2, barW, 6, 3, '#EEF2F6');
     if (r.count > 0) c.rrect(barX, ty + 2, Math.max(barW * (r.count / max), 4), 6, 3, color);
     c.text(NUM.format(r.count), x + w, ty, 8, NAVY, { bold: true, align: 'right' });
@@ -214,22 +228,137 @@ function barList(c: Canvas, rows: { label: string; count: number }[], x: number,
 }
 
 /** Rounded callout sized to its text. Returns the bottom edge. */
-function callout(c: Canvas, top: number, title: string, paragraphs: string[], fill: string, line: string | undefined, titleColor: string, textColor: string): number {
-  const size = 8.3, lead = 1.35, pad = 12, inner = CW - 28;
+function callout(c: Canvas, top: number, title: string, paragraphs: string[], fill: string, line: string | undefined, titleColor: string, textColor: string, size = 8.3): number {
+  const lead = 1.35, pad = 12, inner = CW - 28;
   const lines = paragraphs.map(p => c.wrap(p, size, inner));
-  const textH = lines.reduce((a, l) => a + l.length * size * lead, 0) + (paragraphs.length - 1) * 5;
+  const textH = lines.reduce((a, l) => a + l.length * size * lead, 0) + (paragraphs.length - 1) * 4;
   const h = pad + 13 + textH + pad - 2;
   c.rrect(M, top, CW, h, 7, fill, line);
   c.text(title, M + 14, top + pad, 9, titleColor, { bold: true });
   let ty = top + pad + 17;
-  lines.forEach(ls => { ls.forEach((l, i) => c.text(l, M + 14, ty + i * size * lead, size, textColor)); ty += ls.length * size * lead + 5; });
+  lines.forEach(ls => { ls.forEach((l, i) => c.text(l, M + 14, ty + i * size * lead, size, textColor)); ty += ls.length * size * lead + 4; });
   return top + h;
 }
 
-function etzPage(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReportData) {
+function keyValueRows(c: Canvas, x: number, top: number, w: number, rows: [string, string, string?][]) {
+  rows.forEach(([label, value, note], i) => {
+    const ty = top + i * 26;
+    c.text(label, x, ty, 8.5, INK);
+    c.text(value, x + w, ty, 9.5, NAVY, { bold: true, align: 'right' });
+    if (note) c.text(note, x, ty + 11, 7, MUTED, { maxW: w });
+    c.line(x, ty + 22, x + w, ty + 22, '#EEF2F6', 0.5);
+  });
+}
+
+function ehcPageOne(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReportData, total: number, n: number) {
   const page = pdf.addPage([W, H]);
   const c = new Canvas(page, reg, bold);
-  const e = d.etz;
+  const e = d.ehc;
+  header(c, 'EXECUTIVE SUMMARY  |  EXCEL HSC COPILOT', 'Sales and subscriptions', d, EHC);
+
+  const yLabel = d.yesterdayLabel.replace(/ \d{4}$/, '');
+  const revChange = pctChange(e.revenue.cur, e.revenue.prior);
+  const net = e.subscriptions.started - e.subscriptions.cancelled;
+  const t = e.target;
+
+  // at a glance
+  const bullets = [
+    `• Yesterday (${yLabel}): ${money(e.yesterday.revenue)} from ${e.yesterday.orders} orders (${e.yesterday.new} new, ${e.yesterday.recurring} renewals, ${e.yesterday.annual} annual).`,
+    `• Month to date: ${money(e.revenue.cur)} from ${NUM.format(e.orders.cur)} orders${revChange === null ? '' : `, ${signed(revChange)} on the same period last year`}.` +
+      (t.monthlyTarget > 0 ? ` At the current daily pace the month ends near ${money(t.projected)} against a ${money(t.monthlyTarget)} target.` : ''),
+    `• Subscribers: ${NUM.format(e.subscriptions.paying)} paying subscriptions worth about ${money(e.subscriptions.mrr)} a month. ${e.subscriptions.started} started and ${e.subscriptions.cancelled} were cancelled this month (net ${net >= 0 ? '+' : ''}${net}); ${e.subscriptions.pendingCancel} more are set to end at their next renewal.`,
+    `• Payments: ${NUM.format(e.marketing.failedPayments)} payment attempts failed this month; Stripe retries these automatically.`,
+  ];
+  let top = callout(c, 84, 'At a glance', bullets, EHC_TINT, undefined, EHC, INK, 8.6) + 10;
+
+  // tiles
+  const gap = 10, tw = (CW - 2 * gap) / 3, th = 62;
+  const rev = vsLastYear(e.revenue.cur, e.revenue.prior, money);
+  tile(c, M, top, tw, th, `Yesterday, ${yLabel}`, money(e.yesterday.revenue), `${NUM.format(e.yesterday.orders)} orders | 7-day avg ${money(e.yesterday.avg7)} a day`, MUTED, EHC_TINT);
+  tile(c, M + tw + gap, top, tw, th, 'Revenue, month to date', money(e.revenue.cur), rev.text, rev.color, EHC_TINT);
+  const pctTarget = t.monthlyTarget > 0 ? (e.revenue.cur / t.monthlyTarget) * 100 : 0;
+  tile(c, M + 2 * (tw + gap), top, tw, th, 'Month-end outlook', money(t.projected),
+    t.monthlyTarget > 0 ? `target ${money(t.monthlyTarget)} | ${Math.round(pctTarget)}% reached, ${Math.round(t.monthPctElapsed)}% of month gone` : 'straight-line projection', MUTED, EHC_TINT);
+  top += th + gap;
+  tile(c, M, top, tw, th, 'Paying subscriptions', NUM.format(e.subscriptions.paying), `${NUM.format(e.subscriptions.monthly)} monthly | ${NUM.format(e.subscriptions.yearly)} annual`, MUTED, EHC_TINT);
+  tile(c, M + tw + gap, top, tw, th, 'Recurring revenue a month', money(e.subscriptions.mrr), 'at list price, annual plans divided by 12', MUTED, EHC_TINT);
+  tile(c, M + 2 * (tw + gap), top, tw, th, 'Net new subscriptions', `${net >= 0 ? '+' : ''}${net}`,
+    `${e.subscriptions.started} started, ${e.subscriptions.cancelled} cancelled this month`, net >= 0 ? GOOD : BAD, EHC_TINT);
+  top += th + 22;
+
+  dailyChartBlock(c, e.daily, e.trend, EHC, top, 255);
+  footer(c, n, total, 'Sources: Stripe, HubSpot');
+}
+
+function ehcPageTwo(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReportData, total: number, n: number) {
+  const page = pdf.addPage([W, H]);
+  const c = new Canvas(page, reg, bold);
+  const e = d.ehc;
+  header(c, 'EXECUTIVE SUMMARY  |  EXCEL HSC COPILOT', 'Orders, marketing and deals', d, EHC);
+
+  // order mix
+  const gap = 10, tw = (CW - 2 * gap) / 3, th = 62, top1 = 86;
+  const mixTile = (x: number, label: string, k: 'new' | 'recurring' | 'annual') => {
+    const cur = e.mix[k], pr = e.mixPrior[k];
+    tile(c, x, top1, tw, th, label, NUM.format(cur.orders), `${money(cur.revenue)} | ${NUM.format(pr.orders)} last year`, MUTED, EHC_TINT);
+  };
+  mixTile(M, 'New orders (new subscribers)', 'new');
+  mixTile(M + tw + gap, 'Recurring orders (renewals)', 'recurring');
+  mixTile(M + 2 * (tw + gap), 'Annual plan orders', 'annual');
+
+  // weekly orders
+  const chTop = 166;
+  c.text('Orders per week, by type', M, chTop, 11, NAVY, { bold: true });
+  c.text('Complete weeks (Monday to Sunday), last 12 weeks. The number above each bar is the week\'s total.', M, chTop + 15, 8.5, MUTED);
+  const hasOther = e.weeklyOrders.some(w => w.other > 0);
+  const items: [string, string][] = [['New', C_NEW], ['Renewals', C_RECUR], ['Annual', C_ANNUAL]];
+  if (hasOther) items.push(['Other', C_OTHER]);
+  let lx = W - M - items.length * 62;
+  for (const [label, col] of items) { c.rect(lx, chTop + 3, 8, 8, col); c.text(label, lx + 12, chTop + 3, 7.5, MUTED); lx += 62; }
+  weeklyOrdersChart(c, e.weeklyOrders, M + 26, chTop + 40, CW - 26, 135);
+
+  // two columns: subjects (this month) and marketing
+  const colTop = 372, colW = (CW - 24) / 2;
+  c.text('New paid sign-ups this month, by subject', M, colTop, 10, NAVY, { bold: true });
+  const subj = e.deals.subjects.slice(0, 8).map(s => ({ label: s.subject, count: s.count }));
+  if (subj.length > 0) barList(c, subj, M, colTop + 20, colW, EHC);
+  else c.text('No paid sign-ups recorded in HubSpot yet this month.', M, colTop + 20, 8.5, MUTED);
+  c.text('From HubSpot deals created this month. A plan covering several subjects counts once per subject.', M, colTop + 20 + 8 * 15 + 3, 6.8, MUTED, { maxW: colW });
+
+  const mx = M + colW + 24;
+  c.text('Marketing and payments, month to date', mx, colTop, 10, NAVY, { bold: true });
+  const spend = e.marketing.adSpend;
+  const newOrders = e.mix.new.orders;
+  keyValueRows(c, mx, colTop + 22, colW, [
+    ['Google Ads spend', spend === null ? 'not available' : money(spend), spend === null ? 'Could not be read today' : undefined],
+    ['Revenue per $1 of ad spend', spend && spend > 0 ? `$${(e.revenue.cur / spend).toFixed(2)}` : 'n/a', 'All EHC revenue divided by Google Ads spend'],
+    ['Ad spend per new subscriber', spend && newOrders > 0 ? money(spend / newOrders) : 'n/a', 'Spend divided by new orders'],
+    ['Failed payment attempts', NUM.format(e.marketing.failedPayments), 'Stripe retries these automatically'],
+  ]);
+
+  // deals and notes
+  const dl = e.deals;
+  let top = 566;
+  const dealParas = [
+    `HubSpot created ${NUM.format(dl.total)} deals this month: ${NUM.format(dl.newPaid)} paid, ${NUM.format(dl.newZero)} at $0 and ${NUM.format(dl.freeTrial)} Free Trial. Deals are records for new sign-ups, so renewals never appear as deals and the count is not meant to match Stripe orders.`,
+  ];
+  if (dl.lastFreeTrialDate) {
+    dealParas.push(`The most recent Free Trial deal was created on ${shortDate(dl.lastFreeTrialDate)}. Since then free sign-ups appear to be recorded as $0 New Deals, so reports filtered on trial stages or the Free Trial type show no data. The cause is still to be confirmed with the EHC system owner.`);
+  }
+  top = callout(c, top, 'Deals in HubSpot this month', dealParas, WARN_BG, WARN_LINE, WARN_TEXT, WARN_TEXT, 8) + 8;
+  callout(c, top, 'How to read these numbers', [
+    'Yesterday is the full previous day (Sydney time). Month to date runs from the 1st through the end of yesterday and is compared with the same dates last year. Revenue is net of refunds.',
+    'Orders are Stripe payments: new (the first payment of a new subscription), renewals, and annual plans. A returning subscriber who starts a fresh subscription counts as new.',
+    'Paying subscriptions are active Stripe subscriptions priced above $0. Net new is subscriptions started minus cancelled this month. The month-end outlook is a straight-line projection, not a forecast, and ignores seasonality.',
+  ], '#F6F8FA', undefined, NAVY, INK, 7.8);
+
+  footer(c, n, total, 'Sources: Stripe, HubSpot, Google Ads');
+}
+
+function etzPage(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReportData, total: number, n: number) {
+  const e = d.etz!;
+  const page = pdf.addPage([W, H]);
+  const c = new Canvas(page, reg, bold);
   header(c, 'EXECUTIVE SUMMARY  |  EXCEL TEST ZONE', 'Free trials and orders', d, BLUE);
 
   const gap = 10, tw = (CW - 2 * gap) / 3, th = 66, top1 = 86, top2 = top1 + th + gap;
@@ -249,89 +378,25 @@ function etzPage(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReportDat
   tile(c, M + 2 * (tw + gap), top2, tw, th, 'Month revenue target', `${Math.round(pctOfTarget)}%`,
     `${money(e.revenue.cur)} of ${money(e.target.monthlyTarget)} (${Math.round(e.target.monthPctElapsed)}% of month gone)`, MUTED, TINT);
 
-  const chTop = 252;
-  c.text('Daily revenue, last 90 days', M, chTop, 11, NAVY, { bold: true });
-  const t = e.trend;
-  const trendWord = t.last30Change === null ? '' : t.last30Change >= 5 ? ', rising' : t.last30Change <= -5 ? ', falling' : ', flat';
-  c.text(`Last 30 days: ${money(t.last30Avg)} a day vs ${money(t.prior30Avg)} in the 30 before (${signed(t.last30Change)})${trendWord}`, M, chTop + 15, 8.5, MUTED);
-  c.rect(W - M - 150, chTop + 3, 8, 8, BLUE, 0.3); c.text('Daily revenue', W - M - 138, chTop + 3, 7.5, MUTED);
-  c.line(W - M - 72, chTop + 7, W - M - 58, chTop + 7, BLUE, 1.7); c.text('7-day average', W - M - 54, chTop + 3, 7.5, MUTED);
-  dailyRevenueChart(c, e, M + 30, chTop + 36, CW - 30, 270);
-  c.text('Complete days only: the chart ends yesterday.', M + 30, chTop + 36 + 270 + 18, 7, MUTED);
-
+  dailyChartBlock(c, e.daily, e.trend, BLUE, 252, 270);
   callout(c, 650, 'How to read these numbers', [
-    `Yesterday is the full previous day (Sydney time). Month to date runs from the 1st through the end of yesterday and is compared with the same dates last year.`,
+    'Yesterday is the full previous day (Sydney time). Month to date runs from the 1st through the end of yesterday and is compared with the same dates last year.',
     `New free trials counts every trial started in the period, including those that have already paid. ${NUM.format(e.trials.schoolImports)} of this period's ${NUM.format(e.trials.cur)} are bulk school imports.`,
-    'Free trial to paid is paid orders divided by trials started in the same period. It is a simple ratio, not a strict conversion rate: some buyers never had a trial, and one order can cover several products.',
-    'Revenue and orders come from Stripe (net of refunds). Trials come from HubSpot deals, which are under review; a direct feed from the user system is planned.',
+    'Free trial to paid is paid orders divided by trials started in the same period. It is a simple ratio, not a strict conversion rate.',
   ], '#F6F8FA', undefined, NAVY, INK);
-
-  footer(c, 1, 'Sources: Stripe, HubSpot');
-}
-
-function ehcPage(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReportData) {
-  const page = pdf.addPage([W, H]);
-  const c = new Canvas(page, reg, bold);
-  const e = d.ehc;
-  header(c, 'EXECUTIVE SUMMARY  |  EXCEL HSC COPILOT', 'Orders and subscriptions', d, EHC);
-
-  const gap = 10, tw = (CW - 2 * gap) / 3, th = 66, top1 = 86, top2 = top1 + th + gap;
-  const rev = vsLastYear(e.revenue.cur, e.revenue.prior, money);
-  const ord = vsLastYear(e.orders.cur, e.orders.prior, v => NUM.format(v));
-  const y = e.yesterday;
-  const yLabel = d.yesterdayLabel.replace(/ \d{4}$/, '');
-  tile(c, M, top1, tw, th, `Yesterday, ${yLabel}`, money(y.revenue), `${NUM.format(y.orders)} orders: ${y.new} new, ${y.recurring} renewals, ${y.annual} annual`, MUTED, EHC_TINT);
-  tile(c, M + tw + gap, top1, tw, th, 'Revenue, month to date', money(e.revenue.cur), rev.text, rev.color, EHC_TINT);
-  tile(c, M + 2 * (tw + gap), top1, tw, th, 'Orders, month to date', NUM.format(e.orders.cur), ord.text, ord.color, EHC_TINT);
-  const mixTile = (x: number, label: string, k: 'new' | 'recurring' | 'annual') => {
-    const cur = e.mix[k], pr = e.mixPrior[k];
-    tile(c, x, top2, tw, th, label, NUM.format(cur.orders), `${money(cur.revenue)} | ${NUM.format(pr.orders)} last year`, MUTED, EHC_TINT);
-  };
-  mixTile(M, 'New orders (new subscribers)', 'new');
-  mixTile(M + tw + gap, 'Recurring orders (renewals)', 'recurring');
-  mixTile(M + 2 * (tw + gap), 'Annual plan orders', 'annual');
-
-  const chTop = 252;
-  c.text('Orders per week, by type', M, chTop, 11, NAVY, { bold: true });
-  c.text('Complete weeks (Monday to Sunday), last 12 weeks. The number above each bar is the week\'s total.', M, chTop + 15, 8.5, MUTED);
-  const hasOther = e.weeklyOrders.some(w => w.other > 0);
-  const items: [string, string][] = [['New', C_NEW], ['Renewals', C_RECUR], ['Annual', C_ANNUAL]];
-  if (hasOther) items.push(['Other', C_OTHER]);
-  let lx = W - M - items.length * 62;
-  for (const [label, col] of items) { c.rect(lx, chTop + 3, 8, 8, col); c.text(label, lx + 12, chTop + 3, 7.5, MUTED); lx += 62; }
-  weeklyOrdersChart(c, e.weeklyOrders, M + 26, chTop + 40, CW - 26, 140);
-
-  const colTop = 468, colW = (CW - 24) / 2;
-  c.text('HubSpot deals by current stage (all time)', M, colTop, 10, NAVY, { bold: true });
-  barList(c, e.stages, M, colTop + 20, colW, '#64748B');
-  c.text('Paid active subscriptions by subject', M + colW + 24, colTop, 10, NAVY, { bold: true });
-  barList(c, e.subjects.slice(0, 6).map(s => ({ label: s.subject, count: s.count })), M + colW + 24, colTop + 20, colW, EHC);
-  c.paragraph(`${NUM.format(e.paidActiveSubscriptions)} paid active subscriptions in HubSpot. A plan covering several subjects counts once per subject.`, M + colW + 24, colTop + 20 + 6 * 15 + 3, 6.8, colW, MUTED, 1.3);
-
-  const g = e.trialGap;
-  let top = 614;
-  top = callout(c, top, 'How orders and deals differ', [
-    'Orders are payments in Stripe: the first payment of a new subscription (new), renewals, and annual plans. New + renewals + annual always add up to total orders.',
-    `HubSpot deals are records created for new sign-ups, so renewals never appear as deals and the two counts are not meant to match. In the last 30 days HubSpot created ${NUM.format(e.last30.total)} deals: ${NUM.format(e.last30.newPaid)} paid, ${NUM.format(e.last30.newZero)} at $0 and ${NUM.format(e.last30.freeTrial)} Free Trial. A returning subscriber who starts a fresh subscription counts as new.`,
-  ], '#F6F8FA', undefined, NAVY, INK) + 8;
-  const gapText = g.lastFreeTrialWeek
-    ? `No Free Trial deals have been created since the week of ${shortDate(g.lastFreeTrialWeek)} (${g.weeks} weeks). ` +
-      (g.zeroDealsFirstWeekAfter !== null ? `In that week, $0 New Deal records rose to ${NUM.format(g.zeroDealsFirstWeekAfter)}, so free sign-ups now appear to be recorded that way. ` : '') +
-      'Reports filtered on trial stages or the Free Trial type therefore show no data. The cause is still to be confirmed with the EHC system owner.'
-    : 'Free Trial deals are still being created as normal.';
-  callout(c, top, 'Note on trials', [gapText], WARN_BG, WARN_LINE, WARN_TEXT, WARN_TEXT);
-
-  footer(c, 2, 'Sources: Stripe, HubSpot');
+  footer(c, n, total, 'Sources: Stripe, HubSpot');
 }
 
 export async function renderExecReport(d: ExecReportData): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   pdf.setTitle(`Executive summary ${d.periodLabel}`);
   pdf.setAuthor('Pascal Press marketing');
-  pdf.setSubject('Excel Test Zone and Excel HSC Copilot executive summary');
+  pdf.setSubject('Excel HSC Copilot executive summary');
   const reg = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  etzPage(pdf, reg, bold, d);
-  ehcPage(pdf, reg, bold, d);
+  const total = d.etz ? 3 : 2;
+  ehcPageOne(pdf, reg, bold, d, total, 1);
+  ehcPageTwo(pdf, reg, bold, d, total, 2);
+  if (d.etz) etzPage(pdf, reg, bold, d, total, 3);
   return pdf.save();
 }

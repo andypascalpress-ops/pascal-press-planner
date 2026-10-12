@@ -161,3 +161,79 @@ export async function fetchEhcOverview(): Promise<EhcOverview> {
     },
   };
 }
+
+// ---------------------------------------------------------------------------------------------------------
+// Light-weight helpers for the executive summary: this month's deals only, no all-time scans.
+// ---------------------------------------------------------------------------------------------------------
+
+async function ehcPipelineId(): Promise<string> {
+  const pl = await call(`${HS}/crm/v3/pipelines/deals`, { headers: headers() });
+  const pipe = (pl.results as { id: string; label: string }[]).find(p => p.label.toLowerCase().includes('ehc'));
+  if (!pipe) throw new Error('EHC pipeline not found');
+  return pipe.id;
+}
+
+export interface EhcMonthDeals {
+  total: number;
+  freeTrial: number;
+  newPaid: number;
+  newZero: number;
+  /** Paid deals created in the window, tallied by EHC course (a deal covering several subjects counts once per subject). */
+  subjects: { subject: string; count: number }[];
+}
+
+/** Deals created in [start, end] (YYYY-MM-DD, Sydney): counts by type plus paid deals by subject. */
+export async function fetchEhcMonthDeals(start: string, end: string): Promise<EhcMonthDeals> {
+  const pipelineId = await ehcPipelineId();
+  const inPipe = { propertyName: 'pipeline', operator: 'EQ', value: pipelineId };
+  const window = [
+    { propertyName: 'createdate', operator: 'GTE', value: ms(start, '00:00:00') },
+    { propertyName: 'createdate', operator: 'LTE', value: ms(end, '23:59:59') },
+  ];
+  const type = (t: string) => ({ propertyName: 'ehc_deal_type', operator: 'CONTAINS_TOKEN', value: t });
+  const amount = (op: 'EQ' | 'GT', v: string) => ({ propertyName: 'amount', operator: op, value: v });
+
+  const total = await count([inPipe, ...window]);
+  const freeTrial = await count([inPipe, ...window, type('Free Trial')]);
+  const newPaid = await count([inPipe, ...window, type('New Deal'), amount('GT', '0')]);
+  const newZero = await count([inPipe, ...window, type('New Deal'), amount('EQ', '0')]);
+
+  const tally: Record<string, number> = {};
+  let after: string | undefined;
+  do {
+    const body: Record<string, unknown> = {
+      filterGroups: [{ filters: [inPipe, ...window, amount('GT', '0')] }],
+      properties: ['ehc_courses'], limit: 100,
+    };
+    if (after) body.after = after;
+    const j = await call(`${HS}/crm/v3/objects/deals/search`, { method: 'POST', headers: headers(), body: JSON.stringify(body) });
+    for (const r of j.results ?? []) {
+      for (const c of String(r.properties?.ehc_courses ?? '').split(';').map((x: string) => x.trim()).filter(Boolean)) tally[c] = (tally[c] ?? 0) + 1;
+    }
+    after = j.paging?.next?.after as string | undefined;
+    if (after) await sleep(150);
+  } while (after);
+
+  return {
+    total, freeTrial, newPaid, newZero,
+    subjects: Object.entries(tally).map(([subject, n]) => ({ subject, count: n })).sort((a, b) => b.count - a.count),
+  };
+}
+
+/** Sydney date (YYYY-MM-DD) of the most recent Free Trial deal, or null if there has never been one. */
+export async function fetchLastFreeTrialDate(): Promise<string | null> {
+  const pipelineId = await ehcPipelineId();
+  const j = await call(`${HS}/crm/v3/objects/deals/search`, {
+    method: 'POST', headers: headers(),
+    body: JSON.stringify({
+      filterGroups: [{ filters: [
+        { propertyName: 'pipeline', operator: 'EQ', value: pipelineId },
+        { propertyName: 'ehc_deal_type', operator: 'CONTAINS_TOKEN', value: 'Free Trial' },
+      ] }],
+      sorts: [{ propertyName: 'createdate', direction: 'DESCENDING' }],
+      properties: ['createdate'], limit: 1,
+    }),
+  });
+  const created = j.results?.[0]?.properties?.createdate as string | undefined;
+  return created ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney' }).format(new Date(created)) : null;
+}

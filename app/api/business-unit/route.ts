@@ -8,7 +8,7 @@
  */
 import { NextResponse } from 'next/server';
 import { fetchPPRevenue, fetchBlakeRevenue } from '@/lib/bigcommerce-revenue';
-import { fetchETZStripeRevenue, fetchHSCStripeRevenue, fetchStripeProductMap } from '@/lib/stripe-revenue';
+import { fetchETZStripeRevenue, fetchHSCStripeRevenue, fetchStripeProductMap, fetchStripeSubscriptionSummary } from '@/lib/stripe-revenue';
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
 import { fetchMetaSpend, META_PP_ACCOUNT_ID, META_ETZ_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
 import { PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
@@ -266,30 +266,15 @@ async function fetchHubSpotCurrentTrials(pipelineLabel: string): Promise<number>
 async function fetchStripeSubscriptionMetrics(key: string, brand: BrandParam) {
   if (!key) return null;
   try {
-    const activeRes = await fetch('https://api.stripe.com/v1/subscriptions?status=active&limit=100', {
-      headers: { Authorization: `Bearer ${key}` }, cache: 'no-store',
-    }).then(r => r.json());
-
-    type StripeSub = { items: { data: { price: { unit_amount: number; recurring: { interval: string; interval_count: number } } }[] } };
-    const activeData: StripeSub[] = activeRes.data ?? [];
-
-    let mrr = 0;
-    for (const sub of activeData) {
-      const item = sub.items?.data?.[0];
-      if (!item) continue;
-      const amt      = item.price?.unit_amount ?? 0;
-      const interval = item.price?.recurring?.interval ?? 'month';
-      const count    = item.price?.recurring?.interval_count ?? 1;
-      if (interval === 'month') mrr += (amt / 100) / count;
-      else if (interval === 'year') mrr += (amt / 100) / 12;
-    }
+    // Fully paginated: reading only the first page of 100 under-counted paying subscribers and MRR.
+    const summary = await fetchStripeSubscriptionSummary(key);
 
     // ETZ and EHC trials are tracked as HubSpot deals ($0 in their pipeline),
     // not as Stripe trialing subscriptions — fetch the real count from HubSpot.
     const pipelineLabel = brand === 'etz' ? 'etz' : 'ehc';
     const currentlyOnTrial = await fetchHubSpotCurrentTrials(pipelineLabel);
 
-    return { active: activeData.length, trialing: currentlyOnTrial, mrr: Math.round(mrr) };
+    return { active: summary.paying, trialing: currentlyOnTrial, mrr: summary.mrr };
   } catch {
     return null;
   }

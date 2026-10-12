@@ -1,21 +1,24 @@
 /**
  * Gathers the live numbers for the executive-summary PDF straight from the source libraries
- * (Stripe, HubSpot), using the same definitions as the Business Units dashboard.
+ * (Stripe, HubSpot, Google Ads), using the same definitions as the Business Units dashboard.
  *
  * The PDF is emailed at about 9:30am, so everything covers COMPLETE days only: "yesterday" is the daily figure,
  * "month to date" runs through the end of yesterday, and it is compared with the same dates last year.
- *  - ETZ new free trials = every trial deal started in the period; free trial to paid = paid orders / trials started
+ * It is an Excel HSC Copilot report. Excel Test Zone is kept behind `includeEtz` for when it is wanted again.
  *  - EHC orders are split into new (first payment of a new subscription), recurring (renewals) and annual plans
- *  - EHC deal, stage and subject numbers come from the shared HubSpot overview
- * Any failed source throws, so the report never shows silent zeros.
+ *  - Subscriber counts come from every Stripe subscription (fully paginated)
+ *  - Deals and subjects are this month's HubSpot deals only
+ * Any failed core source throws, so the report never shows silent zeros. Google Ads spend is the one optional
+ * figure: if it cannot be read the report says "not available" rather than failing.
  */
 import {
-  fetchETZStripeRevenue, fetchETZDailyRevenue, fetchHSCClassifiedDaily, zonedDateTimeToUnix,
+  fetchETZStripeRevenue, fetchETZDailyRevenue, fetchHSCClassifiedDaily, fetchHSCSubscriptionSummary, zonedDateTimeToUnix,
   type ClassifiedDay, type OrderBucket,
 } from '@/lib/stripe-revenue';
 import { fetchTrialConversion, fetchOfflineTrials } from '@/lib/hubspot-trials';
-import { fetchEhcOverview } from '@/lib/ehc-overview';
-import { ETZ_MONTHLY_REVENUE_TARGETS } from '@/lib/constants';
+import { fetchEhcMonthDeals, fetchLastFreeTrialDate } from '@/lib/ehc-overview';
+import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
+import { ETZ_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_REVENUE_TARGETS } from '@/lib/constants';
 import type { ExecReportData } from '@/lib/exec-report-pdf';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -56,117 +59,137 @@ const msRange = (s: string, e: string) => ({
 });
 
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 type Kind = 'new' | 'recurring' | 'annual' | 'other';
 const KINDS: Kind[] = ['new', 'recurring', 'annual', 'other'];
 
 function sumDays(days: Record<string, ClassifiedDay>, from: string, to: string) {
-  const t = { revenue: 0, orders: 0, new: { orders: 0, revenue: 0 }, recurring: { orders: 0, revenue: 0 }, annual: { orders: 0, revenue: 0 }, other: { orders: 0, revenue: 0 } };
+  const t = { revenue: 0, orders: 0, failed: 0, new: { orders: 0, revenue: 0 }, recurring: { orders: 0, revenue: 0 }, annual: { orders: 0, revenue: 0 }, other: { orders: 0, revenue: 0 } };
   for (const [date, d] of Object.entries(days)) {
     if (date < from || date > to) continue;
-    t.revenue += d.revenue; t.orders += d.orders;
+    t.revenue += d.revenue; t.orders += d.orders; t.failed += d.failed;
     for (const k of KINDS) { t[k].orders += d[k].orders; t[k].revenue += d[k].revenue; }
   }
   return t;
 }
 
-export async function gatherExecReportData(): Promise<ExecReportData> {
+const bucket = (b: OrderBucket) => ({ orders: b.orders, revenue: round2(b.revenue) });
+
+async function optionalGoogleSpend(start: string, end: string): Promise<number | null> {
+  try {
+    const cfg = buildConfig('hsc');
+    const rows = await fetchMonthlySpend(cfg, start, end);
+    return round2(rows.reduce((a, r) => a + r.actualSpend, 0));
+  } catch {
+    return null;
+  }
+}
+
+export async function gatherExecReportData(options: { includeEtz?: boolean } = {}): Promise<ExecReportData> {
   const today = sydneyToday();
   const yesterday = addDays(today, -1);
   const monthStart = `${yesterday.slice(0, 7)}-01`;
   const lyStart = subYear(monthStart), lyEnd = subYear(yesterday);
-  const cur = msRange(monthStart, yesterday), ly = msRange(lyStart, lyEnd);
   const day90 = addDays(yesterday, -89);
+  const [ty, tm, td] = yesterday.split('-').map(Number);
+  const daysInMonth = new Date(ty!, tm!, 0).getDate();
 
   // 12 complete Monday-to-Sunday weeks ending on the most recent Sunday that is not after yesterday
   const yDow = new Date(`${yesterday}T12:00:00Z`).getUTCDay();
   const lastSunday = addDays(yesterday, -yDow);
   const weeksStart = addDays(lastSunday, -(12 * 7 - 1));
-  const ehcFrom = weeksStart < monthStart ? weeksStart : monthStart;
+  const ehcFrom = [day90, weeksStart, monthStart].sort()[0]!;
 
-  const [etzRevC, etzRevL, trialC, trialL, offlineC, etzDaily, ehc, ehcRecent, ehcLy] = await Promise.all([
-    fetchETZStripeRevenue(yesterday.slice(0, 7), { accurate: false, dateRange: { start: monthStart, end: yesterday } }),
-    fetchETZStripeRevenue(lyEnd.slice(0, 7), { accurate: false, dateRange: { start: lyStart, end: lyEnd } }),
-    fetchTrialConversion('etz', cur.startMs, cur.endMs),
-    fetchTrialConversion('etz', ly.startMs, ly.endMs),
-    fetchOfflineTrials('etz', cur.startMs, cur.endMs),
-    fetchETZDailyRevenue(day90, yesterday),
-    fetchEhcOverview(),
+  const [ehcRecent, ehcLy, subs, monthDeals, lastTrial, spend] = await Promise.all([
     fetchHSCClassifiedDaily(ehcFrom, yesterday),
     fetchHSCClassifiedDaily(lyStart, lyEnd),
+    fetchHSCSubscriptionSummary(monthStart),
+    fetchEhcMonthDeals(monthStart, yesterday),
+    fetchLastFreeTrialDate(),
+    optionalGoogleSpend(monthStart, yesterday),
   ]);
-  for (const [name, r] of [['ETZ revenue', etzRevC], ['ETZ last-year revenue', etzRevL]] as const) {
-    if (!r.connected) throw new Error(`${name} source (Stripe) is not connected`);
-  }
 
-  // ETZ daily series through yesterday with a 7-day average
-  const series: ExecReportData['etz']['daily'] = [];
+  const mtd = sumDays(ehcRecent, monthStart, yesterday);
+  const mtdLy = sumDays(ehcLy, lyStart, lyEnd);
+  const yest = sumDays(ehcRecent, yesterday, yesterday);
+
+  const series: { date: string; revenue: number; ma7: number | null; partial: boolean }[] = [];
   for (let i = 0; i < 90; i++) {
     const date = addDays(day90, i);
-    series.push({ date, revenue: etzDaily[date]?.revenue ?? 0, ma7: null, partial: false });
+    series.push({ date, revenue: ehcRecent[date]?.revenue ?? 0, ma7: null, partial: false });
   }
   series.forEach((p, i) => { if (i >= 6) p.ma7 = avg(series.slice(i - 6, i + 1).map(x => x.revenue)); });
-  const last30 = series.slice(-30).map(p => p.revenue), prior30 = series.slice(-60, -30).map(p => p.revenue);
-  const l30 = avg(last30), p30 = avg(prior30);
-  const etzYesterday = { revenue: etzDaily[yesterday]?.revenue ?? 0, orders: etzDaily[yesterday]?.orders ?? 0, avg7: avg(series.slice(-7).map(p => p.revenue)) };
+  const l30 = avg(series.slice(-30).map(p => p.revenue)), p30 = avg(series.slice(-60, -30).map(p => p.revenue));
 
-  const trialsCur = trialC.totalEverStarted, trialsLy = trialL.totalEverStarted;
-  const ordersCur = etzRevC.totalOrders, ordersLy = etzRevL.totalOrders;
-  const [ty, tm, td] = yesterday.split('-').map(Number);
-  const daysInMonth = new Date(ty!, tm!, 0).getDate();
-
-  // EHC: month to date vs last year, yesterday, and 12 complete weeks of orders by type
-  const ehcMtd = sumDays(ehcRecent, monthStart, yesterday);
-  const ehcMtdLy = sumDays(ehcLy, lyStart, lyEnd);
-  const ehcYesterday = sumDays(ehcRecent, yesterday, yesterday);
   const weeklyOrders: ExecReportData['ehc']['weeklyOrders'] = [];
   for (let w = 0; w < 12; w++) {
     const s = addDays(weeksStart, 7 * w), e = addDays(s, 6);
     const t = sumDays(ehcRecent, s, e);
     weeklyOrders.push({ week: s, new: t.new.orders, recurring: t.recurring.orders, annual: t.annual.orders, other: t.other.orders });
   }
-  const bucket = (b: OrderBucket) => ({ orders: b.orders, revenue: Math.round(b.revenue * 100) / 100 });
-  const firstAfter = ehc.trialCreation.lastFreeTrialWeek ? ehc.weekly.find(w => w.week > ehc.trialCreation.lastFreeTrialWeek!) : undefined;
+
+  const target = HSC_MONTHLY_REVENUE_TARGETS[tm!] ?? 0;
+  const projected = td! > 0 ? (mtd.revenue / td!) * daysInMonth : 0;
 
   const prepared = new Intl.DateTimeFormat('en-AU', {
     timeZone: 'Australia/Sydney', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
   }).format(new Date());
 
-  return {
+  const data: ExecReportData = {
     preparedLabel: `${prepared} (Sydney time)`,
     yesterdayLabel: dayLabel(yesterday),
     periodLabel: rangeLabel(monthStart, yesterday),
     comparisonLabel: rangeLabel(lyStart, lyEnd),
-    etz: {
-      yesterday: etzYesterday,
+    ehc: {
+      yesterday: { revenue: round2(yest.revenue), orders: yest.orders, new: yest.new.orders, recurring: yest.recurring.orders, annual: yest.annual.orders, avg7: avg(series.slice(-7).map(p => p.revenue)) },
+      revenue: { cur: round2(mtd.revenue), prior: round2(mtdLy.revenue) },
+      orders: { cur: mtd.orders, prior: mtdLy.orders },
+      mix: { new: bucket(mtd.new), recurring: bucket(mtd.recurring), annual: bucket(mtd.annual), other: bucket(mtd.other) },
+      mixPrior: { new: bucket(mtdLy.new), recurring: bucket(mtdLy.recurring), annual: bucket(mtdLy.annual), other: bucket(mtdLy.other) },
+      target: { monthlyTarget: target, monthPctElapsed: (td! / daysInMonth) * 100, projected, daysElapsed: td!, daysInMonth },
+      subscriptions: { ...subs },
+      marketing: { adSpend: spend, failedPayments: mtd.failed },
+      daily: series,
+      trend: { last30Avg: l30, prior30Avg: p30, last30Change: p30 > 0 ? ((l30 - p30) / p30) * 100 : null },
+      weeklyOrders,
+      deals: { total: monthDeals.total, freeTrial: monthDeals.freeTrial, newPaid: monthDeals.newPaid, newZero: monthDeals.newZero, subjects: monthDeals.subjects, lastFreeTrialDate: lastTrial },
+    },
+  };
+
+  if (options.includeEtz) {
+    const cur = msRange(monthStart, yesterday), ly = msRange(lyStart, lyEnd);
+    const [etzRevC, etzRevL, trialC, trialL, offlineC, etzDaily] = await Promise.all([
+      fetchETZStripeRevenue(yesterday.slice(0, 7), { accurate: false, dateRange: { start: monthStart, end: yesterday } }),
+      fetchETZStripeRevenue(lyEnd.slice(0, 7), { accurate: false, dateRange: { start: lyStart, end: lyEnd } }),
+      fetchTrialConversion('etz', cur.startMs, cur.endMs),
+      fetchTrialConversion('etz', ly.startMs, ly.endMs),
+      fetchOfflineTrials('etz', cur.startMs, cur.endMs),
+      fetchETZDailyRevenue(day90, yesterday),
+    ]);
+    for (const [name, r] of [['ETZ revenue', etzRevC], ['ETZ last-year revenue', etzRevL]] as const) {
+      if (!r.connected) throw new Error(`${name} source (Stripe) is not connected`);
+    }
+    const eSeries: { date: string; revenue: number; ma7: number | null; partial: boolean }[] = [];
+    for (let i = 0; i < 90; i++) {
+      const date = addDays(day90, i);
+      eSeries.push({ date, revenue: etzDaily[date]?.revenue ?? 0, ma7: null, partial: false });
+    }
+    eSeries.forEach((p, i) => { if (i >= 6) p.ma7 = avg(eSeries.slice(i - 6, i + 1).map(x => x.revenue)); });
+    const e30 = avg(eSeries.slice(-30).map(p => p.revenue)), ep30 = avg(eSeries.slice(-60, -30).map(p => p.revenue));
+    const trialsCur = trialC.totalEverStarted, trialsLy = trialL.totalEverStarted;
+    const ordersCur = etzRevC.totalOrders, ordersLy = etzRevL.totalOrders;
+    data.etz = {
+      yesterday: { revenue: etzDaily[yesterday]?.revenue ?? 0, orders: etzDaily[yesterday]?.orders ?? 0, avg7: avg(eSeries.slice(-7).map(p => p.revenue)) },
       revenue: { cur: etzRevC.totalRevenue, prior: etzRevL.totalRevenue },
       orders: { cur: ordersCur, prior: ordersLy },
       aov: { cur: ordersCur > 0 ? etzRevC.totalRevenue / ordersCur : 0, prior: ordersLy > 0 ? etzRevL.totalRevenue / ordersLy : 0 },
       trials: { cur: trialsCur, prior: trialsLy, schoolImports: offlineC.ever },
-      trialToPaid: {
-        cur: trialsCur > 0 ? (ordersCur / trialsCur) * 100 : 0,
-        prior: trialsLy > 0 ? (ordersLy / trialsLy) * 100 : 0,
-      },
+      trialToPaid: { cur: trialsCur > 0 ? (ordersCur / trialsCur) * 100 : 0, prior: trialsLy > 0 ? (ordersLy / trialsLy) * 100 : 0 },
       target: { monthlyTarget: ETZ_MONTHLY_REVENUE_TARGETS[tm!] ?? 0, monthPctElapsed: (td! / daysInMonth) * 100 },
-      daily: series,
-      trend: { last30Avg: l30, prior30Avg: p30, last30Change: p30 > 0 ? ((l30 - p30) / p30) * 100 : null },
-    },
-    ehc: {
-      yesterday: { revenue: ehcYesterday.revenue, orders: ehcYesterday.orders, new: ehcYesterday.new.orders, recurring: ehcYesterday.recurring.orders, annual: ehcYesterday.annual.orders },
-      revenue: { cur: ehcMtd.revenue, prior: ehcMtdLy.revenue },
-      orders: { cur: ehcMtd.orders, prior: ehcMtdLy.orders },
-      mix: { new: bucket(ehcMtd.new), recurring: bucket(ehcMtd.recurring), annual: bucket(ehcMtd.annual), other: bucket(ehcMtd.other) },
-      mixPrior: { new: bucket(ehcMtdLy.new), recurring: bucket(ehcMtdLy.recurring), annual: bucket(ehcMtdLy.annual), other: bucket(ehcMtdLy.other) },
-      weeklyOrders,
-      paidActiveSubscriptions: ehc.paidSubscriptions.deals,
-      last30: ehc.last30,
-      stages: ehc.stages,
-      subjects: ehc.paidSubscriptions.subjects,
-      trialGap: {
-        lastFreeTrialWeek: ehc.trialCreation.lastFreeTrialWeek,
-        weeks: ehc.trialCreation.weeksWithoutFreeTrials,
-        zeroDealsFirstWeekAfter: firstAfter ? firstAfter.newZero : null,
-      },
-    },
-  };
+      daily: eSeries,
+      trend: { last30Avg: e30, prior30Avg: ep30, last30Change: ep30 > 0 ? ((e30 - ep30) / ep30) * 100 : null },
+    };
+  }
+  return data;
 }

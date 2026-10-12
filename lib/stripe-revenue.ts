@@ -576,6 +576,8 @@ export interface OrderBucket { orders: number; revenue: number }
 export interface ClassifiedDay {
   revenue: number;
   orders: number;
+  /** Failed payment attempts (card declines and retries). */
+  failed: number;
   /** First payment of a new subscription. */
   new: OrderBucket;
   /** Renewal payment of an existing monthly subscription. */
@@ -624,9 +626,10 @@ export async function fetchStripeClassifiedDaily(
 
     const data = await res.json() as { data: (StripeCharge & { created: number; invoice: Inv | string | null })[]; has_more: boolean };
     for (const c of data.data) {
-      if (!c.paid || c.status !== 'succeeded') continue;
       const day = sydneyYmd.format(new Date(c.created * 1000));
-      const cell = (out[day] ??= { revenue: 0, orders: 0, new: emptyBucket(), recurring: emptyBucket(), annual: emptyBucket(), other: emptyBucket() });
+      const cell = (out[day] ??= { revenue: 0, orders: 0, failed: 0, new: emptyBucket(), recurring: emptyBucket(), annual: emptyBucket(), other: emptyBucket() });
+      if (c.status === 'failed') { cell.failed += 1; continue; }
+      if (!c.paid || c.status !== 'succeeded') continue;
       const net = ((c.amount ?? 0) - (c.amount_refunded ?? 0)) / 100;
       cell.revenue += net;
       cell.orders += 1;
@@ -651,4 +654,70 @@ export async function fetchStripeClassifiedDaily(
 
 export async function fetchHSCClassifiedDaily(start: string, end: string) {
   return fetchStripeClassifiedDaily(STRIPE_HSC_SECRET_KEY, start, end);
+}
+
+export interface SubscriptionSummary {
+  /** Subscriptions that are paying now (active or past due, price above $0). */
+  paying: number;
+  monthly: number;
+  yearly: number;
+  /** Monthly recurring revenue at list price (yearly plans divided by 12). */
+  mrr: number;
+  /** Paying subscriptions set to end at their next renewal date. */
+  pendingCancel: number;
+  /** Only with history: subscriptions started / cancelled since the given date. */
+  started: number;
+  cancelled: number;
+}
+
+/**
+ * Every subscription, fully paginated. `since` (YYYY-MM-DD) adds started / cancelled counts from that date
+ * and reads all statuses; without it only active and past-due subscriptions are read.
+ */
+export async function fetchStripeSubscriptionSummary(secretKey: string, since?: string): Promise<SubscriptionSummary> {
+  const out: SubscriptionSummary = { paying: 0, monthly: 0, yearly: 0, mrr: 0, pendingCancel: 0, started: 0, cancelled: 0 };
+  if (!secretKey) return out;
+  const sinceUnix = since ? zonedDateTimeToUnix(since, '00:00:00') : 0;
+  const statuses = since ? ['all'] : ['active', 'past_due'];
+
+  type Sub = {
+    id: string; status: string; created: number; canceled_at: number | null; cancel_at_period_end: boolean;
+    items?: { data?: { price?: { unit_amount?: number; recurring?: { interval?: string; interval_count?: number } } }[] };
+  };
+  for (const status of statuses) {
+    let startingAfter: string | null = null;
+    for (let page = 0; page < 200; page++) {
+      const params = new URLSearchParams({ status, limit: '100' });
+      if (startingAfter) params.set('starting_after', startingAfter);
+      let res: Response | null = null;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        res = await fetch(`${STRIPE_BASE}/subscriptions?${params}`, { headers: stripeHeaders(secretKey), cache: 'no-store' });
+        if (res.ok) break;
+        if (res.status !== 429 && res.status < 500) break;
+        await sleep(400 * Math.pow(2, attempt));
+      }
+      if (!res || !res.ok) throw new Error(`Stripe subscriptions error (${res?.status ?? 'no response'})`);
+      const data = await res.json() as { data: Sub[]; has_more: boolean };
+      for (const sub of data.data) {
+        if (since && sub.created >= sinceUnix && sub.status !== 'incomplete' && sub.status !== 'incomplete_expired') out.started += 1;
+        if (since && sub.canceled_at && sub.canceled_at >= sinceUnix) out.cancelled += 1;
+        if (sub.status !== 'active' && sub.status !== 'past_due') continue;
+        const price = sub.items?.data?.[0]?.price;
+        const unit = (price?.unit_amount ?? 0) / 100;
+        if (unit <= 0) continue;
+        out.paying += 1;
+        if (sub.cancel_at_period_end) out.pendingCancel += 1;
+        if (price?.recurring?.interval === 'year') { out.yearly += 1; out.mrr += unit / 12; }
+        else { out.monthly += 1; out.mrr += unit / (price?.recurring?.interval_count ?? 1); }
+      }
+      if (!data.has_more || data.data.length === 0) break;
+      startingAfter = data.data[data.data.length - 1]!.id;
+    }
+  }
+  out.mrr = Math.round(out.mrr);
+  return out;
+}
+
+export async function fetchHSCSubscriptionSummary(since?: string) {
+  return fetchStripeSubscriptionSummary(STRIPE_HSC_SECRET_KEY, since);
 }
