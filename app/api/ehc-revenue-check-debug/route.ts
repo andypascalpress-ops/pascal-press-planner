@@ -78,6 +78,16 @@ export async function GET(request: Request) {
       else { activeMonthly++; mrr += unit / (rec?.interval_count ?? 1); }
     }
   }
+  const byPrice: Record<string, { n: number; discounted: number }> = {};
+  for (const s of subs) {
+    if (s.status !== 'active' && s.status !== 'past_due') continue;
+    const item = s.items?.data?.[0];
+    const rec = item?.price?.recurring;
+    const key = `${(item?.price?.unit_amount ?? 0) / 100}|${rec ? `${rec.interval_count} ${rec.interval}` : 'one-off'}`;
+    const cell = (byPrice[key] ??= { n: 0, discounted: 0 });
+    cell.n++;
+    if (s.discount) cell.discounted++;
+  }
   const canceledThisMonth = subs.filter(s => s.canceled_at && s.canceled_at >= Number(gte)).length;
   const createdThisMonth = subs.filter(s => s.created >= Number(gte)).length;
 
@@ -86,6 +96,6 @@ export async function GET(request: Request) {
     payments: { successful: ok, gross: Math.round(gross * 100) / 100, refunded: Math.round(refunded * 100) / 100, net: Math.round((gross - refunded) * 100) / 100, refundedCharges, failed, notPaid, disputed },
     byDay: Object.fromEntries(Object.entries(byDay).sort().map(([k, v]) => [k, { orders: v.n, gross: Math.round(v.gross * 100) / 100, refunded: Math.round(v.refunded * 100) / 100, failed: v.failed }])),
     invoices: { paid: invoices.length, amountPaid: Math.round(invPaid * 100) / 100, paidWithNoCharge: invNoCharge, zeroValue: invZero },
-    subscriptions: { total: subs.length, byStatus, payingNow: activeCount, monthly: activeMonthly, yearly: activeYearly, mrr: Math.round(mrr), cancelAtPeriodEnd, canceledThisMonth, createdThisMonth },
+    subscriptions: { byPrice, total: subs.length, byStatus, payingNow: activeCount, monthly: activeMonthly, yearly: activeYearly, mrr: Math.round(mrr), cancelAtPeriodEnd, canceledThisMonth, createdThisMonth },
   });
 }
