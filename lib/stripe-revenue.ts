@@ -578,6 +578,9 @@ export interface ClassifiedDay {
   orders: number;
   /** Failed payment attempts (card declines and retries). */
   failed: number;
+  /** Payments taken that day which were later refunded (in part or in full), and the dollars refunded. */
+  refunds: number;
+  refunded: number;
   /** First payment of a new subscription. */
   new: OrderBucket;
   /** Renewal payment of an existing monthly subscription. */
@@ -627,10 +630,11 @@ export async function fetchStripeClassifiedDaily(
     const data = await res.json() as { data: (StripeCharge & { created: number; invoice: Inv | string | null })[]; has_more: boolean };
     for (const c of data.data) {
       const day = sydneyYmd.format(new Date(c.created * 1000));
-      const cell = (out[day] ??= { revenue: 0, orders: 0, failed: 0, new: emptyBucket(), recurring: emptyBucket(), annual: emptyBucket(), other: emptyBucket() });
+      const cell = (out[day] ??= { revenue: 0, orders: 0, failed: 0, refunds: 0, refunded: 0, new: emptyBucket(), recurring: emptyBucket(), annual: emptyBucket(), other: emptyBucket() });
       if (c.status === 'failed') { cell.failed += 1; continue; }
       if (!c.paid || c.status !== 'succeeded') continue;
       const net = ((c.amount ?? 0) - (c.amount_refunded ?? 0)) / 100;
+      if ((c.amount_refunded ?? 0) > 0) { cell.refunds += 1; cell.refunded += (c.amount_refunded ?? 0) / 100; }
       if (net <= 0) continue; // fully refunded: no revenue kept, so not counted as an order
       cell.revenue += net;
       cell.orders += 1;

@@ -26,7 +26,7 @@ export interface ExecReportData {
     mixPrior: Mix;
     target: { monthlyTarget: number; monthPctElapsed: number; projected: number; daysElapsed: number; daysInMonth: number };
     subscriptions: { paying: number; monthly: number; yearly: number; mrr: number; mrrAtList: number; intro: number; pendingCancel: number; started: number; cancelled: number };
-    marketing: { adSpend: number | null; failedPayments: number };
+    marketing: { adSpend: number | null; failedPayments: number; refunds: number; refunded: number };
     daily: DailyPoint[];
     trend: Trend;
     weeklyOrders: { week: string; new: number; recurring: number; annual: number; other: number }[];
@@ -333,6 +333,7 @@ function ehcPageTwo(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReport
     ['Google Ads spend', spend === null ? 'not available' : money(spend), spend === null ? 'Could not be read today' : undefined],
     ['Revenue per $1 of ad spend', spend && spend > 0 ? `$${(e.revenue.cur / spend).toFixed(2)}` : 'n/a', 'All EHC revenue divided by Google Ads spend'],
     ['Ad spend per new subscriber', spend && newOrders > 0 ? money(spend / newOrders) : 'n/a', 'Spend divided by new orders'],
+    ['Refunds', e.marketing.refunds > 0 ? `${NUM.format(e.marketing.refunds)} (${money(e.marketing.refunded)})` : 'none', 'Already taken out of revenue and orders'],
     ['Failed payment attempts', NUM.format(e.marketing.failedPayments), 'Stripe retries these automatically'],
   ]);
 

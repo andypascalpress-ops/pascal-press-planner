@@ -65,10 +65,10 @@ type Kind = 'new' | 'recurring' | 'annual' | 'other';
 const KINDS: Kind[] = ['new', 'recurring', 'annual', 'other'];
 
 function sumDays(days: Record<string, ClassifiedDay>, from: string, to: string) {
-  const t = { revenue: 0, orders: 0, failed: 0, new: { orders: 0, revenue: 0 }, recurring: { orders: 0, revenue: 0 }, annual: { orders: 0, revenue: 0 }, other: { orders: 0, revenue: 0 } };
+  const t = { revenue: 0, orders: 0, failed: 0, refunds: 0, refunded: 0, new: { orders: 0, revenue: 0 }, recurring: { orders: 0, revenue: 0 }, annual: { orders: 0, revenue: 0 }, other: { orders: 0, revenue: 0 } };
   for (const [date, d] of Object.entries(days)) {
     if (date < from || date > to) continue;
-    t.revenue += d.revenue; t.orders += d.orders; t.failed += d.failed;
+    t.revenue += d.revenue; t.orders += d.orders; t.failed += d.failed; t.refunds += d.refunds ?? 0; t.refunded += d.refunded ?? 0;
     for (const k of KINDS) { t[k].orders += d[k].orders; t[k].revenue += d[k].revenue; }
   }
   return t;
@@ -149,7 +149,7 @@ export async function gatherExecReportData(options: { includeEtz?: boolean } = {
       mixPrior: { new: bucket(mtdLy.new), recurring: bucket(mtdLy.recurring), annual: bucket(mtdLy.annual), other: bucket(mtdLy.other) },
       target: { monthlyTarget: target, monthPctElapsed: (td! / daysInMonth) * 100, projected, daysElapsed: td!, daysInMonth },
       subscriptions: { ...subs },
-      marketing: { adSpend: spend, failedPayments: mtd.failed },
+      marketing: { adSpend: spend, failedPayments: mtd.failed, refunds: mtd.refunds, refunded: round2(mtd.refunded) },
       daily: series,
       trend: { last30Avg: l30, prior30Avg: p30, last30Change: p30 > 0 ? ((l30 - p30) / p30) * 100 : null },
       weeklyOrders,
