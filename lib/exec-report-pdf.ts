@@ -215,9 +215,9 @@ function weeklyOrdersChart(c: Canvas, weekly: ExecReportData['ehc']['weeklyOrder
   });
 }
 
-function barList(c: Canvas, rows: { label: string; count: number }[], x: number, top: number, w: number, color: string, rowH = 15) {
+function barList(c: Canvas, rows: { label: string; count: number }[], x: number, top: number, w: number, color: string, rowH = 15, labelW = 110) {
   const max = Math.max(1, ...rows.map(r => r.count));
-  const labelW = 110, valW = 34, barX = x + labelW, barW = w - labelW - valW - 6;
+  const valW = 34, barX = x + labelW, barW = w - labelW - valW - 6;
   rows.forEach((r, i) => {
     const ty = top + i * rowH;
     c.text(r.label, x, ty, 8, INK, { maxW: labelW - 6 });
@@ -278,7 +278,7 @@ function ehcPageOne(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReport
   tile(c, M + tw + gap, top, tw, th, 'Revenue, month to date', money(e.revenue.cur), rev.text, rev.color, EHC_TINT);
   const pctTarget = t.monthlyTarget > 0 ? (e.revenue.cur / t.monthlyTarget) * 100 : 0;
   tile(c, M + 2 * (tw + gap), top, tw, th, 'Month-end outlook', money(t.projected),
-    t.monthlyTarget > 0 ? `target ${money(t.monthlyTarget)} | ${Math.round(pctTarget)}% reached, ${Math.round(t.monthPctElapsed)}% of month gone` : 'straight-line projection', MUTED, EHC_TINT);
+    t.monthlyTarget > 0 ? `target ${money(t.monthlyTarget)} | ${Math.round(pctTarget)}% reached so far` : 'straight-line projection', MUTED, EHC_TINT);
   top += th + gap;
   tile(c, M, top, tw, th, 'Paying subscriptions', NUM.format(e.subscriptions.paying), `${NUM.format(e.subscriptions.monthly)} monthly | ${NUM.format(e.subscriptions.yearly)} annual`, MUTED, EHC_TINT);
   tile(c, M + tw + gap, top, tw, th, 'Recurring revenue a month', money(e.subscriptions.mrr), 'at list price, annual plans divided by 12', MUTED, EHC_TINT);
@@ -286,7 +286,7 @@ function ehcPageOne(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReport
     `${e.subscriptions.started} started, ${e.subscriptions.cancelled} cancelled this month`, net >= 0 ? GOOD : BAD, EHC_TINT);
   top += th + 22;
 
-  dailyChartBlock(c, e.daily, e.trend, EHC, top, 255);
+  dailyChartBlock(c, e.daily, e.trend, EHC, top, 310);
   footer(c, n, total, 'Sources: Stripe, HubSpot');
 }
 
@@ -321,9 +321,9 @@ function ehcPageTwo(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReport
   const colTop = 372, colW = (CW - 24) / 2;
   c.text('New paid sign-ups this month, by subject', M, colTop, 10, NAVY, { bold: true });
   const subj = e.deals.subjects.slice(0, 8).map(s => ({ label: s.subject, count: s.count }));
-  if (subj.length > 0) barList(c, subj, M, colTop + 20, colW, EHC);
+  if (subj.length > 0) barList(c, subj, M, colTop + 20, colW, EHC, 15, 132);
   else c.text('No paid sign-ups recorded in HubSpot yet this month.', M, colTop + 20, 8.5, MUTED);
-  c.text('From HubSpot deals created this month. A plan covering several subjects counts once per subject.', M, colTop + 20 + 8 * 15 + 3, 6.8, MUTED, { maxW: colW });
+  c.paragraph('From HubSpot deals created this month. A plan covering several subjects counts once per subject.', M, colTop + 20 + 8 * 15 + 3, 6.8, colW, MUTED, 1.3);
 
   const mx = M + colW + 24;
   c.text('Marketing and payments, month to date', mx, colTop, 10, NAVY, { bold: true });
