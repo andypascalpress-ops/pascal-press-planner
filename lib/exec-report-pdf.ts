@@ -121,8 +121,8 @@ function header(c: Canvas, kicker: string, title: string, d: ExecReportData, acc
   c.spaced(kicker, M, 36, 8, accent, 1.6);
   c.text(title, M, 52, 22, NAVY, { bold: true });
   c.text(`Month to date: ${d.periodLabel}`, W - M, 38, 10, INK, { bold: true, align: 'right' });
-  c.text(`compared with ${d.comparisonLabel} (same period last year)`, W - M, 52, 8.5, MUTED, { align: 'right' });
-  c.text(`Prepared ${d.preparedLabel}, includes sales up to the end of yesterday`, W - M, 64, 8, MUTED, { align: 'right' });
+  c.text(`vs ${d.comparisonLabel} (same period last year)`, W - M, 52, 8.5, MUTED, { align: 'right' });
+  c.text(`Prepared ${d.preparedLabel.replace(' (Sydney time)', '')}`, W - M, 64, 8, MUTED, { align: 'right' });
 }
 
 function footer(c: Canvas, n: number, sources: string) {
@@ -241,7 +241,7 @@ function etzPage(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReportDat
   tile(c, M, top1, tw, th, `Yesterday, ${yLabel}`, money(e.yesterday.revenue), `${NUM.format(e.yesterday.orders)} orders | 7-day avg ${money(e.yesterday.avg7)} a day`, MUTED, TINT);
   tile(c, M + tw + gap, top1, tw, th, 'Revenue, month to date', money(e.revenue.cur), rev.text, rev.color, TINT);
   tile(c, M + 2 * (tw + gap), top1, tw, th, 'Paid orders, month to date', NUM.format(e.orders.cur), `${ord.text.replace(' last year', '')} | AOV ${money(e.aov.cur)}`, ord.color, TINT);
-  tile(c, M, top2, tw, th, 'New free trials, month to date', NUM.format(e.trials.cur), trl.text, trl.color, TINT);
+  tile(c, M, top2, tw, th, 'New free trials, this month', NUM.format(e.trials.cur), trl.text, trl.color, TINT);
   tile(c, M + tw + gap, top2, tw, th, 'Free trial to paid', `${Math.round(e.trialToPaid.cur)}%`,
     e.trials.prior > 0 ? `${ttpDiff >= 0 ? '+' : '-'}${Math.abs(ttpDiff).toFixed(0)} pts vs ${Math.round(e.trialToPaid.prior)}% last year` : 'no comparison last year',
     e.trials.prior > 0 ? (ttpDiff >= 0 ? GOOD : BAD) : MUTED, TINT);
@@ -305,11 +305,11 @@ function ehcPage(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReportDat
   c.text('HubSpot deals by current stage (all time)', M, colTop, 10, NAVY, { bold: true });
   barList(c, e.stages, M, colTop + 20, colW, '#64748B');
   c.text('Paid active subscriptions by subject', M + colW + 24, colTop, 10, NAVY, { bold: true });
-  barList(c, e.subjects.slice(0, 7).map(s => ({ label: s.subject, count: s.count })), M + colW + 24, colTop + 20, colW, EHC);
-  c.text(`${NUM.format(e.paidActiveSubscriptions)} paid active subscriptions in HubSpot. A subscription covering several subjects counts once per subject.`, M + colW + 24, colTop + 20 + 7 * 15 + 3, 6.8, MUTED, { maxW: colW });
+  barList(c, e.subjects.slice(0, 6).map(s => ({ label: s.subject, count: s.count })), M + colW + 24, colTop + 20, colW, EHC);
+  c.paragraph(`${NUM.format(e.paidActiveSubscriptions)} paid active subscriptions in HubSpot. A plan covering several subjects counts once per subject.`, M + colW + 24, colTop + 20 + 6 * 15 + 3, 6.8, colW, MUTED, 1.3);
 
   const g = e.trialGap;
-  let top = 612;
+  let top = 614;
   top = callout(c, top, 'How orders and deals differ', [
     'Orders are payments in Stripe: the first payment of a new subscription (new), renewals, and annual plans. New + renewals + annual always add up to total orders.',
     `HubSpot deals are records created for new sign-ups, so renewals never appear as deals and the two counts are not meant to match. In the last 30 days HubSpot created ${NUM.format(e.last30.total)} deals: ${NUM.format(e.last30.newPaid)} paid, ${NUM.format(e.last30.newZero)} at $0 and ${NUM.format(e.last30.freeTrial)} Free Trial. A returning subscriber who starts a fresh subscription counts as new.`,
