@@ -710,6 +710,8 @@ export async function fetchStripeSubscriptionSummary(secretKey: string, since?: 
       if (!res || !res.ok) throw new Error(`Stripe subscriptions error (${res?.status ?? 'no response'})`);
       const data = await res.json() as { data: Sub[]; has_more: boolean };
       for (const sub of data.data) {
+        // $0 plans are free accounts, not paying subscribers, so they are left out of started / cancelled too
+        if (((sub.items?.data?.[0]?.price?.unit_amount ?? 0) / 100) <= 0) continue;
         if (since && sub.created >= sinceUnix && sub.status !== 'incomplete' && sub.status !== 'incomplete_expired') out.started += 1;
         // only subscriptions that have actually ended; canceled_at is also stamped when someone merely asks to cancel at period end
         if (since && sub.status === 'canceled' && (sub.ended_at ?? sub.canceled_at ?? 0) >= sinceUnix) out.cancelled += 1;
