@@ -166,15 +166,40 @@ function gridAndAxis(c: Canvas, x: number, top: number, w: number, h: number, ma
   }
 }
 
+/** Least-squares straight line through the daily revenue: where it starts and ends over the window. */
+function trendLine(daily: DailyPoint[]): { start: number; end: number } | null {
+  const n = daily.length;
+  if (n < 14) return null;
+  const mx = (n - 1) / 2, my = daily.reduce((a, p) => a + p.revenue, 0) / n;
+  let num = 0, den = 0;
+  daily.forEach((p, i) => { num += (i - mx) * (p.revenue - my); den += (i - mx) ** 2; });
+  const slope = den === 0 ? 0 : num / den;
+  return { start: my - slope * mx, end: my + slope * (n - 1 - mx) };
+}
+
 function dailyRevenueChart(c: Canvas, daily: DailyPoint[], color: string, x: number, top: number, w: number, h: number) {
   const n = daily.length;
   const max = niceMax(Math.max(1, ...daily.map(p => p.revenue)));
   gridAndAxis(c, x, top, w, h, max, axisMoney);
   const step = w / n;
   const pts = daily.map((p, i) => ({ x: x + i * step + step / 2, y: top + h - (p.revenue / max) * h }));
-  pts.forEach((pt, i) => { if (i > 0) c.line(pts[i - 1]!.x, pts[i - 1]!.y, pt.x, pt.y, color, 1.5); });
+  // daily sales: thin and soft, so the trend line carries the message
+  pts.forEach((pt, i) => {
+    if (i > 0) c.page.drawLine({ start: { x: pts[i - 1]!.x, y: c.y(pts[i - 1]!.y) }, end: { x: pt.x, y: c.y(pt.y) }, thickness: 1.1, color: hex(color), opacity: 0.55 });
+  });
+  const tr = trendLine(daily);
+  if (tr) {
+    const ty = (v: number) => top + h - (Math.min(Math.max(v, 0), max) / max) * h;
+    c.page.drawLine({ start: { x: pts[0]!.x, y: c.y(ty(tr.start)) }, end: { x: pts[n - 1]!.x, y: c.y(ty(tr.end)) }, thickness: 2, color: hex(NAVY), dashArray: [5, 3] });
+  }
   const last = pts[pts.length - 1];
-  if (last) c.page.drawCircle({ x: last.x, y: c.y(last.y), size: 2.6, color: hex(color) });
+  if (last) {
+    c.page.drawLine({ start: { x: last.x, y: c.y(last.y) }, end: { x: last.x, y: c.y(top + h) }, thickness: 0.6, color: hex(color), opacity: 0.5, dashArray: [2, 2] });
+    c.page.drawCircle({ x: last.x, y: c.y(last.y), size: 3, color: hex(color) });
+    c.text(`${money(daily[n - 1]!.revenue)} yesterday`, last.x + 4, top + h - 14, 7.5, color, { bold: true, align: 'right' });
+  }
+  const peak = daily.reduce((b, p, i) => (p.revenue > daily[b]!.revenue ? i : b), 0);
+  c.text(`Best day ${money(daily[peak]!.revenue)}`, pts[peak]!.x + 4, pts[peak]!.y - 1, 7, MUTED, { align: peak > n * 0.8 ? 'right' : 'left' });
   daily.forEach((p, i) => {
     if ((n - 1 - i) % 14 === 0) c.text(shortDate(p.date), x + i * step + step / 2, top + h + 5, 7, MUTED, { align: 'center' });
   });
@@ -183,9 +208,14 @@ function dailyRevenueChart(c: Canvas, daily: DailyPoint[], color: string, x: num
 function dailyChartBlock(c: Canvas, daily: DailyPoint[], trend: Trend, color: string, top: number, chartH: number) {
   c.text('Daily revenue, last 90 days', M, top, 11, NAVY, { bold: true });
   const word = trend.last30Change === null ? '' : trend.last30Change >= 5 ? ', rising' : trend.last30Change <= -5 ? ', falling' : ', flat';
-  c.text(`Last 30 days: ${money(trend.last30Avg)} a day vs ${money(trend.prior30Avg)} in the 30 before (${signed(trend.last30Change)})${word}`, M, top + 15, 8.5, MUTED);
-  dailyRevenueChart(c, daily, color, M + 30, top + 36, CW - 30, chartH);
-  c.text('Each point is one day of sales. Complete days only: the chart ends yesterday.', M + 30, top + 36 + chartH + 18, 7, MUTED);
+  const tl0 = trendLine(daily);
+  const trendTxt = tl0 ? ` The 90-day trend runs from about ${money(Math.max(tl0.start, 0))} to ${money(Math.max(tl0.end, 0))} a day.` : '';
+  c.paragraph(`Last 30 days: ${money(trend.last30Avg)} a day vs ${money(trend.prior30Avg)} in the 30 before (${signed(trend.last30Change)})${word}.${trendTxt}`, M, top + 15, 8.5, CW - 160, MUTED, 1.3);
+  c.line(W - M - 168, top + 7, W - M - 152, top + 7, color, 1.1); c.text('Daily sales', W - M - 148, top + 3, 7.5, MUTED);
+  const tl = trendLine(daily);
+  if (tl) { c.page.drawLine({ start: { x: W - M - 88, y: c.y(top + 7) }, end: { x: W - M - 72, y: c.y(top + 7) }, thickness: 2, color: hex(NAVY), dashArray: [4, 2] }); c.text('90-day trend', W - M - 68, top + 3, 7.5, MUTED); }
+  dailyRevenueChart(c, daily, color, M + 30, top + 46, CW - 30, chartH - 8);
+  c.text('Each point is one day of sales; the dashed line is the straight-line trend. Complete days only: the chart ends yesterday.', M + 30, top + 46 + chartH - 8 + 18, 7, MUTED);
 }
 
 function weeklyOrdersChart(c: Canvas, weekly: ExecReportData['ehc']['weeklyOrders'], x: number, top: number, w: number, h: number) {
@@ -272,12 +302,12 @@ function ehcPageOne(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReport
     t.monthlyTarget > 0 ? `target ${money(t.monthlyTarget)} | ${Math.round(pctTarget)}% reached so far` : 'straight-line projection', MUTED, EHC_TINT);
   top += th + gap;
   tile(c, M, top, tw, th, 'Paying subscriptions', NUM.format(e.subscriptions.paying), `${NUM.format(e.subscriptions.monthly)} monthly plan | ${NUM.format(e.subscriptions.yearly)} annual plan`, MUTED, EHC_TINT);
-  tile(c, M + tw + gap, top, tw, th, 'Set to end at renewal', NUM.format(e.subscriptions.pendingCancel), 'paying subscribers who have asked to cancel', e.subscriptions.pendingCancel > 0 ? WARN_TEXT : MUTED, EHC_TINT);
+  tile(c, M + tw + gap, top, tw, th, 'Set to end at renewal', NUM.format(e.subscriptions.pendingCancel), 'have asked to cancel', e.subscriptions.pendingCancel > 0 ? WARN_TEXT : MUTED, EHC_TINT);
   tile(c, M + 2 * (tw + gap), top, tw, th, 'Net new subscriptions', `${net >= 0 ? '+' : ''}${net}`,
     `${e.subscriptions.started} started, ${e.subscriptions.cancelled} cancelled this month`, net >= 0 ? GOOD : BAD, EHC_TINT);
   top += th + 22;
 
-  dailyChartBlock(c, e.daily, e.trend, EHC, top, 310);
+  dailyChartBlock(c, e.daily, e.trend, EHC, top, 340);
   footer(c, n, total, 'Sources: Stripe, HubSpot');
 }
 
