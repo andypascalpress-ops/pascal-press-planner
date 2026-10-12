@@ -631,6 +631,7 @@ export async function fetchStripeClassifiedDaily(
       if (c.status === 'failed') { cell.failed += 1; continue; }
       if (!c.paid || c.status !== 'succeeded') continue;
       const net = ((c.amount ?? 0) - (c.amount_refunded ?? 0)) / 100;
+      if (net <= 0) continue; // fully refunded: no revenue kept, so not counted as an order
       cell.revenue += net;
       cell.orders += 1;
 
