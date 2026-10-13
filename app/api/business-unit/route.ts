@@ -274,7 +274,7 @@ async function fetchStripeSubscriptionMetrics(key: string, brand: BrandParam) {
     const pipelineLabel = brand === 'etz' ? 'etz' : 'ehc';
     const currentlyOnTrial = await fetchHubSpotCurrentTrials(pipelineLabel);
 
-    return { active: summary.paying, trialing: currentlyOnTrial, mrr: summary.mrr };
+    return { active: summary.paying, trialing: currentlyOnTrial, mrr: summary.mrr, customers: summary.customers, multiSubCustomers: summary.multiSubCustomers };
   } catch {
     return null;
   }

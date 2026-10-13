@@ -672,6 +672,10 @@ export interface SubscriptionSummary {
   mrrAtList: number;
   /** Monthly subscriptions whose latest payment was well below list price (introductory offer). */
   intro: number;
+  /** Distinct customers behind those subscriptions (Stripe's own 'Active subscribers' counts customers, not subscriptions). */
+  customers: number;
+  /** Customers holding more than one paying subscription. */
+  multiSubCustomers: number;
   /** Paying subscriptions set to end at their next renewal date. */
   pendingCancel: number;
   /** Only with history: subscriptions started / cancelled since the given date. */
@@ -684,7 +688,7 @@ export interface SubscriptionSummary {
  * and reads all statuses; without it only active and past-due subscriptions are read.
  */
 export async function fetchStripeSubscriptionSummary(secretKey: string, since?: string): Promise<SubscriptionSummary> {
-  const out: SubscriptionSummary = { paying: 0, monthly: 0, yearly: 0, mrr: 0, mrrAtList: 0, intro: 0, pendingCancel: 0, started: 0, cancelled: 0 };
+  const out: SubscriptionSummary = { paying: 0, monthly: 0, yearly: 0, mrr: 0, mrrAtList: 0, intro: 0, customers: 0, multiSubCustomers: 0, pendingCancel: 0, started: 0, cancelled: 0 };
   if (!secretKey) return out;
   const sinceUnix = since ? zonedDateTimeToUnix(since, '00:00:00') : 0;
   const statuses = since ? ['all'] : ['active', 'past_due'];
@@ -693,7 +697,9 @@ export async function fetchStripeSubscriptionSummary(secretKey: string, since?: 
     id: string; status: string; created: number; canceled_at: number | null; ended_at?: number | null; cancel_at_period_end: boolean;
     items?: { data?: { price?: { unit_amount?: number; recurring?: { interval?: string; interval_count?: number } } }[] };
     latest_invoice?: { amount_paid?: number } | string | null;
+    customer?: string | { id?: string } | null;
   };
+  const perCustomer = new Map<string, number>();
   for (const status of statuses) {
     let startingAfter: string | null = null;
     for (let page = 0; page < 200; page++) {
@@ -720,6 +726,8 @@ export async function fetchStripeSubscriptionSummary(secretKey: string, since?: 
         const unit = (price?.unit_amount ?? 0) / 100;
         if (unit <= 0) continue;
         out.paying += 1;
+        const cust = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id ?? sub.id;
+        perCustomer.set(cust, (perCustomer.get(cust) ?? 0) + 1);
         if (sub.cancel_at_period_end) out.pendingCancel += 1;
         if (price?.recurring?.interval === 'year') {
           out.yearly += 1; out.mrr += unit / 12; out.mrrAtList += unit / 12;
@@ -737,6 +745,8 @@ export async function fetchStripeSubscriptionSummary(secretKey: string, since?: 
       startingAfter = data.data[data.data.length - 1]!.id;
     }
   }
+  out.customers = perCustomer.size;
+  out.multiSubCustomers = [...perCustomer.values()].filter(n => n > 1).length;
   out.mrr = Math.round(out.mrr);
   out.mrrAtList = Math.round(out.mrrAtList);
   return out;
