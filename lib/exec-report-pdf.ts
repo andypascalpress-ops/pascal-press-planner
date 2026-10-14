@@ -1,7 +1,7 @@
 /**
  * Executive summary PDF (A4): Excel HSC Copilot sales and subscriptions. Pure rendering: ExecReportData in,
  * PDF bytes out. Uses only pdf-lib and the standard Helvetica fonts, so it runs anywhere (Vercel serverless
- * included) with no files or browsers. An Excel Test Zone page is rendered only when `etz` data is supplied.
+ * included) with no files or browsers.
  *
  * The report is emailed at about 9:30am and covers complete days only: a "yesterday" figure, and month to date
  * through the end of yesterday compared with the same dates last year.
@@ -32,20 +32,9 @@ export interface ExecReportData {
     weeklyOrders: { week: string; new: number; recurring: number; annual: number; other: number }[];
     deals: { total: number; freeTrial: number; newPaid: number; newZero: number; subjects: { subject: string; count: number }[]; lastFreeTrialDate: string | null };
   };
-  etz?: {
-    yesterday: { revenue: number; orders: number; avg7: number };
-    revenue: { cur: number; prior: number };
-    orders: { cur: number; prior: number };
-    aov: { cur: number; prior: number };
-    trials: { cur: number; prior: number; schoolImports: number };
-    trialToPaid: { cur: number; prior: number };
-    target: { monthlyTarget: number; monthPctElapsed: number };
-    daily: DailyPoint[];
-    trend: Trend;
-  };
 }
 
-// ETZ brand (exceltestzone.com.au) and the EHC emerald used on the dashboard.
+// ETZ brand (exceltestzone.com.au) blue and the EHC emerald used on the dashboard. Shared with lib/etz-report-pdf.ts.
 const INK = '#142C3D', MUTED = '#5D7080', HAIR = '#DCE6F0', WHITE = '#FFFFFF';
 const NAVY = '#0B2A4A', BLUE = '#1B72BD', TINT = '#EBF4FF';
 const EHC = '#047857', EHC_TINT = '#ECFDF5';
@@ -121,11 +110,11 @@ class Canvas {
   }
 }
 
-function header(c: Canvas, kicker: string, title: string, d: ExecReportData, accent: string) {
+function header(c: Canvas, kicker: string, title: string, d: { periodLabel: string; comparisonLabel: string; preparedLabel: string }, accent: string, comparisonNote = 'same period last year') {
   c.spaced(kicker, M, 36, 8, accent, 1.6);
   c.text(title, M, 52, 22, NAVY, { bold: true });
   c.text(`Month to date: ${d.periodLabel}`, W - M, 38, 10, INK, { bold: true, align: 'right' });
-  c.text(`vs ${d.comparisonLabel} (same period last year)`, W - M, 52, 8.5, MUTED, { align: 'right' });
+  c.text(`vs ${d.comparisonLabel} (${comparisonNote})`, W - M, 52, 8.5, MUTED, { align: 'right' });
   c.text(`Prepared ${d.preparedLabel.replace(' (Sydney time)', '')}`, W - M, 64, 8, MUTED, { align: 'right' });
 }
 
@@ -236,15 +225,15 @@ function weeklyOrdersChart(c: Canvas, weekly: ExecReportData['ehc']['weeklyOrder
   });
 }
 
-function barList(c: Canvas, rows: { label: string; count: number }[], x: number, top: number, w: number, color: string, rowH = 15, labelW = 110) {
+function barList(c: Canvas, rows: { label: string; count: number }[], x: number, top: number, w: number, color: string, rowH = 15, labelW = 110, fmt: (n: number) => string = n => NUM.format(n)) {
   const max = Math.max(1, ...rows.map(r => r.count));
-  const valW = 34, barX = x + labelW, barW = w - labelW - valW - 6;
+  const valW = 44, barX = x + labelW, barW = w - labelW - valW - 6;
   rows.forEach((r, i) => {
     const ty = top + i * rowH;
     c.text(r.label, x, ty, 8, INK, { maxW: labelW - 6 });
     c.rrect(barX, ty + 2, barW, 6, 3, '#EEF2F6');
     if (r.count > 0) c.rrect(barX, ty + 2, Math.max(barW * (r.count / max), 4), 6, 3, color);
-    c.text(NUM.format(r.count), x + w, ty, 8, NAVY, { bold: true, align: 'right' });
+    c.text(fmt(r.count), x + w, ty, 8, NAVY, { bold: true, align: 'right' });
   });
 }
 
@@ -375,38 +364,6 @@ function ehcPageTwo(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReport
   footer(c, n, total, 'Sources: Stripe, HubSpot, Google Ads');
 }
 
-function etzPage(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReportData, total: number, n: number) {
-  const e = d.etz!;
-  const page = pdf.addPage([W, H]);
-  const c = new Canvas(page, reg, bold);
-  header(c, 'EXECUTIVE SUMMARY  |  EXCEL TEST ZONE', 'Free trials and orders', d, BLUE);
-
-  const gap = 10, tw = (CW - 2 * gap) / 3, th = 66, top1 = 86, top2 = top1 + th + gap;
-  const rev = vsLastYear(e.revenue.cur, e.revenue.prior, money);
-  const ord = vsLastYear(e.orders.cur, e.orders.prior, v => NUM.format(v));
-  const trl = vsLastYear(e.trials.cur, e.trials.prior, v => NUM.format(v));
-  const ttpDiff = e.trialToPaid.cur - e.trialToPaid.prior;
-  const yLabel = d.yesterdayLabel.replace(/ \d{4}$/, '');
-  tile(c, M, top1, tw, th, `Yesterday, ${yLabel}`, money(e.yesterday.revenue), `${NUM.format(e.yesterday.orders)} orders | 7-day avg ${money(e.yesterday.avg7)} a day`, MUTED, TINT);
-  tile(c, M + tw + gap, top1, tw, th, 'Revenue, month to date', money(e.revenue.cur), rev.text, rev.color, TINT);
-  tile(c, M + 2 * (tw + gap), top1, tw, th, 'Paid orders, month to date', NUM.format(e.orders.cur), `${ord.text.replace(' last year', '')} | AOV ${money(e.aov.cur)}`, ord.color, TINT);
-  tile(c, M, top2, tw, th, 'New free trials, this month', NUM.format(e.trials.cur), trl.text, trl.color, TINT);
-  tile(c, M + tw + gap, top2, tw, th, 'Free trial to paid', `${Math.round(e.trialToPaid.cur)}%`,
-    e.trials.prior > 0 ? `${ttpDiff >= 0 ? '+' : '-'}${Math.abs(ttpDiff).toFixed(0)} pts vs ${Math.round(e.trialToPaid.prior)}% last year` : 'no comparison last year',
-    e.trials.prior > 0 ? (ttpDiff >= 0 ? GOOD : BAD) : MUTED, TINT);
-  const pctOfTarget = e.target.monthlyTarget > 0 ? (e.revenue.cur / e.target.monthlyTarget) * 100 : 0;
-  tile(c, M + 2 * (tw + gap), top2, tw, th, 'Month revenue target', `${Math.round(pctOfTarget)}%`,
-    `${money(e.revenue.cur)} of ${money(e.target.monthlyTarget)} (${Math.round(e.target.monthPctElapsed)}% of month gone)`, MUTED, TINT);
-
-  dailyChartBlock(c, e.daily, e.trend, BLUE, 252, 270);
-  callout(c, 650, 'How to read these numbers', [
-    'Yesterday is the full previous day (Sydney time). Month to date runs from the 1st through the end of yesterday and is compared with the same dates last year.',
-    `New free trials counts every trial started in the period, including those that have already paid. ${NUM.format(e.trials.schoolImports)} of this period's ${NUM.format(e.trials.cur)} are bulk school imports.`,
-    'Free trial to paid is paid orders divided by trials started in the same period. It is a simple ratio, not a strict conversion rate.',
-  ], '#F6F8FA', undefined, NAVY, INK);
-  footer(c, n, total, 'Sources: Stripe, HubSpot');
-}
-
 export async function renderExecReport(d: ExecReportData): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   pdf.setTitle(`Executive summary ${d.periodLabel}`);
@@ -414,9 +371,15 @@ export async function renderExecReport(d: ExecReportData): Promise<Uint8Array> {
   pdf.setSubject('Excel HSC Copilot executive summary');
   const reg = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const total = d.etz ? 3 : 2;
+  const total = 2;
   ehcPageOne(pdf, reg, bold, d, total, 1);
   ehcPageTwo(pdf, reg, bold, d, total, 2);
-  if (d.etz) etzPage(pdf, reg, bold, d, total, 3);
   return pdf.save();
 }
+
+export type { DailyPoint, Trend };
+export {
+  Canvas, header, footer, tile, callout, barList, keyValueRows, dailyChartBlock, niceMax,
+  INK, MUTED, HAIR, WHITE, NAVY, BLUE, TINT, GOOD, BAD, WARN_BG, WARN_LINE, WARN_TEXT,
+  W, H, M, CW, hex, NUM, money, shortDate, pctChange, signed,
+};

@@ -4,7 +4,7 @@
  *
  * The PDF is emailed at about 9:30am, so everything covers COMPLETE days only: "yesterday" is the daily figure,
  * "month to date" runs through the end of yesterday, and it is compared with the same dates last year.
- * It is an Excel HSC Copilot report. Excel Test Zone is kept behind `includeEtz` for when it is wanted again.
+ * It is an Excel HSC Copilot report; the Excel Test Zone report is lib/etz-report-data.ts.
  *  - EHC orders are split into new (first payment of a new subscription), recurring (renewals) and annual plans
  *  - Subscriber counts come from every Stripe subscription (fully paginated)
  *  - Deals and subjects are this month's HubSpot deals only
@@ -12,23 +12,22 @@
  * figure: if it cannot be read the report says "not available" rather than failing.
  */
 import {
-  fetchETZStripeRevenue, fetchETZDailyRevenue, fetchHSCClassifiedDaily, fetchHSCSubscriptionSummary, zonedDateTimeToUnix,
+  fetchHSCClassifiedDaily, fetchHSCSubscriptionSummary, zonedDateTimeToUnix,
   type ClassifiedDay, type OrderBucket,
 } from '@/lib/stripe-revenue';
-import { fetchTrialConversion, fetchOfflineTrials } from '@/lib/hubspot-trials';
 import { fetchEhcMonthDeals, fetchLastFreeTrialDate } from '@/lib/ehc-overview';
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
-import { ETZ_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_REVENUE_TARGETS } from '@/lib/constants';
+import { HSC_MONTHLY_REVENUE_TARGETS } from '@/lib/constants';
 import type { ExecReportData } from '@/lib/exec-report-pdf';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-function sydneyToday(): string {
+export function sydneyToday(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 
-function addDays(ymd: string, n: number): string {
+export function addDays(ymd: string, n: number): string {
   const d = new Date(`${ymd}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
@@ -41,25 +40,25 @@ function subYear(ymd: string): string {
   return `${y! - 1}-${String(m).padStart(2, '0')}-${String(Math.min(d!, last)).padStart(2, '0')}`;
 }
 
-function rangeLabel(s: string, e: string): string {
+export function rangeLabel(s: string, e: string): string {
   const [, sm, sd] = s.split('-').map(Number);
   const [ey, em, ed] = e.split('-').map(Number);
   return sm === em ? `${sd}-${ed} ${MONTHS[em! - 1]} ${ey}` : `${sd} ${MONTHS[sm! - 1]}-${ed} ${MONTHS[em! - 1]} ${ey}`;
 }
 
-function dayLabel(ymd: string): string {
+export function dayLabel(ymd: string): string {
   const [y, m, d] = ymd.split('-').map(Number);
   const dow = new Date(`${ymd}T12:00:00Z`).getUTCDay();
   return `${WEEKDAYS[dow]} ${d} ${MONTHS[m! - 1]} ${y}`;
 }
 
-const msRange = (s: string, e: string) => ({
+export const msRange = (s: string, e: string) => ({
   startMs: zonedDateTimeToUnix(s, '00:00:00') * 1000,
   endMs: zonedDateTimeToUnix(e, '23:59:59') * 1000,
 });
 
-const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
-const round2 = (n: number) => Math.round(n * 100) / 100;
+export const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+export const round2 = (n: number) => Math.round(n * 100) / 100;
 
 type Kind = 'new' | 'recurring' | 'annual' | 'other';
 const KINDS: Kind[] = ['new', 'recurring', 'annual', 'other'];
@@ -86,7 +85,7 @@ async function optionalGoogleSpend(start: string, end: string): Promise<number |
   }
 }
 
-export async function gatherExecReportData(options: { includeEtz?: boolean } = {}): Promise<ExecReportData> {
+export async function gatherExecReportData(): Promise<ExecReportData> {
   const today = sydneyToday();
   const yesterday = addDays(today, -1);
   const monthStart = `${yesterday.slice(0, 7)}-01`;
@@ -157,39 +156,5 @@ export async function gatherExecReportData(options: { includeEtz?: boolean } = {
     },
   };
 
-  if (options.includeEtz) {
-    const cur = msRange(monthStart, yesterday), ly = msRange(lyStart, lyEnd);
-    const [etzRevC, etzRevL, trialC, trialL, offlineC, etzDaily] = await Promise.all([
-      fetchETZStripeRevenue(yesterday.slice(0, 7), { accurate: false, dateRange: { start: monthStart, end: yesterday } }),
-      fetchETZStripeRevenue(lyEnd.slice(0, 7), { accurate: false, dateRange: { start: lyStart, end: lyEnd } }),
-      fetchTrialConversion('etz', cur.startMs, cur.endMs),
-      fetchTrialConversion('etz', ly.startMs, ly.endMs),
-      fetchOfflineTrials('etz', cur.startMs, cur.endMs),
-      fetchETZDailyRevenue(day90, yesterday),
-    ]);
-    for (const [name, r] of [['ETZ revenue', etzRevC], ['ETZ last-year revenue', etzRevL]] as const) {
-      if (!r.connected) throw new Error(`${name} source (Stripe) is not connected`);
-    }
-    const eSeries: { date: string; revenue: number; ma7: number | null; partial: boolean }[] = [];
-    for (let i = 0; i < 90; i++) {
-      const date = addDays(day90, i);
-      eSeries.push({ date, revenue: etzDaily[date]?.revenue ?? 0, ma7: null, partial: false });
-    }
-    eSeries.forEach((p, i) => { if (i >= 6) p.ma7 = avg(eSeries.slice(i - 6, i + 1).map(x => x.revenue)); });
-    const e30 = avg(eSeries.slice(-30).map(p => p.revenue)), ep30 = avg(eSeries.slice(-60, -30).map(p => p.revenue));
-    const trialsCur = trialC.totalEverStarted, trialsLy = trialL.totalEverStarted;
-    const ordersCur = etzRevC.totalOrders, ordersLy = etzRevL.totalOrders;
-    data.etz = {
-      yesterday: { revenue: etzDaily[yesterday]?.revenue ?? 0, orders: etzDaily[yesterday]?.orders ?? 0, avg7: avg(eSeries.slice(-7).map(p => p.revenue)) },
-      revenue: { cur: etzRevC.totalRevenue, prior: etzRevL.totalRevenue },
-      orders: { cur: ordersCur, prior: ordersLy },
-      aov: { cur: ordersCur > 0 ? etzRevC.totalRevenue / ordersCur : 0, prior: ordersLy > 0 ? etzRevL.totalRevenue / ordersLy : 0 },
-      trials: { cur: trialsCur, prior: trialsLy, schoolImports: offlineC.ever },
-      trialToPaid: { cur: trialsCur > 0 ? (ordersCur / trialsCur) * 100 : 0, prior: trialsLy > 0 ? (ordersLy / trialsLy) * 100 : 0 },
-      target: { monthlyTarget: ETZ_MONTHLY_REVENUE_TARGETS[tm!] ?? 0, monthPctElapsed: (td! / daysInMonth) * 100 },
-      daily: eSeries,
-      trend: { last30Avg: e30, prior30Avg: ep30, last30Change: ep30 > 0 ? ((e30 - ep30) / ep30) * 100 : null },
-    };
-  }
   return data;
 }

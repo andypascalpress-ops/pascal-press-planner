@@ -11,14 +11,12 @@ import { NextResponse } from 'next/server';
 import { fetchETZStripeRevenue, fetchStripeProductMap, zonedDateTimeToUnix } from '@/lib/stripe-revenue';
 import { fetchChannelRevenue, fetchEtzFunnelTraffic, fetchEtzAppTraffic, fetchEtzSiteEngagement } from '@/lib/google-analytics';
 import { fetchTrialConversion, fetchOfflineTrials } from '@/lib/hubspot-trials';
-import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
-import { fetchMetaSpend, META_ETZ_ACCOUNT_ID } from '@/lib/meta-ads';
-import { ETZ_MONTHLY_REVENUE_TARGETS, MONTHLY_GOOGLE_BUDGETS, ETZ_CHATGPT_SPEND } from '@/lib/constants';
+import { etzSpend } from '@/lib/etz-spend';
+import { ETZ_MONTHLY_REVENUE_TARGETS, MONTHLY_GOOGLE_BUDGETS } from '@/lib/constants';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const ETZ_START_MONTH = '2026-07';
 const STRIPE_ETZ = process.env.STRIPE_SECRET_KEY ?? '';
 
 function toYMD(d: Date): string {
@@ -50,24 +48,6 @@ function subMonths(ymd: string, n: number): string {
   while (nm < 1) { nm += 12; ny--; }
   const last = new Date(ny, nm, 0).getDate();
   return `${ny}-${String(nm).padStart(2, '0')}-${String(Math.min(d!, last)).padStart(2, '0')}`;
-}
-
-async function etzSpend(start: string, end: string) {
-  const month = end.slice(0, 7);
-  let google = 0;
-  let meta = 0;
-  let googleOk = true;
-  let metaOk = true;
-  try {
-    const cfg = month >= ETZ_START_MONTH ? buildConfig('etz') : buildConfig('pp');
-    const filter = month >= ETZ_START_MONTH ? undefined : { contains: 'ETZ' };
-    google = (await fetchMonthlySpend(cfg, start, end, filter)).reduce((s, r) => s + r.actualSpend, 0);
-  } catch { googleOk = false; }
-  try {
-    meta = await fetchMetaSpend(META_ETZ_ACCOUNT_ID, start, end, { contains: 'ETZ' });
-  } catch { metaOk = false; }
-  const chatgpt = ETZ_CHATGPT_SPEND[month] ?? 0;
-  return { google, meta, chatgpt, total: google + meta + chatgpt, googleOk, metaOk };
 }
 
 const pct = (cur: number, prev: number) => (prev > 0 ? Math.round(((cur - prev) / prev) * 1000) / 10 : null);
