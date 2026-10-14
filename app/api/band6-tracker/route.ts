@@ -58,6 +58,30 @@ function bcHeaders() {
   };
 }
 
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+const lookupStats = { failed: 0, retried: 0, statuses: {} as Record<string, number> };
+
+/** Line items for one order. Retries rate limits and server errors; null means it still failed (counted, never silent). */
+async function fetchLineItems(orderId: number): Promise<any[] | null> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const r = await fetch(`${BC_BASE}/orders/${orderId}/products?limit=250`, { headers: bcHeaders() });
+      if (r.ok) { const j = await r.json(); return Array.isArray(j) ? j : []; }
+      if (r.status === 204 || r.status === 404) return [];
+      lookupStats.statuses[String(r.status)] = (lookupStats.statuses[String(r.status)] ?? 0) + 1;
+      if (r.status !== 429 && r.status < 500) break;
+      lookupStats.retried += 1;
+      const wait = Number(r.headers.get('X-Rate-Limit-Time-Reset-Ms')) || 400 * 2 ** attempt;
+      await sleep(Math.min(wait, 4000));
+    } catch {
+      lookupStats.retried += 1;
+      await sleep(400 * 2 ** attempt);
+    }
+  }
+  lookupStats.failed += 1;
+  return null;
+}
+
 async function fetchAllOrderPages(params: Record<string, string>): Promise<BCOrder[]> {
   const results: BCOrder[] = [];
   let page = 1;
@@ -136,6 +160,7 @@ async function findBand6Products(): Promise<BCCatalogProduct[]> {
 }
 
 export async function GET(request: Request) {
+  lookupStats.failed = 0; lookupStats.retried = 0; lookupStats.statuses = {};
   if (!STORE_HASH || !ACCESS_TOKEN) {
     return NextResponse.json({ connected: false, error: 'BigCommerce not configured' });
   }
@@ -194,18 +219,14 @@ export async function GET(request: Request) {
     for (let i = 0; i < validOrders.length; i += BATCH) {
       const batch = validOrders.slice(i, i + BATCH);
       const results = await Promise.allSettled(
-        batch.map(order =>
-          fetch(`${BC_BASE}/orders/${order.id}/products?limit=250`, { headers: bcHeaders() })
-            .then(r => r.ok ? (r.json() as Promise<any[]>) : Promise.resolve([] as any[]))
-            .catch(() => [] as any[]),
-        ),
+        batch.map(order => fetchLineItems(order.id)),
       );
 
       for (let j = 0; j < batch.length; j++) {
         const order = batch[j]!;
         const result = results[j];
         if (result?.status !== 'fulfilled') continue;
-        const lineItems: any[] = Array.isArray(result.value) ? result.value : [];
+        const lineItems: any[] = Array.isArray(result.value) ? result.value : [];  // null = lookup failed, counted in lookupStats
 
         const matched: Array<{ li: any; match: 'product_id' | 'name' }> = [];
         for (const li of lineItems) {
@@ -351,6 +372,7 @@ export async function GET(request: Request) {
       method:         'line_items total_inc_tax (fallback price_inc_tax × qty), GST-inclusive',
       orderWindow:    { min: `${START_DATE}T00:00:00+10:00`, max: `${today}T23:59:59+10:00` },
       validOrderCount: validOrders.length,
+      lookups: { failedOrders: lookupStats.failed, retries: lookupStats.retried, errorStatuses: lookupStats.statuses },
       catalogMatchCount: products.length,
     };
     if (debug) {
