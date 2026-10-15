@@ -51,7 +51,7 @@ function pageOne(pdf: PDFDocument, reg: any, bold: any, d: EtzReportData, total:
     t.monthlyTarget > 0 ? `target ${money(t.monthlyTarget)} | ${Math.round(pctTarget)}% reached so far` : 'straight-line projection', MUTED, TINT);
   top += th + gap;
   tile(c, M, top, tw, th, 'Paid orders, month to date', NUM.format(d.orders.cur), `${ord.text.replace(' last month', '')} | avg order ${money(d.aov.cur)}`, ord.color, TINT);
-  tile(c, M + tw + gap, top, tw, th, 'New free trials', NUM.format(d.trials.cur), trl.text, trl.color, TINT);
+  tile(c, M + tw + gap, top, tw, th, 'Free trials started', NUM.format(d.trials.cur), trl.text, trl.color, TINT);
   tile(c, M + 2 * (tw + gap), top, tw, th, 'Free trial to paid', d.trialToPaid.pct === null ? 'n/a' : `${d.trialToPaid.pct}%`,
     d.trialToPaid.measured > 0 ? `${NUM.format(d.trialToPaid.converted)} of ${NUM.format(d.trialToPaid.measured)} trials have paid` : 'no trials yet', MUTED, TINT);
   top += th + 22;
