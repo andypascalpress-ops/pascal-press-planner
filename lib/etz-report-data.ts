@@ -27,7 +27,8 @@ export interface EtzReportData {
   orders: { cur: number; prior: number };
   aov: { cur: number; prior: number };
   trials: { cur: number; prior: number; schoolImports: number; stillTrialing: number };
-  trialToPaid: { converted: number; measured: number; pct: number | null; priorPct: number | null };
+  /** Stripe paid orders divided by free trials started (HubSpot), this month and the same days last month. */
+  trialToPaid: { orders: number; trials: number; pct: number | null; priorOrders: number; priorTrials: number; priorPct: number | null };
   target: { monthlyTarget: number; projected: number; daysElapsed: number; daysInMonth: number };
   daily: DailyPoint[];
   trend: Trend;
@@ -136,7 +137,10 @@ export async function gatherEtzReportData(): Promise<EtzReportData> {
     orders: { cur: orders, prior: ordersP },
     aov: { cur: orders > 0 ? revenue / orders : 0, prior: ordersP > 0 ? revP.totalRevenue / ordersP : 0 },
     trials: { cur: trialC.totalEverStarted, prior: trialP.totalEverStarted, schoolImports: offlineC.ever, stillTrialing: trialC.trialsStarted },
-    trialToPaid: { converted: trialC.converted, measured: trialC.totalEverStarted, pct: trialC.pct, priorPct: trialP.pct },
+    trialToPaid: {
+      orders, trials: trialC.totalEverStarted, pct: trialC.totalEverStarted > 0 ? Math.round((orders / trialC.totalEverStarted) * 100) : null,
+      priorOrders: ordersP, priorTrials: trialP.totalEverStarted, priorPct: trialP.totalEverStarted > 0 ? Math.round((ordersP / trialP.totalEverStarted) * 100) : null,
+    },
     target: { monthlyTarget: ETZ_MONTHLY_REVENUE_TARGETS[tm!] ?? 0, projected, daysElapsed: td!, daysInMonth },
     daily: series,
     trend: { last30Avg: l30, prior30Avg: p30, last30Change: p30 > 0 ? ((l30 - p30) / p30) * 100 : null },

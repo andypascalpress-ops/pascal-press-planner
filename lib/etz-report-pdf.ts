@@ -34,7 +34,7 @@ function pageOne(pdf: PDFDocument, reg: any, bold: any, d: EtzReportData, total:
     `• Month to date: ${money(d.revenue.cur)} from ${NUM.format(d.orders.cur)} orders${revChange === null ? '' : `, ${signed(revChange)} on the same days last month`}.` +
       (t.monthlyTarget > 0 ? ` At the current daily pace the month ends near ${money(t.projected)} against a ${money(t.monthlyTarget)} target.` : ''),
     `• Free trials: ${NUM.format(d.trials.cur)} started this month` +
-      (d.trialToPaid.measured > 0 ? `, and ${NUM.format(d.trialToPaid.converted)} of them (${d.trialToPaid.pct ?? 0}%) have already paid.` : '.') +
+      (d.trialToPaid.trials > 0 ? `. There were ${NUM.format(d.trialToPaid.orders)} paid orders (${d.trialToPaid.pct ?? 0}% of the trials started).` : '.') +
       (d.trials.schoolImports > 0 ? ` ${NUM.format(d.trials.schoolImports)} of the trials are bulk school sign-ups.` : ''),
   ];
   if (d.spend && d.spend.total > 0) {
@@ -53,7 +53,9 @@ function pageOne(pdf: PDFDocument, reg: any, bold: any, d: EtzReportData, total:
   tile(c, M, top, tw, th, 'Paid orders, month to date', NUM.format(d.orders.cur), `${ord.text.replace(' last month', '')} | avg order ${money(d.aov.cur)}`, ord.color, TINT);
   tile(c, M + tw + gap, top, tw, th, 'Free trials started', NUM.format(d.trials.cur), trl.text, trl.color, TINT);
   tile(c, M + 2 * (tw + gap), top, tw, th, 'Free trial to paid', d.trialToPaid.pct === null ? 'n/a' : `${d.trialToPaid.pct}%`,
-    d.trialToPaid.measured > 0 ? `${NUM.format(d.trialToPaid.converted)} of ${NUM.format(d.trialToPaid.measured)} trials have paid` : 'no trials yet', MUTED, TINT);
+    d.trialToPaid.trials > 0
+      ? `${NUM.format(d.trialToPaid.orders)} paid orders from ${NUM.format(d.trialToPaid.trials)} trials` + (d.trialToPaid.priorPct !== null ? ` | ${d.trialToPaid.priorPct}% last month` : '')
+      : 'no trials yet', MUTED, TINT);
   top += th + 22;
 
   dailyChartBlock(c, d.daily, d.trend, BLUE, top, 340);
@@ -135,7 +137,7 @@ function pageTwo(pdf: PDFDocument, reg: any, bold: any, d: EtzReportData, total:
 
   callout(c, Math.min(y, 640), 'How to read these numbers', [
     'Yesterday is the full previous day (Sydney time). Month to date runs from the 1st through the end of yesterday and is compared with the same days last month. Revenue and orders are from Stripe.',
-    `New free trials counts every trial started this month, including those that have since paid.${d.trials.schoolImports > 0 ? ` ${NUM.format(d.trials.schoolImports)} of the ${NUM.format(d.trials.cur)} are bulk school sign-ups.` : ''} Free trial to paid is the share of those trials that have paid so far; recent trials may still be in progress. Free trial figures come from HubSpot.`,
+    `New free trials counts every trial started this month, including those that have since paid.${d.trials.schoolImports > 0 ? ` ${NUM.format(d.trials.schoolImports)} of the ${NUM.format(d.trials.cur)} are bulk school sign-ups.` : ''} Free trial to paid is paid orders (Stripe) divided by free trials started (HubSpot), compared with the same days last month. It is a simple ratio: orders can include customers who bought without a trial, and recent trials may still be in progress.`,
     'Visits, bounce rate and sales by channel come from Google Analytics for the production website and app only, so channel revenue can differ a little from Stripe revenue.',
   ], '#F6F8FA', undefined, NAVY, INK, 7.8);
 

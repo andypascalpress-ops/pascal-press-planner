@@ -118,8 +118,9 @@ export async function GET(request: Request) {
       paidPrior: compTrial?.converted ?? 0,
     },
     trialToPaid: {
-      current: curTrial  ? { converted: curTrial.converted,  totalEverStarted: curTrial.totalEverStarted,  pct: curTrial.pct  } : null,
-      prior:   compTrial ? { converted: compTrial.converted, totalEverStarted: compTrial.totalEverStarted, pct: compTrial.pct } : null,
+      // Stripe paid orders divided by free trials started (HubSpot); `converted` holds the paid-order count
+      current: curTrial  ? { converted: curOrders,  totalEverStarted: curTrial.totalEverStarted,  pct: curTrial.totalEverStarted  > 0 ? Math.round((curOrders  / curTrial.totalEverStarted)  * 100) : null } : null,
+      prior:   compTrial ? { converted: compOrders, totalEverStarted: compTrial.totalEverStarted, pct: compTrial.totalEverStarted > 0 ? Math.round((compOrders / compTrial.totalEverStarted) * 100) : null } : null,
     },
     bestChannel: bestChannel ? { name: bestChannel.channel, revenue: bestChannel.revenue, pct: bestChannel.pct } : null,
     channels: channels?.items ?? [],

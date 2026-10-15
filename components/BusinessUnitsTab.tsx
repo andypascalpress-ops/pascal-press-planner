@@ -512,7 +512,7 @@ export default function BusinessUnitsTab() {
             {(brand === 'etz' || brand === 'ehc') && data.current.trialsStarted !== null && (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <MetricCard label="Free Trials Started" value={data.current.trialsStarted} prevValue={data.prev.trialsStarted} fmt="number"
-                  detail={data.current.trialsPaid != null && data.current.trialsStillTrialing != null ? `${NUM.format(data.current.trialsStillTrialing)} still trialing, ${NUM.format(data.current.trialsPaid)} have paid` : undefined} />
+                  detail="every trial started, incl. school imports" />
               </div>
             )}
 
@@ -864,7 +864,7 @@ function MonthlyUpdateSection({
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <MetricCard label="Revenue"        value={data.revenue.current} prevValue={data.revenue.prior} fmt="currency" />
             <MetricCard label="Free Trials Started" value={data.trials.current}  prevValue={data.trials.prior}  fmt="number"
-              detail={`${NUM.format(data.trials.stillTrialing)} still trialing, ${NUM.format(data.trials.paid)} have paid`} />
+              detail="every trial started, incl. school imports" />
             <MetricCard label="Orders"         value={data.orders.current}  prevValue={data.orders.prior}  fmt="number"   />
           </div>
 
@@ -878,7 +878,7 @@ function MonthlyUpdateSection({
                 </p>
                 {data.trialToPaid.current && (
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {NUM.format(data.trialToPaid.current.converted)} of {NUM.format(data.trialToPaid.current.totalEverStarted)} trials have paid
+                    {NUM.format(data.trialToPaid.current.converted)} paid orders from {NUM.format(data.trialToPaid.current.totalEverStarted)} trials started
                   </p>
                 )}
                 <p className="text-[10px] text-gray-400 mt-1">{data.month.label}</p>
@@ -889,14 +889,14 @@ function MonthlyUpdateSection({
                 </p>
                 {data.trialToPaid.prior && (
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {NUM.format(data.trialToPaid.prior.converted)} of {NUM.format(data.trialToPaid.prior.totalEverStarted)} trials have paid
+                    {NUM.format(data.trialToPaid.prior.converted)} paid orders from {NUM.format(data.trialToPaid.prior.totalEverStarted)} trials started
                   </p>
                 )}
                 <p className="text-[10px] text-gray-400 mt-1">{data.comparisonMonth.label}</p>
               </div>
             </div>
             <p className="text-[10px] text-gray-400 mt-3">
-              Free trials that have paid ÷ free trials started. Recent trials may still be trialing, so this % can rise as the month goes on; last year's had time to settle.
+              Paid orders (Stripe) ÷ free trials started (HubSpot). A simple ratio: orders can include people who bought without a trial, and recent trials may still be in progress.
             </p>
           </div>
 
