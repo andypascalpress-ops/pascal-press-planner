@@ -108,9 +108,14 @@ export async function GET(request: Request) {
     revenue: { current: curRevenue, prior: compRevenue, pctChange: pctChange(curRevenue, compRevenue) },
     orders:  { current: curOrders,  prior: compOrders,  pctChange: pctChange(curOrders, compOrders) },
     trials: {
-      current: curTrial?.trialsStarted  ?? 0,
-      prior:   compTrial?.trialsStarted ?? 0,
-      pctChange: pctChange(curTrial?.trialsStarted ?? 0, compTrial?.trialsStarted ?? 0),
+      // every trial started in the month, including those that have since paid
+      current: curTrial?.totalEverStarted  ?? 0,
+      prior:   compTrial?.totalEverStarted ?? 0,
+      pctChange: pctChange(curTrial?.totalEverStarted ?? 0, compTrial?.totalEverStarted ?? 0),
+      stillTrialing: curTrial?.trialsStarted ?? 0,
+      stillTrialingPrior: compTrial?.trialsStarted ?? 0,
+      paid: curTrial?.converted ?? 0,
+      paidPrior: compTrial?.converted ?? 0,
     },
     trialToPaid: {
       current: curTrial  ? { converted: curTrial.converted,  totalEverStarted: curTrial.totalEverStarted,  pct: curTrial.pct  } : null,

@@ -20,6 +20,8 @@ interface BUMetrics {
   returningCustomers: number;
   cac: number | null;
   trialsStarted: number | null;
+  trialsStillTrialing?: number | null;
+  trialsPaid?: number | null;
 }
 
 interface BUProduct {
@@ -105,12 +107,13 @@ function DeltaBadge({ cur, prev }: { cur: number | null; prev: number | null }) 
 }
 
 function MetricCard({
-  label, value, prevValue, fmt = 'currency',
+  label, value, prevValue, fmt = 'currency', detail,
 }: {
   label: string;
   value: number | null;
   prevValue?: number | null;
   fmt?: 'currency' | 'number' | 'roas';
+  detail?: string;
 }) {
   const fmt$ = (v: number | null) =>
     v == null ? '—' :
@@ -128,6 +131,7 @@ function MetricCard({
       {prevValue != null && (
         <p className="text-[11px] text-gray-400 mt-0.5">prev {fmt$(prevValue)}</p>
       )}
+      {detail && <p className="text-[11px] text-gray-500 mt-0.5">{detail}</p>}
     </div>
   );
 }
@@ -194,7 +198,7 @@ interface MonthlyUpdateData {
   comparisonMonth: { key: string; start: string; end: string; label: string };
   revenue: MonthlyMetric;
   orders: MonthlyMetric;
-  trials: MonthlyMetric;
+  trials: MonthlyMetric & { stillTrialing: number; stillTrialingPrior: number; paid: number; paidPrior: number };
   trialToPaid: { current: MonthlyConversionSide | null; prior: MonthlyConversionSide | null };
   bestChannel: { name: string; revenue: number; pct: number } | null;
   channels: MonthlyChannel[];
@@ -507,7 +511,8 @@ export default function BusinessUnitsTab() {
 
             {(brand === 'etz' || brand === 'ehc') && data.current.trialsStarted !== null && (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <MetricCard label="Trials Started" value={data.current.trialsStarted} prevValue={data.prev.trialsStarted} fmt="number" />
+                <MetricCard label="Free Trials Started" value={data.current.trialsStarted} prevValue={data.prev.trialsStarted} fmt="number"
+                  detail={data.current.trialsPaid != null && data.current.trialsStillTrialing != null ? `${NUM.format(data.current.trialsStillTrialing)} still trialing, ${NUM.format(data.current.trialsPaid)} have paid` : undefined} />
               </div>
             )}
 
@@ -858,7 +863,8 @@ function MonthlyUpdateSection({
 
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <MetricCard label="Revenue"        value={data.revenue.current} prevValue={data.revenue.prior} fmt="currency" />
-            <MetricCard label="Trials Started" value={data.trials.current}  prevValue={data.trials.prior}  fmt="number"   />
+            <MetricCard label="Free Trials Started" value={data.trials.current}  prevValue={data.trials.prior}  fmt="number"
+              detail={`${NUM.format(data.trials.stillTrialing)} still trialing, ${NUM.format(data.trials.paid)} have paid`} />
             <MetricCard label="Orders"         value={data.orders.current}  prevValue={data.orders.prior}  fmt="number"   />
           </div>
 
@@ -872,8 +878,7 @@ function MonthlyUpdateSection({
                 </p>
                 {data.trialToPaid.current && (
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {NUM.format(data.trialToPaid.current.converted)} converted to paid,{' '}
-                    {NUM.format(data.trials.current)} still trialing or unconverted
+                    {NUM.format(data.trialToPaid.current.converted)} of {NUM.format(data.trialToPaid.current.totalEverStarted)} trials have paid
                   </p>
                 )}
                 <p className="text-[10px] text-gray-400 mt-1">{data.month.label}</p>
@@ -884,15 +889,14 @@ function MonthlyUpdateSection({
                 </p>
                 {data.trialToPaid.prior && (
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {NUM.format(data.trialToPaid.prior.converted)} converted to paid,{' '}
-                    {NUM.format(data.trials.prior)} still trialing or unconverted
+                    {NUM.format(data.trialToPaid.prior.converted)} of {NUM.format(data.trialToPaid.prior.totalEverStarted)} trials have paid
                   </p>
                 )}
                 <p className="text-[10px] text-gray-400 mt-1">{data.comparisonMonth.label}</p>
               </div>
             </div>
             <p className="text-[10px] text-gray-400 mt-3">
-              % = converted ÷ (converted + Trials Started above) — e.g. this month: {data.trialToPaid.current ? NUM.format(data.trialToPaid.current.converted) : '—'} converted ÷ ({data.trialToPaid.current ? NUM.format(data.trialToPaid.current.converted) : '—'} + {NUM.format(data.trials.current)} still trialing) = {data.trialToPaid.current?.pct ?? '—'}%. It&apos;s a live snapshot, not final — the still-trialing count keeps shrinking (and converted keeps rising) as this month&apos;s trials resolve, so this % will keep changing. Last year&apos;s had a full year to settle.
+              Free trials that have paid ÷ free trials started. Recent trials may still be trialing, so this % can rise as the month goes on; last year's had time to settle.
             </p>
           </div>
 

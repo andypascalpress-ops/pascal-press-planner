@@ -12,7 +12,7 @@ import { fetchETZStripeRevenue, fetchHSCStripeRevenue, fetchStripeProductMap, fe
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
 import { fetchMetaSpend, META_PP_ACCOUNT_ID, META_ETZ_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
 import { PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
-import { fetchTrialsStartedInRange } from '@/lib/hubspot-trials';
+import { fetchTrialConversion } from '@/lib/hubspot-trials';
 
 export const dynamic = 'force-dynamic';
 
@@ -395,10 +395,10 @@ export async function GET(request: Request) {
         ? fetchStripeSubscriptionMetrics(brand === 'etz' ? STRIPE_ETZ : STRIPE_HSC, brand)
         : Promise.resolve(null),
       hasTrials
-        ? fetchTrialsStartedInRange(trialsPipelineLabel, curTrialsRangeMs.startMs, curTrialsRangeMs.endMs)
+        ? fetchTrialConversion(trialsPipelineLabel, curTrialsRangeMs.startMs, curTrialsRangeMs.endMs)
         : Promise.resolve(null),
       hasTrials
-        ? fetchTrialsStartedInRange(trialsPipelineLabel, compTrialsRangeMs.startMs, compTrialsRangeMs.endMs)
+        ? fetchTrialConversion(trialsPipelineLabel, compTrialsRangeMs.startMs, compTrialsRangeMs.endMs)
         : Promise.resolve(null),
       ...sparkDays.map(d => fetchRev(d, d)),
     ]);
@@ -425,8 +425,8 @@ export async function GET(request: Request) {
     brand, range, yoy,
     period:      { start: cur.start,  end: cur.end,  label: cur.label  },
     comparison:  { start: comp.start, end: comp.end, label: comp.label },
-    current:     { ...buildMetrics(curRev,  curSpend),  trialsStarted: curTrials  },
-    prev:        { ...buildMetrics(compRev, compSpend), trialsStarted: compTrials },
+    current:     { ...buildMetrics(curRev,  curSpend),  trialsStarted: curTrials ? curTrials.totalEverStarted : null, trialsStillTrialing: curTrials?.trialsStarted ?? null, trialsPaid: curTrials?.converted ?? null },
+    prev:        { ...buildMetrics(compRev, compSpend), trialsStarted: compTrials ? compTrials.totalEverStarted : null, trialsStillTrialing: compTrials?.trialsStarted ?? null, trialsPaid: compTrials?.converted ?? null },
     products,
     subscriptions: subs,
     sparkline,
