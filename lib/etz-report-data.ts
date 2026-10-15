@@ -13,7 +13,7 @@ import { fetchETZStripeRevenue, fetchETZDailyRevenue, fetchStripeProductMap } fr
 import { fetchTrialConversion, fetchOfflineTrials } from '@/lib/hubspot-trials';
 import { fetchEtzSiteEngagement, fetchEtzFunnelTraffic, fetchChannelRevenue, type EtzEngagement } from '@/lib/google-analytics';
 import { etzSpend } from '@/lib/etz-spend';
-import { ETZ_MONTHLY_REVENUE_TARGETS } from '@/lib/constants';
+import { ETZ_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_MARKETING_BUDGET } from '@/lib/constants';
 import { sydneyToday, addDays, rangeLabel, dayLabel, msRange, avg, round2 } from '@/lib/exec-report-data';
 import type { DailyPoint, Trend } from '@/lib/exec-report-pdf';
 
@@ -36,6 +36,7 @@ export interface EtzReportData {
   channels: { channel: string; sessions: number; orders: number; revenue: number; spend: number | null }[] | null;
   engagement: { cur: EtzEngagement; prior: EtzEngagement } | null;
   spend: { google: number; meta: number; total: number; googleOk: boolean; metaOk: boolean } | null;
+  marketingBudget: number;   // total monthly marketing budget
 }
 
 /** Same day-of-month one month earlier, clamped to the shorter month. */
@@ -148,5 +149,6 @@ export async function gatherEtzReportData(): Promise<EtzReportData> {
     channels,
     engagement: engC && engP ? { cur: engC, prior: engP } : null,
     spend: spendC,
+    marketingBudget: ETZ_MONTHLY_MARKETING_BUDGET,
   };
 }

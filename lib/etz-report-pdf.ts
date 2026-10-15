@@ -129,11 +129,13 @@ function pageTwo(pdf: PDFDocument, reg: any, bold: any, d: EtzReportData, total:
       ['Google Ads spend', s.googleOk ? money(s.google) : 'not available'],
       ['Meta Ads spend', s.metaOk ? money(s.meta) : 'not available'],
       ['Revenue per $1 of ad spend', s.total > 0 ? `$${(d.revenue.cur / s.total).toFixed(2)}` : 'n/a', 'All ETZ revenue divided by all ad spend'],
+      ['Marketing budget used', d.marketingBudget > 0 ? `${money(s.total)} of ${money(d.marketingBudget)}` : 'n/a',
+        d.marketingBudget > 0 ? `${Math.round((s.total / d.marketingBudget) * 100)}% of the monthly budget, ${Math.round((d.target.daysElapsed / d.target.daysInMonth) * 100)}% of the month gone` : undefined],
     ]);
   } else {
     c.text('Ad spend could not be read today.', M + colW + 24, y + 22, 8.5, MUTED);
   }
-  y += 22 + 3 * 26 + 18;
+  y += 22 + 4 * 26 + 18;
 
   callout(c, Math.min(y, 640), 'How to read these numbers', [
     'Yesterday is the full previous day (Sydney time). Month to date runs from the 1st through the end of yesterday and is compared with the same days last month. Revenue and orders are from Stripe.',

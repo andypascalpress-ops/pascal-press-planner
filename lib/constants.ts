@@ -51,7 +51,7 @@ export type SpendBrand = typeof SPEND_BRANDS[number];
 // Full-year (annualised) draft budgets per brand — used for the Finance tab KPI card
 export const ANNUAL_BUDGETS: Record<string, number> = {
   'Pascal Press':      103400,  // Online Adv $22k + Google $42k + Facebook $28k + Mktg/PR $3.6k + Promo-Prizes $3k + Brochures $4.8k
-  'Excel Test Zone':    36000,  // Google $24k + Facebook $12k
+  'Excel Test Zone':    66000,  // $5,500/mo total marketing budget x 12 (raised from Google $24k + Facebook $12k in Oct 2026)
   'Excel HSC Copilot':  66000,  // $5,500/mo × 12
   'Blake Education':     8400,  // Google $700/mo × 12 (ads not connected yet)
 };
@@ -126,6 +126,9 @@ export const HSC_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
   11:  6981, // November
   12: 18736, // December
 };
+
+// Excel Test Zone total monthly marketing budget (Google + Meta + other paid channels). Raised to $5,500 in Oct 2026.
+export const ETZ_MONTHLY_MARKETING_BUDGET = 5500;
 
 // Excel HSC Copilot total monthly marketing budget
 export const HSC_MONTHLY_MARKETING_BUDGET = 5500;

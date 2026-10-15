@@ -12,7 +12,7 @@ import { fetchPPRevenue, fetchBlakeRevenue } from '@/lib/bigcommerce-revenue';
 import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-revenue';
 import { fetchEmailCampaigns } from '@/lib/hubspot-email';
 import { fetchPPWebsiteConversion, fetchETZWebsiteConversion } from '@/lib/google-analytics';
-import { MONTHLY_GOOGLE_BUDGETS, PP_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_REVENUE_TARGETS, BLAKE_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_MARKETING_BUDGET, PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
+import { MONTHLY_GOOGLE_BUDGETS, PP_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_REVENUE_TARGETS, BLAKE_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_MARKETING_BUDGET, ETZ_MONTHLY_MARKETING_BUDGET, PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
 import { fetchMetaSpend, META_PP_ACCOUNT_ID, META_ETZ_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
 import { OverviewAlert } from '@/lib/types';
 
@@ -371,6 +371,7 @@ export async function GET(request: Request) {
       chatgptSpend: Math.round(etzChatgptSpend * 100) / 100,
       totalSpend:   Math.round(etzTotalSpend  * 100) / 100,
       budget:        etzBudget,
+      totalMarketingBudget: ETZ_MONTHLY_MARKETING_BUDGET,
       revenue:       Math.round(etzRevenue * 100) / 100,
       revenueTarget: etzRevenueTarget,
       roas:          etzRoas,
