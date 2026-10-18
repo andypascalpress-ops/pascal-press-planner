@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
+import MonthRangePicker, { recentQuarters, monthRangeToDates, type MonthRange } from './MonthRangePicker';
 import DailyRevenueTrend from './DailyRevenueTrend';
 import EhcHubspotOverview from './EhcHubspotOverview';
 import {
@@ -8,7 +9,7 @@ import {
 } from 'recharts';
 
 type BrandKey = 'pp' | 'etz' | 'ehc' | 'blake';
-type RangeKey = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth';
+type RangeKey = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth' | 'custom';
 
 interface BUMetrics {
   revenue: number;
@@ -63,6 +64,7 @@ const RANGES: { key: RangeKey; label: string }[] = [
   { key: 'last30',    label: 'Last 30d'   },
   { key: 'mtd',       label: 'MTD'        },
   { key: 'lastmonth', label: 'Last month' },
+  { key: 'custom',    label: 'Quarter / months' },
 ];
 
 const BRAND_COLOR: Record<BrandKey, string> = {
@@ -247,6 +249,7 @@ export default function BusinessUnitsTab() {
   const [brand, setBrand] = useState<BrandKey>('pp');
   const [range, setRange] = useState<RangeKey>('last7');
   const [yoy,   setYoy]   = useState(false);
+  const [customMonths, setCustomMonths] = useState<MonthRange>(() => recentQuarters(2).find(q => !q.inProgress) ?? recentQuarters(2)[0]!);
   const [data,  setData]  = useState<BUData | null>(null);
 
   const [showMonthly,    setShowMonthly]    = useState(false);
@@ -279,7 +282,10 @@ export default function BusinessUnitsTab() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`/api/business-unit?brand=${brand}&range=${range}&yoy=${yoy}`);
+      const customQs = range === 'custom'
+        ? (() => { const d = monthRangeToDates(customMonths, todayYmdSydney()); return `&start=${d.start}&end=${d.end}`; })()
+        : '';
+      const res = await fetch(`/api/business-unit?brand=${brand}&range=${range}&yoy=${yoy}${customQs}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setData(await res.json());
     } catch (e) {
@@ -287,7 +293,7 @@ export default function BusinessUnitsTab() {
     } finally {
       setLoading(false);
     }
-  }, [brand, range, yoy]);
+  }, [brand, range, yoy, customMonths]);
 
   const loadTrend = useCallback(async () => {
     setTrendLoading(true);
@@ -306,7 +312,7 @@ export default function BusinessUnitsTab() {
     if (brand !== 'pp') return;
     setPPContactsLoading(true);
     try {
-      const res = await fetch(`/api/pp-marketing-contacts?range=${range}`);
+      const res = await fetch(`/api/pp-marketing-contacts?range=${range === 'custom' ? 'last30' : range}`);
       if (res.ok) setPPContacts(await res.json());
     } catch { /* silent */ } finally {
       setPPContactsLoading(false);
@@ -317,7 +323,7 @@ export default function BusinessUnitsTab() {
     if (brand !== 'pp') return;
     setPPSegmentsLoading(true);
     try {
-      const res = await fetch(`/api/pp-contacts-segments?range=${range}`);
+      const res = await fetch(`/api/pp-contacts-segments?range=${range === 'custom' ? 'last30' : range}`);
       if (res.ok) setPPSegments(await res.json());
     } catch { /* silent */ } finally {
       setPPSegmentsLoading(false);
@@ -461,7 +467,7 @@ export default function BusinessUnitsTab() {
           {RANGES.map(r => (
             <button
               key={r.key}
-              onClick={() => setRange(r.key)}
+              onClick={() => { setRange(r.key); if (r.key === 'custom') setYoy(true); }}
               className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
                 range === r.key
                   ? 'bg-gray-900 text-white'
@@ -472,6 +478,10 @@ export default function BusinessUnitsTab() {
             </button>
           ))}
         </div>
+
+        {range === 'custom' && (
+          <MonthRangePicker value={customMonths} onChange={setCustomMonths} accent={color} />
+        )}
 
         {/* Content */}
         {loading ? (

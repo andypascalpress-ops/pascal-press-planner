@@ -1,5 +1,7 @@
 /**
  * GET /api/business-unit?brand=pp|etz|ehc|blake&range=today|yesterday|last7|last30|mtd|lastmonth&yoy=false
+ * Also range=custom&start=YYYY-MM-DD&end=YYYY-MM-DD (e.g. a Jul-Sep quarter); with yoy=true it is compared with the
+ * same dates last year, otherwise with the equal-length period just before it.
  *
  * Returns current-period and comparison-period metrics for one business unit,
  * plus a 7-day revenue sparkline and product breakdown.
@@ -15,9 +17,10 @@ import { PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
 import { fetchTrialConversion } from '@/lib/hubspot-trials';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 type BrandParam = 'pp' | 'etz' | 'ehc' | 'blake';
-type RangeParam = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth';
+type RangeParam = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth' | 'custom';
 
 const ETZ_START_MONTH = '2026-07';
 
@@ -57,12 +60,19 @@ function subMonths(ymd: string, n: number): string {
 
 function getMonth(ymd: string): string { return ymd.slice(0, 7); }
 
-function deriveRange(range: RangeParam) {
+function fmtDay(ymd: string): string {
+  return new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+}
+
+function deriveRange(range: RangeParam, custom?: { start: string; end: string }) {
   const today = toYMD(new Date());
   const [aY, aM] = [parseInt(today.slice(0, 4)), parseInt(today.slice(5, 7))];
   const dIM = (y: number, m: number) => new Date(y, m, 0).getDate();
 
   switch (range) {
+    case 'custom':
+      if (custom) return { start: custom.start, end: custom.end, label: `${fmtDay(custom.start)} to ${fmtDay(custom.end)}` };
+      return { start: `${today.slice(0, 7)}-01`, end: today, label: 'Month to date' };
     case 'today':
       return { start: today, end: today, label: 'Today' };
     case 'yesterday': {
@@ -97,6 +107,10 @@ function getComparisonRange(range: RangeParam, start: string, end: string, yoy: 
     return { start: shiftYear(start), end: shiftYear(end), label: 'vs same period last year' };
   }
   switch (range) {
+    case 'custom': {
+      const len = Math.round((new Date(`${end}T12:00:00Z`).getTime() - new Date(`${start}T12:00:00Z`).getTime()) / 86_400_000) + 1;
+      return { start: subDays(start, len), end: subDays(start, 1), label: 'vs the period just before' };
+    }
     case 'today':
     case 'yesterday': {
       const cs = subMonths(start, 1);
@@ -300,7 +314,17 @@ export async function GET(request: Request) {
   const yoy   = searchParams.get('yoy') === 'true';
   const productLimit = Math.min(Number(searchParams.get('productLimit') ?? '15') || 15, 500);
 
-  const cur  = deriveRange(range);
+  let custom: { start: string; end: string } | undefined;
+  if (range === 'custom') {
+    const s = searchParams.get('start') ?? '', e = searchParams.get('end') ?? '';
+    const ok = /^\d{4}-\d{2}-\d{2}$/.test(s) && /^\d{4}-\d{2}-\d{2}$/.test(e) && s <= e;
+    const spanDays = ok ? (new Date(`${e}T12:00:00Z`).getTime() - new Date(`${s}T12:00:00Z`).getTime()) / 86_400_000 + 1 : 0;
+    if (!ok || spanDays > 400) return NextResponse.json({ error: 'custom range needs start and end as YYYY-MM-DD (start on or before end, at most about a year)' }, { status: 400 });
+    const todayYmd = toYMD(new Date());
+    custom = { start: s, end: e > todayYmd ? todayYmd : e };
+  }
+
+  const cur  = deriveRange(range, custom);
   const comp = getComparisonRange(range, cur.start, cur.end, yoy);
   const curMonth  = getMonth(cur.end);
   const compMonth = getMonth(comp.end);
@@ -330,8 +354,10 @@ export async function GET(request: Request) {
 
   // Fetch total ad spend for the brand over a given date window
   async function fetchSpend(s: string, e: string, m: string): Promise<number> {
-    const chatgptPP  = PP_CHATGPT_SPEND[m]  ?? 0;
-    const chatgptETZ = ETZ_CHATGPT_SPEND[m] ?? 0;
+    const monthsIn: string[] = [];
+    for (let k = s.slice(0, 7); k <= e.slice(0, 7); ) { monthsIn.push(k); const [ky, km] = k.split('-').map(Number); k = km === 12 ? `${ky! + 1}-01` : `${ky}-${String(km! + 1).padStart(2, '0')}`; }
+    const chatgptPP  = monthsIn.reduce((a, k) => a + (PP_CHATGPT_SPEND[k]  ?? 0), 0);
+    const chatgptETZ = monthsIn.reduce((a, k) => a + (ETZ_CHATGPT_SPEND[k] ?? 0), 0);
     const useOwnEtz  = m >= ETZ_START_MONTH;
     try {
       switch (brand) {

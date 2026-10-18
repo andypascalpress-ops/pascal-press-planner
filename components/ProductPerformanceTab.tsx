@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import MonthRangePicker, { recentQuarters, monthRangeToDates, type MonthRange } from './MonthRangePicker';
 
 // ─── Types (mirror API) ──────────────────────────────────────────────────────
 
 type ProductBrand = 'Pascal Press' | 'Blake Education' | 'Excel Test Zone' | 'Excel HSC Copilot';
-type RangeKey = '30d' | '60d' | '90d' | 'mtd' | 'lastmonth';
+type RangeKey = '30d' | '60d' | '90d' | 'mtd' | 'lastmonth' | 'custom';
 type BrandFilter = 'All' | ProductBrand;
 type ProductBucket = 'hot' | 'breakout' | 'steady' | 'low_volume' | 'declining' | 'dead' | 'cold';
 
@@ -92,6 +93,7 @@ const RANGES: { key: RangeKey; label: string }[] = [
   { key: '90d', label: 'Last 90 days' },
   { key: 'mtd', label: 'Month to date' },
   { key: 'lastmonth', label: 'Last month' },
+  { key: 'custom', label: 'Quarter / months' },
 ];
 
 const BRANDS: ProductBrand[] = [
@@ -249,6 +251,7 @@ export default function ProductPerformanceTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<RangeKey>('30d');
+  const [customMonths, setCustomMonths] = useState<MonthRange>(() => recentQuarters(2).find(q => !q.inProgress) ?? recentQuarters(2)[0]!);
   const [brand, setBrand] = useState<BrandFilter>('All');
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<'revenue' | 'units' | 'yoy' | 'attention' | 'name' | 'abandoned'>('attention');
@@ -261,7 +264,10 @@ export default function ProductPerformanceTab() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/product-performance?range=${range}`);
+      const customQs = range === 'custom'
+        ? (() => { const d = monthRangeToDates(customMonths, new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney' }).format(new Date())); return `&start=${d.start}&end=${d.end}`; })()
+        : '';
+      const res = await fetch(`/api/product-performance?range=${range}${customQs}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: ProductPerfData = await res.json();
       if (!json.connected) throw new Error('No product data sources connected');
@@ -272,7 +278,7 @@ export default function ProductPerformanceTab() {
     } finally {
       setLoading(false);
     }
-  }, [range]);
+  }, [range, customMonths]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -393,6 +399,12 @@ export default function ProductPerformanceTab() {
           </button>
         ))}
       </div>
+
+      {range === 'custom' && (
+        <div className="mb-4">
+          <MonthRangePicker value={customMonths} onChange={setCustomMonths} />
+        </div>
+      )}
 
       {loading && (
         <div className="space-y-3">

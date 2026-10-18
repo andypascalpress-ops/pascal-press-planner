@@ -12,7 +12,10 @@ export type ProductBrand =
   | 'Excel Test Zone'
   | 'Excel HSC Copilot';
 
-export type RangeKey = '30d' | '60d' | '90d' | 'mtd' | 'lastmonth';
+export type RangeKey = '30d' | '60d' | '90d' | 'mtd' | 'lastmonth' | 'custom';
+
+/** A chosen set of whole months (e.g. Jul to Sep); compared with the same dates one year earlier. */
+export interface CustomPeriod { start: string; end: string }
 
 export type ProductBucket =
   | 'hot'
@@ -82,6 +85,8 @@ export interface BrandProductSlice {
     topRevenue: number;
   };
   products: ProductRow[];
+  /** BigCommerce only: orders whose product lines were read, per period (partial on very large ranges). */
+  coverage?: { current: { read: number; total: number }; lastYear: { read: number; total: number } };
   top: ProductRow[];
   bottom: ProductRow[];
   declining: ProductRow[]; // sold both periods, YoY down
@@ -149,11 +154,27 @@ function nextMonth(yearMon: string): string {
   return m === 12 ? `${y! + 1}-01` : `${y}-${String(m! + 1).padStart(2, '0')}`;
 }
 
-export function deriveRanges(range: RangeKey, today: string): {
+function shiftYear(ymd: string, delta: number): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const last = new Date(Date.UTC(y! + delta, m!, 0)).getUTCDate();
+  return `${y! + delta}-${String(m).padStart(2, '0')}-${String(Math.min(d!, last)).padStart(2, '0')}`;
+}
+
+export function deriveRanges(range: RangeKey, today: string, custom?: CustomPeriod): {
   currStart: string; currEnd: string; lyStart: string; lyEnd: string; label: string;
 } {
   const year = parseInt(today.slice(0, 4), 10);
   const mon  = parseInt(today.slice(5, 7), 10);
+
+  if (range === 'custom' && custom) {
+    const currEnd = custom.end > today ? today : custom.end;
+    const sameMonth = custom.start.slice(0, 7) === currEnd.slice(0, 7);
+    const monthName = (ymd: string) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-AU', { month: 'short', timeZone: 'UTC' });
+    const label = sameMonth
+      ? new Date(`${custom.start}T12:00:00Z`).toLocaleDateString('en-AU', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+      : `${monthName(custom.start)}–${monthName(currEnd)} ${currEnd.slice(0, 4)}`;
+    return { currStart: custom.start, currEnd, lyStart: shiftYear(custom.start, -1), lyEnd: shiftYear(currEnd, -1), label };
+  }
 
   if (range === 'mtd') {
     const currStart = `${year}-${String(mon).padStart(2, '0')}-01`;
@@ -471,6 +492,9 @@ async function fetchMonthOrders(base: string, token: string, yearMon: string): P
   return results;
 }
 
+/** How many of a period's orders had their line items read (large ranges are time-limited). */
+const coverageOf = new WeakMap<object, { read: number; total: number }>();
+
 async function mapBcProducts(
   brand: ProductBrand,
   storeHash: string,
@@ -478,6 +502,7 @@ async function mapBcProducts(
   start: string,
   end: string,
   maxOrders = 300,
+  deadline?: number,
 ): Promise<Map<string, ProductMetrics>> {
   const base = `https://api.bigcommerce.com/stores/${storeHash}/v2`;
   const startMonth = start.slice(0, 7);
@@ -489,18 +514,21 @@ async function mapBcProducts(
     cur = nextMonth(cur);
   }
 
-  const valid = allOrders
+  const validAll = allOrders
     .filter(o => {
       const d = orderDateAEST(o.date_created);
       return d >= start && d <= end && !EXCLUDED.has(o.status);
     })
     // Prefer larger orders for representative product mix when capped
-    .sort((a, b) => Number(b.total_inc_tax || 0) - Number(a.total_inc_tax || 0))
-    .slice(0, maxOrders);
+    .sort((a, b) => Number(b.total_inc_tax || 0) - Number(a.total_inc_tax || 0));
+  const valid = validAll.slice(0, maxOrders);
 
   const map = new Map<string, ProductMetrics>();
-  const CONC = 12;
+  const CONC = maxOrders > 300 ? 25 : 12;
+  let read = 0;
   for (let i = 0; i < valid.length; i += CONC) {
+    if (deadline && Date.now() > deadline) break;
+    read = Math.min(i + CONC, valid.length);
     const batch = valid.slice(i, i + CONC);
     const results = await Promise.allSettled(
       batch.map(o =>
@@ -531,6 +559,7 @@ async function mapBcProducts(
     m.revenue = Math.round(m.revenue * 100) / 100;
     m.aov = m.orders > 0 ? Math.round((m.revenue / m.orders) * 100) / 100 : 0;
   }
+  coverageOf.set(map, { read, total: validAll.length });
   return map;
 }
 
@@ -542,16 +571,20 @@ async function fetchBcBrandSlice(
   currEnd: string,
   lyStart: string,
   lyEnd: string,
+  opts: { maxOrders?: number; deadline?: number } = {},
 ): Promise<BrandProductSlice> {
   if (!storeHash || !token) {
     return sliceFromRows(brand, 'none', false, []);
   }
   try {
     const [curr, ly] = await Promise.all([
-      mapBcProducts(brand, storeHash, token, currStart, currEnd),
-      mapBcProducts(brand, storeHash, token, lyStart, lyEnd),
+      mapBcProducts(brand, storeHash, token, currStart, currEnd, opts.maxOrders, opts.deadline),
+      mapBcProducts(brand, storeHash, token, lyStart, lyEnd, opts.maxOrders, opts.deadline),
     ]);
-    return sliceFromRows(brand, 'bigcommerce', true, buildRows(brand, curr, ly));
+    const slice = sliceFromRows(brand, 'bigcommerce', true, buildRows(brand, curr, ly));
+    const cc = coverageOf.get(curr), lc = coverageOf.get(ly);
+    if (cc && lc) slice.coverage = { current: cc, lastYear: lc };
+    return slice;
   } catch (e) {
     console.error(`[product-performance] ${brand}`, e);
     return sliceFromRows(brand, 'bigcommerce', false, []);
@@ -767,9 +800,12 @@ async function fetchStripeBrandSlice(
 
 // ─── Public entry ────────────────────────────────────────────────────────────
 
-export async function fetchProductPerformance(range: RangeKey = '30d'): Promise<ProductPerformanceResponse> {
+export async function fetchProductPerformance(range: RangeKey = '30d', custom?: CustomPeriod): Promise<ProductPerformanceResponse> {
   const today = toSydneyDateStr();
-  const { currStart, currEnd, lyStart, lyEnd, label } = deriveRanges(range, today);
+  const { currStart, currEnd, lyStart, lyEnd, label } = deriveRanges(range, today, custom);
+  // Month ranges can hold thousands of orders: read far more of them than the 300-order sample used for short
+  // ranges, but stop reading line items before the serverless time limit and say how much was covered.
+  const bcOpts = range === 'custom' ? { maxOrders: 4000, deadline: Date.now() + 42_000 } : {};
 
   const ppHash   = process.env.BIGCOMMERCE_STORE_HASH ?? '';
   const ppToken  = process.env.BIGCOMMERCE_ACCESS_TOKEN ?? '';
@@ -779,8 +815,8 @@ export async function fetchProductPerformance(range: RangeKey = '30d'): Promise<
   const hscKey = process.env.STRIPE_HSC_SECRET_KEY ?? '';
 
   const [pp, blake, etz, hsc] = await Promise.all([
-    fetchBcBrandSlice('Pascal Press', ppHash, ppToken, currStart, currEnd, lyStart, lyEnd),
-    fetchBcBrandSlice('Blake Education', blakeHash, blakeToken, currStart, currEnd, lyStart, lyEnd),
+    fetchBcBrandSlice('Pascal Press', ppHash, ppToken, currStart, currEnd, lyStart, lyEnd, bcOpts),
+    fetchBcBrandSlice('Blake Education', blakeHash, blakeToken, currStart, currEnd, lyStart, lyEnd, bcOpts),
     fetchStripeBrandSlice('Excel Test Zone', etzKey, currStart, currEnd, lyStart, lyEnd),
     fetchStripeBrandSlice('Excel HSC Copilot', hscKey, currStart, currEnd, lyStart, lyEnd),
   ]);
@@ -848,6 +884,14 @@ export async function fetchProductPerformance(range: RangeKey = '30d'): Promise<
     ...abandonedNotes,
   ];
   if (abandonedNotes.length === 0) notes.push('Abandoned-cart signals unavailable for this period.');
+  for (const sl of [pp, blake]) {
+    const c = sl.coverage;
+    if (!c) continue;
+    const pct = (x: { read: number; total: number }) => (x.total > 0 ? Math.round((Math.min(x.read, x.total) / x.total) * 100) : 100);
+    if (pct(c.current) < 100 || pct(c.lastYear) < 100) {
+      notes.push(`${sl.brand}: product lines were read for ${pct(c.current)}% of this period's orders (largest first) and ${pct(c.lastYear)}% of last year's, so smaller products may be slightly under-counted.`);
+    }
+  }
 
   return {
     connected: anyConnected,
@@ -878,7 +922,9 @@ export async function fetchProductPerformance(range: RangeKey = '30d'): Promise<
     meta: {
       notes,
       sources,
-      sampledOrdersNote: 'BigCommerce samples up to 300 orders per period (largest by value); Stripe reads up to 2000 charges per period.',
+      sampledOrdersNote: range === 'custom'
+        ? 'Month ranges read up to 4,000 BigCommerce orders per period (largest first) within the time limit; Stripe reads up to 2000 charges per period.'
+        : 'BigCommerce samples up to 300 orders per period (largest by value); Stripe reads up to 2000 charges per period.',
     },
   };
 }
