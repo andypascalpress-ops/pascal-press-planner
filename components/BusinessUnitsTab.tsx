@@ -22,6 +22,7 @@ interface BUMetrics {
   cac: number | null;
   trialsStarted: number | null;
   trialsFamilies?: number | null;
+  trialsFamiliesBought?: number | null;
   trialsSource?: 'ums' | 'hubspot';
 }
 
@@ -519,10 +520,29 @@ export default function BusinessUnitsTab() {
               <MetricCard label="CAC"             value={data.current.cac}              prevValue={data.prev.cac}              fmt="currency" />
             </div>
 
-            {(brand === 'etz' || brand === 'ehc') && data.current.trialsStarted !== null && (
+            {brand === 'etz' && data.current.trialsSource === 'ums' && data.current.trialsFamilies != null ? (
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+                  <p className="text-[11px] font-semibold text-gray-600 uppercase tracking-wider">Free trials</p>
+                  <p className="text-[11px] text-gray-400">From the Excel Test Zone user system (UMS). Revenue and orders above are from Stripe.</p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <MetricCard label="Free trials started" value={data.current.trialsStarted} prevValue={data.prev.trialsStarted} fmt="number"
+                    detail="Every trial a parent started: one per child or product" />
+                  <MetricCard label="Families who started a trial" value={data.current.trialsFamilies} prevValue={data.prev.trialsFamilies ?? null} fmt="number"
+                    detail="A family can start more than one trial" />
+                  <MetricCard label="Families who have bought" value={data.current.trialsFamiliesBought ?? null} prevValue={data.prev.trialsFamiliesBought ?? null} fmt="number"
+                    detail={data.current.trialsFamilies > 0 && data.current.trialsFamiliesBought != null
+                      ? `${Math.round((data.current.trialsFamiliesBought / data.current.trialsFamilies) * 100)}% of families who started a trial`
+                        + (data.prev.trialsFamilies && data.prev.trialsFamiliesBought != null ? ` (${Math.round((data.prev.trialsFamiliesBought / data.prev.trialsFamilies) * 100)}% last time)` : '')
+                      : undefined} />
+                </div>
+                <p className="text-[11px] text-gray-400 mt-3">Bought = bought after starting their trial. Recent trials may still buy, so this percentage rises as the month goes on.</p>
+              </div>
+            ) : (brand === 'etz' || brand === 'ehc') && data.current.trialsStarted !== null && (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <MetricCard label="Free Trials Started" value={data.current.trialsStarted} prevValue={data.prev.trialsStarted} fmt="number"
-                  detail={data.current.trialsSource === 'ums' && data.current.trialsFamilies != null ? `from ${NUM.format(data.current.trialsFamilies)} families (UMS)` : 'every trial started, incl. school imports'} />
+                  detail="every trial started, incl. school imports" />
               </div>
             )}
 
