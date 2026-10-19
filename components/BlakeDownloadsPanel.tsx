@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 
 interface Product { productId: number; name: string; downloads: number; orders: number; revenue: number }
-interface Period { start: string; end: string; downloads: number; orders: number; subscriptions: number; products: Product[]; failedOrders: number }
+interface Period { start: string; end: string; downloads: number; freeDownloads: number; orders: number; subscriptions: number; products: Product[]; failedOrders: number }
 interface Data { current: Period; prior: Period }
 
 const NUM = new Intl.NumberFormat('en-AU');
@@ -79,6 +79,7 @@ export default function BlakeDownloadsPanel({ start, end, compStart, compEnd, co
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">PDFs downloaded</p>
               <p className="text-lg font-bold text-gray-900">{NUM.format(data.current.downloads)}<Badge cur={data.current.downloads} prior={data.prior.downloads} /></p>
               <p className="text-[11px] text-gray-400">prev {NUM.format(data.prior.downloads)}</p>
+              <p className="text-[11px] text-gray-500">{NUM.format(data.current.freeDownloads)} free, {NUM.format(data.current.downloads - data.current.freeDownloads)} paid</p>
             </div>
             <div className="rounded-lg bg-gray-50 px-3 py-2">
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Orders with a PDF</p>

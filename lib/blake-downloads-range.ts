@@ -19,6 +19,8 @@ export interface DownloadsPeriod {
   end: string;
   /** Units of PDF products downloaded (subscription excluded). */
   downloads: number;
+  /** Of those downloads, how many were free (product name starts with FREE). */
+  freeDownloads: number;
   /** Orders that contained at least one PDF product. */
   orders: number;
   /** Subscriptions started (product 1072). */
@@ -54,7 +56,7 @@ async function fetchPeriod(start: string, end: string): Promise<DownloadsPeriod>
   });
 
   const products = new Map<number, DownloadProduct>();
-  let downloads = 0, downloadOrders = 0, subscriptions = 0, failed = 0;
+  let downloads = 0, freeDownloads = 0, downloadOrders = 0, subscriptions = 0, failed = 0;
   const BATCH = 20;
   for (let i = 0; i < valid.length; i += BATCH) {
     const batch = valid.slice(i, i + BATCH);
@@ -77,6 +79,7 @@ async function fetchPeriod(start: string, end: string): Promise<DownloadsPeriod>
         if (Number(li.product_id) === SUBSCRIPTION_PRODUCT_ID) { subscriptions += qty; continue; }
         hasPdf = true;
         downloads += qty;
+        if (/^\s*free/i.test(String(li.name ?? ''))) freeDownloads += qty;
         const id = Number(li.product_id);
         const row = products.get(id) ?? { productId: id, name: String(li.name ?? 'Unknown'), downloads: 0, orders: 0, revenue: 0 };
         row.downloads += qty; row.orders += 1; row.revenue += parseFloat(li.total_inc_tax ?? '0') || 0;
@@ -86,7 +89,7 @@ async function fetchPeriod(start: string, end: string): Promise<DownloadsPeriod>
     }
   }
   return {
-    start, end, downloads, orders: downloadOrders, subscriptions, failedOrders: failed,
+    start, end, downloads, freeDownloads, orders: downloadOrders, subscriptions, failedOrders: failed,
     products: [...products.values()].map(p => ({ ...p, revenue: round2(p.revenue) })).sort((a, b) => b.downloads - a.downloads || b.revenue - a.revenue),
   };
 }
