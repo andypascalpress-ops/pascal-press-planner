@@ -12,6 +12,7 @@ import { fetchETZStripeRevenue, fetchStripeProductMap, zonedDateTimeToUnix } fro
 import { fetchChannelRevenue, fetchEtzFunnelTraffic, fetchEtzAppTraffic, fetchEtzSiteEngagement } from '@/lib/google-analytics';
 import { fetchTrialConversion, fetchOfflineTrials } from '@/lib/hubspot-trials';
 import { etzSpend } from '@/lib/etz-spend';
+import { fetchUmsTrials, umsConfigured } from '@/lib/ums-trials';
 import { ETZ_MONTHLY_REVENUE_TARGETS, MONTHLY_GOOGLE_BUDGETS, ETZ_MONTHLY_MARKETING_BUDGET } from '@/lib/constants';
 
 export const dynamic = 'force-dynamic';
@@ -72,6 +73,9 @@ export async function GET(request: Request) {
 
   const c = msRange(start, end);
   const p = msRange(pStart, pEnd);
+
+  // UMS trials (Greg's conversion report): started in the background, cached, never fails the report
+  const umsPromise = umsConfigured() ? Promise.allSettled([fetchUmsTrials(start, end), fetchUmsTrials(pStart, pEnd)]) : null;
 
   const [
     revC, revP, trialC, trialP,
@@ -183,9 +187,20 @@ export async function GET(request: Request) {
   const monthlyTarget = ETZ_MONTHLY_REVENUE_TARGETS[monthNum] ?? 0;
   const monthlyBudget = MONTHLY_GOOGLE_BUDGETS['Excel Test Zone'] ?? 0;
 
+  const umsRes = umsPromise ? await umsPromise : null;
+  const ums = umsRes === null
+    ? { configured: false as const }
+    : {
+        configured: true as const,
+        current: umsRes[0].status === 'fulfilled' ? umsRes[0].value : null,
+        prior:   umsRes[1].status === 'fulfilled' ? umsRes[1].value : null,
+        error:   [umsRes[0], umsRes[1]].filter(r => r.status === 'rejected').map(r => String((r as PromiseRejectedResult).reason?.message ?? r)).join('; ') || null,
+      };
+
   return NextResponse.json({
     connected: true,
     failed,
+    ums,
     period: { start, end, days: len },
     comparison: { start: pStart, end: pEnd, label: comparisonLabel },
     revenue: { current: revenue, prior: revenueP, pctChange: pct(revenue, revenueP) },
