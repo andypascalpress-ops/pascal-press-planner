@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import CouponUsagePanel from './CouponUsagePanel';
+import BlakeDownloadsPanel from './BlakeDownloadsPanel';
 import MonthRangePicker, { recentQuarters, monthRangeToDates, type MonthRange } from './MonthRangePicker';
 import DailyRevenueTrend from './DailyRevenueTrend';
 import EhcHubspotOverview from './EhcHubspotOverview';
@@ -49,7 +50,7 @@ interface BUData {
   subscriptions: BUSubscriptions | null;
   sparkline: { date: string; revenue: number }[];
   period: { label: string; start: string; end: string };
-  comparison: { label: string };
+  comparison: { label: string; start: string; end: string };
 }
 
 const BRANDS: { key: BrandKey; label: string }[] = [
@@ -545,6 +546,10 @@ export default function BusinessUnitsTab() {
                 <MetricCard label="Free Trials Started" value={data.current.trialsStarted} prevValue={data.prev.trialsStarted} fmt="number"
                   detail="every trial started, incl. school imports" />
               </div>
+            )}
+
+            {brand === 'blake' && (
+              <BlakeDownloadsPanel start={data.period.start} end={data.period.end} compStart={data.comparison.start} compEnd={data.comparison.end} comparisonLabel={data.comparison.label} accent={color} />
             )}
 
             {(brand === 'etz' || brand === 'blake') && (
