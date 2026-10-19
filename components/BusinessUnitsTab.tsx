@@ -48,7 +48,7 @@ interface BUData {
   products: BUProduct[];
   subscriptions: BUSubscriptions | null;
   sparkline: { date: string; revenue: number }[];
-  period: { label: string };
+  period: { label: string; start: string; end: string };
   comparison: { label: string };
 }
 
