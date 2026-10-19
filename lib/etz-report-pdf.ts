@@ -33,9 +33,12 @@ function pageOne(pdf: PDFDocument, reg: any, bold: any, d: EtzReportData, total:
     `• Yesterday (${yLabel}): ${money(d.yesterday.revenue)} from ${NUM.format(d.yesterday.orders)} orders.`,
     `• Month to date: ${money(d.revenue.cur)} from ${NUM.format(d.orders.cur)} orders${revChange === null ? '' : `, ${signed(revChange)} on the same days last month`}.` +
       (t.monthlyTarget > 0 ? ` At the current daily pace the month ends near ${money(t.projected)} against a ${money(t.monthlyTarget)} target.` : ''),
-    `• Free trials: ${NUM.format(d.trials.cur)} started this month` +
-      (d.trialToPaid.trials > 0 ? `. There were ${NUM.format(d.trialToPaid.orders)} paid orders (${d.trialToPaid.pct ?? 0}% of the trials started).` : '.') +
-      (d.trials.schoolImports > 0 ? ` ${NUM.format(d.trials.schoolImports)} of the trials are bulk school sign-ups.` : ''),
+    `• Free trials: ${NUM.format(d.trials.cur)} started this month` + (d.trials.families !== null ? ` by ${NUM.format(d.trials.families)} families` : '') +
+      (d.trialToPaid.base > 0
+        ? (d.trialToPaid.unit === 'families'
+            ? `. ${NUM.format(d.trialToPaid.bought)} of those families (${d.trialToPaid.pct ?? 0}%) have bought since starting their trial.`
+            : `. There were ${NUM.format(d.trialToPaid.bought)} paid orders (${d.trialToPaid.pct ?? 0}% of the trials started).`)
+        : '.'),
   ];
   if (d.spend && d.spend.total > 0) {
     bullets.push(`• Marketing: ${money(d.spend.total)} spent on ads this month, which is ${'$' + (d.revenue.cur / d.spend.total).toFixed(2)} of revenue for every $1 of ad spend.`);
@@ -53,13 +56,15 @@ function pageOne(pdf: PDFDocument, reg: any, bold: any, d: EtzReportData, total:
   tile(c, M, top, tw, th, 'Paid orders, month to date', NUM.format(d.orders.cur), `${ord.text.replace(' last month', '')} | avg order ${money(d.aov.cur)}`, ord.color, TINT);
   tile(c, M + tw + gap, top, tw, th, 'Free trials started', NUM.format(d.trials.cur), trl.text, trl.color, TINT);
   tile(c, M + 2 * (tw + gap), top, tw, th, 'Free trial to paid', d.trialToPaid.pct === null ? 'n/a' : `${d.trialToPaid.pct}%`,
-    d.trialToPaid.trials > 0
-      ? `${NUM.format(d.trialToPaid.orders)} paid orders from ${NUM.format(d.trialToPaid.trials)} trials` + (d.trialToPaid.priorPct !== null ? ` | ${d.trialToPaid.priorPct}% last month` : '')
+    d.trialToPaid.base > 0
+      ? (d.trialToPaid.unit === 'families'
+          ? `${NUM.format(d.trialToPaid.bought)} of ${NUM.format(d.trialToPaid.base)} families bought`
+          : `${NUM.format(d.trialToPaid.bought)} paid orders from ${NUM.format(d.trialToPaid.base)} trials`) + (d.trialToPaid.priorPct !== null ? ` | ${d.trialToPaid.priorPct}% last month` : '')
       : 'no trials yet', MUTED, TINT);
   top += th + 22;
 
   dailyChartBlock(c, d.daily, d.trend, BLUE, top, 340);
-  footer(c, 1, total, 'Sources: Stripe, HubSpot');
+  footer(c, 1, total, 'Sources: Stripe, user system (UMS)');
 }
 
 function table(c: Canvas, top: number, cols: { label: string; x: number; align?: 'left' | 'right' }[], rows: string[][]) {
@@ -139,11 +144,13 @@ function pageTwo(pdf: PDFDocument, reg: any, bold: any, d: EtzReportData, total:
 
   callout(c, Math.min(y, 640), 'How to read these numbers', [
     'Yesterday is the full previous day (Sydney time). Month to date runs from the 1st through the end of yesterday and is compared with the same days last month. Revenue and orders are from Stripe.',
-    `New free trials counts every trial started this month, including those that have since paid.${d.trials.schoolImports > 0 ? ` ${NUM.format(d.trials.schoolImports)} of the ${NUM.format(d.trials.cur)} are bulk school sign-ups.` : ''} Free trial to paid is paid orders (Stripe) divided by free trials started (HubSpot), compared with the same days last month. It is a simple ratio: orders can include customers who bought without a trial, and recent trials may still be in progress.`,
+    d.trials.source === 'ums'
+      ? 'Free trials started comes from the Excel Test Zone user system: every trial a parent has started, counting one per child or product, so a family can start more than one (bulk school sign-ups are not trials). Free trial to paid is the share of families who started a trial and have since bought; recent trials may still be in progress. Orders and revenue are from Stripe.'
+      : 'Free trials started comes from HubSpot (the user system was not reachable today) and includes bulk school sign-ups. Free trial to paid is paid orders (Stripe) divided by trials started, a simple ratio: orders can include customers who bought without a trial.',
     'Visits, bounce rate and sales by channel come from Google Analytics for the production website and app only, so channel revenue can differ a little from Stripe revenue.',
   ], '#F6F8FA', undefined, NAVY, INK, 7.8);
 
-  footer(c, 2, total, 'Sources: Stripe, HubSpot, Google Analytics, Google Ads, Meta Ads');
+  footer(c, 2, total, 'Sources: Stripe, UMS, Google Analytics, Google Ads, Meta Ads');
 }
 
 export async function renderEtzReport(d: EtzReportData): Promise<Uint8Array> {

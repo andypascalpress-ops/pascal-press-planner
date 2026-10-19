@@ -21,6 +21,7 @@ import { NextResponse } from 'next/server';
 import { fetchETZStripeRevenue } from '@/lib/stripe-revenue';
 import { fetchChannelRevenue } from '@/lib/google-analytics';
 import { fetchTrialConversion } from '@/lib/hubspot-trials';
+import { fetchUmsTrials, umsConfigured } from '@/lib/ums-trials';
 
 export const dynamic = 'force-dynamic';
 
@@ -78,12 +79,15 @@ export async function GET(request: Request) {
   const { startMs: curStartMs, endMs: curEndMs }   = ymdToMsRangeAEST(monthStart, monthEnd);
   const { startMs: compStartMs, endMs: compEndMs } = ymdToMsRangeAEST(compMonthStart, compMonthEnd);
 
-  const [curRevR, compRevR, curTrialR, compTrialR, channelR] = await Promise.allSettled([
+  const umsOn = umsConfigured();
+  const [curRevR, compRevR, curTrialR, compTrialR, channelR, curUmsR, compUmsR] = await Promise.allSettled([
     fetchETZStripeRevenue(month,     { accurate: false, dateRange: { start: monthStart, end: monthEnd } }),
     fetchETZStripeRevenue(compMonth, { accurate: false, dateRange: { start: compMonthStart, end: compMonthEnd } }),
     fetchTrialConversion('etz', curStartMs, curEndMs),
     fetchTrialConversion('etz', compStartMs, compEndMs),
     fetchChannelRevenue(monthStart, monthEnd, 'etz'),
+    umsOn ? fetchUmsTrials(monthStart, monthEnd) : Promise.resolve(null),
+    umsOn ? fetchUmsTrials(compMonthStart, compMonthEnd) : Promise.resolve(null),
   ]);
 
   const curRev    = curRevR.status    === 'fulfilled' ? curRevR.value    : null;
@@ -91,6 +95,9 @@ export async function GET(request: Request) {
   const curTrial  = curTrialR.status  === 'fulfilled' ? curTrialR.value  : null;
   const compTrial = compTrialR.status === 'fulfilled' ? compTrialR.value : null;
   const channels  = channelR.status   === 'fulfilled' ? channelR.value   : null;
+  const curUms    = curUmsR.status    === 'fulfilled' ? curUmsR.value    : null;
+  const compUms   = compUmsR.status   === 'fulfilled' ? compUmsR.value   : null;
+  const useUms    = Boolean(curUms && compUms);
 
   const bestChannel = channels?.items?.length
     ? [...channels.items].sort((a, b) => b.revenue - a.revenue)[0]!
@@ -107,21 +114,33 @@ export async function GET(request: Request) {
     comparisonMonth: { key: compMonth, start: compMonthStart, end: compMonthEnd, label: monthLabel(compMonth) },
     revenue: { current: curRevenue, prior: compRevenue, pctChange: pctChange(curRevenue, compRevenue) },
     orders:  { current: curOrders,  prior: compOrders,  pctChange: pctChange(curOrders, compOrders) },
-    trials: {
-      // every trial started in the month, including those that have since paid
-      current: curTrial?.totalEverStarted  ?? 0,
-      prior:   compTrial?.totalEverStarted ?? 0,
-      pctChange: pctChange(curTrial?.totalEverStarted ?? 0, compTrial?.totalEverStarted ?? 0),
-      stillTrialing: curTrial?.trialsStarted ?? 0,
-      stillTrialingPrior: compTrial?.trialsStarted ?? 0,
-      paid: curTrial?.converted ?? 0,
-      paidPrior: compTrial?.converted ?? 0,
-    },
-    trialToPaid: {
-      // Stripe paid orders divided by free trials started (HubSpot); `converted` holds the paid-order count
-      current: curTrial  ? { converted: curOrders,  totalEverStarted: curTrial.totalEverStarted,  pct: curTrial.totalEverStarted  > 0 ? Math.round((curOrders  / curTrial.totalEverStarted)  * 100) : null } : null,
-      prior:   compTrial ? { converted: compOrders, totalEverStarted: compTrial.totalEverStarted, pct: compTrial.totalEverStarted > 0 ? Math.round((compOrders / compTrial.totalEverStarted) * 100) : null } : null,
-    },
+    // Trials come from the UMS (real parent trials; school imports are not trials there) when it is reachable,
+    // otherwise from HubSpot. Orders and revenue always come from Stripe.
+    trials: useUms
+      ? {
+          current: curUms!.trials, prior: compUms!.trials, pctChange: pctChange(curUms!.trials, compUms!.trials),
+          families: curUms!.customers, familiesPrior: compUms!.customers, source: 'ums' as const,
+        }
+      : {
+          // every trial started in the month, including those that have since paid
+          current: curTrial?.totalEverStarted  ?? 0,
+          prior:   compTrial?.totalEverStarted ?? 0,
+          pctChange: pctChange(curTrial?.totalEverStarted ?? 0, compTrial?.totalEverStarted ?? 0),
+          families: null, familiesPrior: null, source: 'hubspot' as const,
+        },
+    trialToPaid: useUms
+      ? {
+          // families who bought after starting a trial, out of families who started one (UMS)
+          unit: 'families' as const,
+          current: { converted: curUms!.customersWhoBought,  totalEverStarted: curUms!.customers,  pct: curUms!.pct },
+          prior:   { converted: compUms!.customersWhoBought, totalEverStarted: compUms!.customers, pct: compUms!.pct },
+        }
+      : {
+          // Stripe paid orders divided by free trials started (HubSpot); `converted` holds the paid-order count
+          unit: 'orders' as const,
+          current: curTrial  ? { converted: curOrders,  totalEverStarted: curTrial.totalEverStarted,  pct: curTrial.totalEverStarted  > 0 ? Math.round((curOrders  / curTrial.totalEverStarted)  * 100) : null } : null,
+          prior:   compTrial ? { converted: compOrders, totalEverStarted: compTrial.totalEverStarted, pct: compTrial.totalEverStarted > 0 ? Math.round((compOrders / compTrial.totalEverStarted) * 100) : null } : null,
+        },
     bestChannel: bestChannel ? { name: bestChannel.channel, revenue: bestChannel.revenue, pct: bestChannel.pct } : null,
     channels: channels?.items ?? [],
   });

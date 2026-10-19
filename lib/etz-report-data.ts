@@ -10,7 +10,8 @@
  * silent zeros. Website, channel, product and ad-spend sections are optional and say "not available" if unread.
  */
 import { fetchETZStripeRevenue, fetchETZDailyRevenue, fetchStripeProductMap } from '@/lib/stripe-revenue';
-import { fetchTrialConversion, fetchOfflineTrials } from '@/lib/hubspot-trials';
+import { fetchTrialConversion } from '@/lib/hubspot-trials';
+import { fetchUmsTrials, umsConfigured } from '@/lib/ums-trials';
 import { fetchEtzSiteEngagement, fetchEtzFunnelTraffic, fetchChannelRevenue, type EtzEngagement } from '@/lib/google-analytics';
 import { etzSpend } from '@/lib/etz-spend';
 import { ETZ_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_MARKETING_BUDGET } from '@/lib/constants';
@@ -26,9 +27,13 @@ export interface EtzReportData {
   revenue: { cur: number; prior: number };
   orders: { cur: number; prior: number };
   aov: { cur: number; prior: number };
-  trials: { cur: number; prior: number; schoolImports: number; stillTrialing: number };
-  /** Stripe paid orders divided by free trials started (HubSpot), this month and the same days last month. */
-  trialToPaid: { orders: number; trials: number; pct: number | null; priorOrders: number; priorTrials: number; priorPct: number | null };
+  /** Free trials started: UMS trial records (real parent trials) when reachable, otherwise HubSpot deals. */
+  trials: { cur: number; prior: number; families: number | null; source: 'ums' | 'hubspot' };
+  /**
+   * UMS: families who bought after starting a trial, out of families who started one (this month and the same days
+   * last month). If the UMS is unreachable: Stripe paid orders divided by HubSpot trials, and `unit` says so.
+   */
+  trialToPaid: { bought: number; base: number; pct: number | null; priorBought: number; priorBase: number; priorPct: number | null; unit: 'families' | 'orders' };
   target: { monthlyTarget: number; projected: number; daysElapsed: number; daysInMonth: number };
   daily: DailyPoint[];
   trend: Trend;
@@ -62,26 +67,28 @@ export async function gatherEtzReportData(): Promise<EtzReportData> {
   const daysInMonth = new Date(ty!, tm!, 0).getDate();
   const cur = msRange(monthStart, yesterday), pri = msRange(pStart, pEnd);
 
-  const [revC, revP, trialC, trialP, offlineC, daily] = await Promise.all([
+  const [revC, revP, trialC, trialP, daily] = await Promise.all([
     fetchETZStripeRevenue(yesterday.slice(0, 7), { accurate: false, dateRange: { start: monthStart, end: yesterday } }),
     fetchETZStripeRevenue(pEnd.slice(0, 7), { accurate: false, dateRange: { start: pStart, end: pEnd } }),
     fetchTrialConversion('etz', cur.startMs, cur.endMs),
     fetchTrialConversion('etz', pri.startMs, pri.endMs),
-    fetchOfflineTrials('etz', cur.startMs, cur.endMs),
     fetchETZDailyRevenue(day90, yesterday),
   ]);
   for (const [name, r] of [['ETZ revenue', revC], ['ETZ prior-period revenue', revP]] as const) {
     if (!r.connected) throw new Error(`${name} source (Stripe) is not connected`);
   }
 
-  const [engC, engP, siteC, chanRev, spendC, prodC] = await Promise.all([
+  const [engC, engP, siteC, chanRev, spendC, prodC, umsC, umsP] = await Promise.all([
     optional(fetchEtzSiteEngagement(monthStart, yesterday, true)),
     optional(fetchEtzSiteEngagement(pStart, pEnd, true)),
     optional(fetchEtzFunnelTraffic(monthStart, yesterday, false)),
     optional(fetchChannelRevenue(monthStart, yesterday, 'etz')),
     optional(etzSpend(monthStart, yesterday)),
     optional(fetchStripeProductMap(process.env.STRIPE_SECRET_KEY ?? '', monthStart, yesterday)),
+    umsConfigured() ? optional(fetchUmsTrials(monthStart, yesterday)) : Promise.resolve(null),
+    umsConfigured() ? optional(fetchUmsTrials(pStart, pEnd)) : Promise.resolve(null),
   ]);
+  const useUms = Boolean(umsC && umsP);
 
   const series: DailyPoint[] = [];
   for (let i = 0; i < 90; i++) {
@@ -137,11 +144,16 @@ export async function gatherEtzReportData(): Promise<EtzReportData> {
     revenue: { cur: round2(revenue), prior: round2(revP.totalRevenue) },
     orders: { cur: orders, prior: ordersP },
     aov: { cur: orders > 0 ? revenue / orders : 0, prior: ordersP > 0 ? revP.totalRevenue / ordersP : 0 },
-    trials: { cur: trialC.totalEverStarted, prior: trialP.totalEverStarted, schoolImports: offlineC.ever, stillTrialing: trialC.trialsStarted },
-    trialToPaid: {
-      orders, trials: trialC.totalEverStarted, pct: trialC.totalEverStarted > 0 ? Math.round((orders / trialC.totalEverStarted) * 100) : null,
-      priorOrders: ordersP, priorTrials: trialP.totalEverStarted, priorPct: trialP.totalEverStarted > 0 ? Math.round((ordersP / trialP.totalEverStarted) * 100) : null,
-    },
+    trials: useUms
+      ? { cur: umsC!.trials, prior: umsP!.trials, families: umsC!.customers, source: 'ums' }
+      : { cur: trialC.totalEverStarted, prior: trialP.totalEverStarted, families: null, source: 'hubspot' },
+    trialToPaid: useUms
+      ? { bought: umsC!.customersWhoBought, base: umsC!.customers, pct: umsC!.pct, priorBought: umsP!.customersWhoBought, priorBase: umsP!.customers, priorPct: umsP!.pct, unit: 'families' }
+      : {
+          bought: orders, base: trialC.totalEverStarted, pct: trialC.totalEverStarted > 0 ? Math.round((orders / trialC.totalEverStarted) * 100) : null,
+          priorBought: ordersP, priorBase: trialP.totalEverStarted, priorPct: trialP.totalEverStarted > 0 ? Math.round((ordersP / trialP.totalEverStarted) * 100) : null,
+          unit: 'orders',
+        },
     target: { monthlyTarget: ETZ_MONTHLY_REVENUE_TARGETS[tm!] ?? 0, projected, daysElapsed: td!, daysInMonth },
     daily: series,
     trend: { last30Avg: l30, prior30Avg: p30, last30Change: p30 > 0 ? ((l30 - p30) / p30) * 100 : null },

@@ -15,6 +15,7 @@ import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
 import { fetchMetaSpend, META_PP_ACCOUNT_ID, META_ETZ_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
 import { PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
 import { fetchTrialConversion } from '@/lib/hubspot-trials';
+import { fetchUmsTrials, umsConfigured } from '@/lib/ums-trials';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -409,7 +410,8 @@ export async function GET(request: Request) {
   const curTrialsRangeMs  = ymdToMsRangeAEST(cur.start,  cur.end);
   const compTrialsRangeMs = ymdToMsRangeAEST(comp.start, comp.end);
 
-  const [curRevR, compRevR, curSpendR, compSpendR, curProductsR, compProductsR, subsR, curTrialsR, compTrialsR, ...sparkR] =
+  const umsOn = brand === 'etz' && umsConfigured();
+  const [curRevR, compRevR, curSpendR, compSpendR, curProductsR, compProductsR, subsR, curTrialsR, compTrialsR, curUmsR, compUmsR, ...sparkR] =
     await Promise.allSettled([
       fetchRev(cur.start, cur.end),
       fetchRev(comp.start, comp.end),
@@ -426,6 +428,8 @@ export async function GET(request: Request) {
       hasTrials
         ? fetchTrialConversion(trialsPipelineLabel, compTrialsRangeMs.startMs, compTrialsRangeMs.endMs)
         : Promise.resolve(null),
+      umsOn ? fetchUmsTrials(cur.start, cur.end) : Promise.resolve(null),
+      umsOn ? fetchUmsTrials(comp.start, comp.end) : Promise.resolve(null),
       ...sparkDays.map(d => fetchRev(d, d)),
     ]);
 
@@ -439,6 +443,10 @@ export async function GET(request: Request) {
   const subs        = subsR.status       === 'fulfilled' ? subsR.value      : null;
   const curTrials   = curTrialsR.status   === 'fulfilled' ? curTrialsR.value  : null;
   const compTrials  = compTrialsR.status  === 'fulfilled' ? compTrialsR.value : null;
+  // ETZ: trials from the UMS (real parent trials) when reachable, otherwise HubSpot
+  const curUms  = curUmsR.status  === 'fulfilled' ? curUmsR.value  : null;
+  const compUms = compUmsR.status === 'fulfilled' ? compUmsR.value : null;
+  const useUms  = Boolean(curUms && compUms);
 
   const sparkline = sparkDays.map((date, i) => ({
     date,
@@ -451,8 +459,8 @@ export async function GET(request: Request) {
     brand, range, yoy,
     period:      { start: cur.start,  end: cur.end,  label: cur.label  },
     comparison:  { start: comp.start, end: comp.end, label: comp.label },
-    current:     { ...buildMetrics(curRev,  curSpend),  trialsStarted: curTrials ? curTrials.totalEverStarted : null, trialsStillTrialing: curTrials?.trialsStarted ?? null, trialsPaid: curTrials?.converted ?? null },
-    prev:        { ...buildMetrics(compRev, compSpend), trialsStarted: compTrials ? compTrials.totalEverStarted : null, trialsStillTrialing: compTrials?.trialsStarted ?? null, trialsPaid: compTrials?.converted ?? null },
+    current:     { ...buildMetrics(curRev,  curSpend),  trialsStarted: useUms ? curUms!.trials : (curTrials ? curTrials.totalEverStarted : null), trialsFamilies: useUms ? curUms!.customers : null, trialsSource: useUms ? 'ums' : 'hubspot' },
+    prev:        { ...buildMetrics(compRev, compSpend), trialsStarted: useUms ? compUms!.trials : (compTrials ? compTrials.totalEverStarted : null), trialsFamilies: useUms ? compUms!.customers : null, trialsSource: useUms ? 'ums' : 'hubspot' },
     products,
     subscriptions: subs,
     sparkline,

@@ -21,8 +21,8 @@ interface BUMetrics {
   returningCustomers: number;
   cac: number | null;
   trialsStarted: number | null;
-  trialsStillTrialing?: number | null;
-  trialsPaid?: number | null;
+  trialsFamilies?: number | null;
+  trialsSource?: 'ums' | 'hubspot';
 }
 
 interface BUProduct {
@@ -200,8 +200,8 @@ interface MonthlyUpdateData {
   comparisonMonth: { key: string; start: string; end: string; label: string };
   revenue: MonthlyMetric;
   orders: MonthlyMetric;
-  trials: MonthlyMetric & { stillTrialing: number; stillTrialingPrior: number; paid: number; paidPrior: number };
-  trialToPaid: { current: MonthlyConversionSide | null; prior: MonthlyConversionSide | null };
+  trials: MonthlyMetric & { families: number | null; familiesPrior: number | null; source: 'ums' | 'hubspot' };
+  trialToPaid: { unit: 'families' | 'orders'; current: MonthlyConversionSide | null; prior: MonthlyConversionSide | null };
   bestChannel: { name: string; revenue: number; pct: number } | null;
   channels: MonthlyChannel[];
 }
@@ -522,7 +522,7 @@ export default function BusinessUnitsTab() {
             {(brand === 'etz' || brand === 'ehc') && data.current.trialsStarted !== null && (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <MetricCard label="Free Trials Started" value={data.current.trialsStarted} prevValue={data.prev.trialsStarted} fmt="number"
-                  detail="every trial started, incl. school imports" />
+                  detail={data.current.trialsSource === 'ums' && data.current.trialsFamilies != null ? `from ${NUM.format(data.current.trialsFamilies)} families (UMS)` : 'every trial started, incl. school imports'} />
               </div>
             )}
 
@@ -874,7 +874,7 @@ function MonthlyUpdateSection({
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <MetricCard label="Revenue"        value={data.revenue.current} prevValue={data.revenue.prior} fmt="currency" />
             <MetricCard label="Free Trials Started" value={data.trials.current}  prevValue={data.trials.prior}  fmt="number"
-              detail="every trial started, incl. school imports" />
+              detail={data.trials.source === 'ums' && data.trials.families != null ? `from ${NUM.format(data.trials.families)} families (UMS)` : 'every trial started, incl. school imports'} />
             <MetricCard label="Orders"         value={data.orders.current}  prevValue={data.orders.prior}  fmt="number"   />
           </div>
 
@@ -888,7 +888,9 @@ function MonthlyUpdateSection({
                 </p>
                 {data.trialToPaid.current && (
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {NUM.format(data.trialToPaid.current.converted)} paid orders from {NUM.format(data.trialToPaid.current.totalEverStarted)} trials started
+                    {data.trialToPaid.unit === 'families'
+                      ? `${NUM.format(data.trialToPaid.current.converted)} of ${NUM.format(data.trialToPaid.current.totalEverStarted)} families bought after starting a trial`
+                      : `${NUM.format(data.trialToPaid.current.converted)} paid orders from ${NUM.format(data.trialToPaid.current.totalEverStarted)} trials started`}
                   </p>
                 )}
                 <p className="text-[10px] text-gray-400 mt-1">{data.month.label}</p>
@@ -899,14 +901,16 @@ function MonthlyUpdateSection({
                 </p>
                 {data.trialToPaid.prior && (
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {NUM.format(data.trialToPaid.prior.converted)} paid orders from {NUM.format(data.trialToPaid.prior.totalEverStarted)} trials started
+                    {data.trialToPaid.unit === 'families'
+                      ? `${NUM.format(data.trialToPaid.prior.converted)} of ${NUM.format(data.trialToPaid.prior.totalEverStarted)} families bought after starting a trial`
+                      : `${NUM.format(data.trialToPaid.prior.converted)} paid orders from ${NUM.format(data.trialToPaid.prior.totalEverStarted)} trials started`}
                   </p>
                 )}
                 <p className="text-[10px] text-gray-400 mt-1">{data.comparisonMonth.label}</p>
               </div>
             </div>
             <p className="text-[10px] text-gray-400 mt-3">
-              Paid orders (Stripe) ÷ free trials started (HubSpot). A simple ratio: orders can include people who bought without a trial, and recent trials may still be in progress.
+              {data.trialToPaid.unit === 'families' ? 'Families who bought after starting a free trial ÷ families who started a trial (UMS). Recent trials may still be in progress, so this % can rise. Orders and revenue elsewhere on this page come from Stripe.' : 'Paid orders (Stripe) ÷ free trials started (HubSpot). A simple ratio: orders can include people who bought without a trial, and recent trials may still be in progress.'}
             </p>
           </div>
 
