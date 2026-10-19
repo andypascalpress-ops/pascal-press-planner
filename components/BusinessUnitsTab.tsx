@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
+import CouponUsagePanel from './CouponUsagePanel';
 import MonthRangePicker, { recentQuarters, monthRangeToDates, type MonthRange } from './MonthRangePicker';
 import DailyRevenueTrend from './DailyRevenueTrend';
 import EhcHubspotOverview from './EhcHubspotOverview';
@@ -544,6 +545,10 @@ export default function BusinessUnitsTab() {
                 <MetricCard label="Free Trials Started" value={data.current.trialsStarted} prevValue={data.prev.trialsStarted} fmt="number"
                   detail="every trial started, incl. school imports" />
               </div>
+            )}
+
+            {(brand === 'etz' || brand === 'blake') && (
+              <CouponUsagePanel brand={brand} start={data.period.start} end={data.period.end} accent={color} />
             )}
 
             {/* Sparkline */}
