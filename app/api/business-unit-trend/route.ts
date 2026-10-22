@@ -1,7 +1,8 @@
 /**
  * GET /api/business-unit-trend?brand=pp|etz|ehc|blake
  *
- * Returns last 12 months of revenue, orders, and (for ETZ/EHC) trial counts.
+ * Returns last 12 months of revenue, orders, and (for ETZ/EHC) trial counts, plus `lastYear`: revenue and orders for
+ * the same 12 months a year earlier (the latest month, if still in progress, is compared over the same days).
  * Cached for 30 minutes — historical months never change so this is safe.
  *
  * Key optimisation: HubSpot trials use ONE bulk search covering all 12 months,
@@ -57,8 +58,11 @@ function monthDateRange(month: string): { start: string; end: string } {
   return { start: `${month}-01`, end: `${month}-${String(days).padStart(2, '0')}` };
 }
 
-async function fetchRevenue(brand: BrandParam, month: string): Promise<{ revenue: number; orders: number }> {
-  const { start, end } = monthDateRange(month);
+async function fetchRevenue(brand: BrandParam, month: string, throughDay?: number): Promise<{ revenue: number; orders: number }> {
+  const full = monthDateRange(month);
+  const start = full.start;
+  // when given, stop at this day of the month (same-days comparison for a month still in progress)
+  const end = throughDay ? `${month}-${String(Math.min(throughDay, Number(full.end.slice(8, 10)))).padStart(2, '0')}` : full.end;
   try {
     let rev;
     switch (brand) {
@@ -162,10 +166,13 @@ export async function GET(request: Request) {
 
   // Revenue fetches (12 months in parallel), the single HubSpot bulk trials
   // search, and the bulk new/returning customer trend all run together.
-  const [revResults, trialsByMonth, customerTrend] = await Promise.all([
+  const todayDay = Number(toYMD(new Date()).slice(8, 10));
+  const lastYearMonths = months.map(m => `${Number(m.slice(0, 4)) - 1}${m.slice(4)}`);
+  const [revResults, trialsByMonth, customerTrend, lyResults] = await Promise.all([
     Promise.allSettled(months.map(m => fetchRevenue(brand, m))),
     hasTrials ? fetchAllTrialsByMonth(pipelineLabel, months[0]!) : Promise.resolve(new Map<string, number>()),
     fetchCustomerTrend(brand, months).catch(() => ({} as Record<string, CustomerTrendMonth>)),
+    Promise.allSettled(lastYearMonths.map((m, i) => fetchRevenue(brand, m, i === months.length - 1 ? todayDay : undefined))),
   ]);
 
   const data = months.map((month, i) => {
@@ -184,5 +191,11 @@ export async function GET(request: Request) {
     };
   });
 
-  return NextResponse.json({ brand, months: data });
+  const lastYear = lastYearMonths.map((month, i) => {
+    const r = lyResults[i];
+    const rev = r?.status === 'fulfilled' ? r.value : { revenue: 0, orders: 0 };
+    return { month, revenue: rev.revenue, orders: rev.orders };
+  });
+
+  return NextResponse.json({ brand, months: data, lastYear });
 }

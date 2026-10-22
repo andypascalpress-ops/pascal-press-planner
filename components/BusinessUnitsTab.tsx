@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import CouponUsagePanel from './CouponUsagePanel';
+import YoyPanel from './YoyPanel';
 import BlakeDownloadsPanel from './BlakeDownloadsPanel';
 import MonthRangePicker, { recentQuarters, monthRangeToDates, type MonthRange } from './MonthRangePicker';
 import DailyRevenueTrend from './DailyRevenueTrend';
@@ -273,6 +274,7 @@ export default function BusinessUnitsTab() {
   const [error,   setError]   = useState('');
 
   const [trend,        setTrend]        = useState<TrendPoint[] | null>(null);
+  const [trendLastYear, setTrendLastYear] = useState<{ month: string; revenue: number; orders: number }[] | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
 
   const [ppContacts,        setPPContacts]        = useState<PPContactData | null>(null);
@@ -301,11 +303,13 @@ export default function BusinessUnitsTab() {
   const loadTrend = useCallback(async () => {
     setTrendLoading(true);
     setTrend(null);
+    setTrendLastYear(null);
     try {
       const res = await fetch(`/api/business-unit-trend?brand=${brand}`);
       if (!res.ok) return;
       const json = await res.json();
       setTrend(json.months ?? []);
+      setTrendLastYear(json.lastYear ?? null);
     } catch { /* silent */ } finally {
       setTrendLoading(false);
     }
@@ -521,6 +525,17 @@ export default function BusinessUnitsTab() {
               <MetricCard label="Returning"       value={data.current.returningCustomers} prevValue={data.prev.returningCustomers} fmt="number" />
               <MetricCard label="CAC"             value={data.current.cac}              prevValue={data.prev.cac}              fmt="currency" />
             </div>
+
+            <YoyPanel
+              brand={brand}
+              range={range}
+              customStart={range === 'custom' ? monthRangeToDates(customMonths, todayYmdSydney()).start : undefined}
+              customEnd={range === 'custom' ? monthRangeToDates(customMonths, todayYmdSydney()).end : undefined}
+              mainYoyData={yoy ? (data as never) : null}
+              trend={trend}
+              trendLastYear={trendLastYear}
+              accent={color}
+            />
 
             {brand === 'etz' && data.current.trialsSource === 'ums' && data.current.trialsFamilies != null ? (
               <div className="bg-white rounded-xl border border-gray-200 p-4">
