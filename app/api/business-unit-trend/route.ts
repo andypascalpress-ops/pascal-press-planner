@@ -1,8 +1,9 @@
 /**
  * GET /api/business-unit-trend?brand=pp|etz|ehc|blake
  *
- * Returns last 12 months of revenue, orders, and (for ETZ/EHC) trial counts, plus `lastYear`: revenue and orders for
- * the same 12 months a year earlier (the latest month, if still in progress, is compared over the same days).
+ * Returns last 12 months of revenue, orders, and (for ETZ/EHC) trial counts.
+ * With ?part=lastyear it returns only `lastYear`: revenue and orders for the same 12 months a year earlier
+ * (the latest month, if still in progress, is compared over the same days).
  * Cached for 30 minutes — historical months never change so this is safe.
  *
  * Key optimisation: HubSpot trials use ONE bulk search covering all 12 months,
@@ -13,6 +14,7 @@ import { fetchPPRevenue, fetchBlakeRevenue, fetchPPCustomerTrend, fetchBlakeCust
 import { fetchETZStripeRevenue, fetchHSCStripeRevenue, fetchETZCustomerTrend, fetchHSCCustomerTrend } from '@/lib/stripe-revenue';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 // Deliberately uncached: an unstable_cache wrapper here previously served
 // stale/empty data indefinitely across deploys (a Map return value gets
@@ -168,11 +170,22 @@ export async function GET(request: Request) {
   // search, and the bulk new/returning customer trend all run together.
   const todayDay = Number(toYMD(new Date()).slice(8, 10));
   const lastYearMonths = months.map(m => `${Number(m.slice(0, 4)) - 1}${m.slice(4)}`);
-  const [revResults, trialsByMonth, customerTrend, lyResults] = await Promise.all([
+
+  // ?part=lastyear: only the same months a year earlier (slower, so it is its own request and cached for an hour)
+  if (searchParams.get('part') === 'lastyear') {
+    const ly = await Promise.allSettled(lastYearMonths.map((m, i) => fetchRevenue(brand, m, i === months.length - 1 ? todayDay : undefined)));
+    const lastYear = lastYearMonths.map((month, i) => {
+      const r = ly[i];
+      const rev = r?.status === 'fulfilled' ? r.value : { revenue: 0, orders: 0 };
+      return { month, revenue: rev.revenue, orders: rev.orders };
+    });
+    return NextResponse.json({ brand, lastYear }, { headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' } });
+  }
+
+  const [revResults, trialsByMonth, customerTrend] = await Promise.all([
     Promise.allSettled(months.map(m => fetchRevenue(brand, m))),
     hasTrials ? fetchAllTrialsByMonth(pipelineLabel, months[0]!) : Promise.resolve(new Map<string, number>()),
     fetchCustomerTrend(brand, months).catch(() => ({} as Record<string, CustomerTrendMonth>)),
-    Promise.allSettled(lastYearMonths.map((m, i) => fetchRevenue(brand, m, i === months.length - 1 ? todayDay : undefined))),
   ]);
 
   const data = months.map((month, i) => {
@@ -191,11 +204,5 @@ export async function GET(request: Request) {
     };
   });
 
-  const lastYear = lastYearMonths.map((month, i) => {
-    const r = lyResults[i];
-    const rev = r?.status === 'fulfilled' ? r.value : { revenue: 0, orders: 0 };
-    return { month, revenue: rev.revenue, orders: rev.orders };
-  });
-
-  return NextResponse.json({ brand, months: data, lastYear });
+  return NextResponse.json({ brand, months: data });
 }

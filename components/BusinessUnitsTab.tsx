@@ -300,6 +300,17 @@ export default function BusinessUnitsTab() {
     }
   }, [brand, range, yoy, customMonths]);
 
+  // same 12 months a year earlier for the Year over year chart: slower, so it loads on its own
+  useEffect(() => {
+    let cancelled = false;
+    setTrendLastYear(null);
+    fetch(`/api/business-unit-trend?brand=${brand}&part=lastyear`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => { if (!cancelled && j?.lastYear) setTrendLastYear(j.lastYear); })
+      .catch(() => { /* chart simply stays hidden */ });
+    return () => { cancelled = true; };
+  }, [brand]);
+
   const loadTrend = useCallback(async () => {
     setTrendLoading(true);
     setTrend(null);
@@ -309,7 +320,6 @@ export default function BusinessUnitsTab() {
       if (!res.ok) return;
       const json = await res.json();
       setTrend(json.months ?? []);
-      setTrendLastYear(json.lastYear ?? null);
     } catch { /* silent */ } finally {
       setTrendLoading(false);
     }
