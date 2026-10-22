@@ -42,6 +42,8 @@ export interface EtzReportData {
   engagement: { cur: EtzEngagement; prior: EtzEngagement } | null;
   spend: { google: number; meta: number; total: number; googleOk: boolean; metaOk: boolean } | null;
   marketingBudget: number;   // total monthly marketing budget
+  /** Total ad spend over the same days last month (null if it could not be read). */
+  spendPrior: number | null;
 }
 
 /** Same day-of-month one month earlier, clamped to the shorter month. */
@@ -78,7 +80,7 @@ export async function gatherEtzReportData(): Promise<EtzReportData> {
     if (!r.connected) throw new Error(`${name} source (Stripe) is not connected`);
   }
 
-  const [engC, engP, siteC, chanRev, spendC, prodC, umsC, umsP] = await Promise.all([
+  const [engC, engP, siteC, chanRev, spendC, prodC, umsC, umsP, spendPr] = await Promise.all([
     optional(fetchEtzSiteEngagement(monthStart, yesterday, true)),
     optional(fetchEtzSiteEngagement(pStart, pEnd, true)),
     optional(fetchEtzFunnelTraffic(monthStart, yesterday, false)),
@@ -87,6 +89,7 @@ export async function gatherEtzReportData(): Promise<EtzReportData> {
     optional(fetchStripeProductMap(process.env.STRIPE_SECRET_KEY ?? '', monthStart, yesterday)),
     umsConfigured() ? optional(fetchUmsTrials(monthStart, yesterday)) : Promise.resolve(null),
     umsConfigured() ? optional(fetchUmsTrials(pStart, pEnd)) : Promise.resolve(null),
+    optional(etzSpend(pStart, pEnd)),
   ]);
   const useUms = Boolean(umsC && umsP);
 
@@ -162,5 +165,6 @@ export async function gatherEtzReportData(): Promise<EtzReportData> {
     engagement: engC && engP ? { cur: engC, prior: engP } : null,
     spend: spendC,
     marketingBudget: ETZ_MONTHLY_MARKETING_BUDGET,
+    spendPrior: spendPr ? spendPr.total : null,
   };
 }

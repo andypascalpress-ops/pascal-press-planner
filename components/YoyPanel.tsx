@@ -62,8 +62,10 @@ export default function YoyPanel({
       { label: 'New customers', cur: c.newCustomers, prev: p.newCustomers, fmt: (v: number) => NUM.format(v), goodWhenUp: true },
       { label: 'Returning customers', cur: c.returningCustomers, prev: p.returningCustomers, fmt: (v: number) => NUM.format(v), goodWhenUp: true },
       { label: 'Ad spend', cur: c.spend, prev: p.spend, fmt: (v: number) => AUD.format(v), goodWhenUp: false },
-      { label: 'Return on ad spend', cur: c.roas, prev: p.roas, fmt: (v: number) => `${v}x`, goodWhenUp: true },
-    ].filter(r => !(r.cur === 0 && r.prev === 0));
+      { label: 'Revenue after ad spend', cur: c.revenue - c.spend, prev: p.revenue - p.spend, fmt: (v: number) => AUD.format(v), goodWhenUp: true },
+    ].filter(r => !(r.cur === 0 && r.prev === 0))
+      // no ad spend (e.g. Blake) means revenue after ad spend would just repeat revenue
+      .filter(r => !(r.label === 'Revenue after ad spend' && c.spend === 0 && p.spend === 0));
   }, [data]);
 
   const chart = useMemo(() => {

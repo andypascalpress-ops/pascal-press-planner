@@ -339,7 +339,7 @@ function ehcPageTwo(pdf: PDFDocument, reg: PDFFont, bold: PDFFont, d: ExecReport
   const newOrders = e.mix.new.orders;
   keyValueRows(c, mx, colTop + 22, colW, [
     ['Google Ads spend', spend === null ? 'not available' : money(spend), spend === null ? 'Could not be read today' : undefined],
-    ['Revenue per $1 of ad spend', spend && spend > 0 ? `$${(e.revenue.cur / spend).toFixed(2)}` : 'n/a', 'All EHC revenue divided by Google Ads spend'],
+    ['Revenue after ad spend', spend && spend > 0 ? money(e.revenue.cur - spend) : 'n/a', 'Revenue less Google Ads spend'],
     ['Ad spend per new subscriber', spend && newOrders > 0 ? money(spend / newOrders) : 'n/a', 'Spend divided by new orders'],
     ['Refunds', e.marketing.refunds > 0 ? `${NUM.format(e.marketing.refunds)} (${money(e.marketing.refunded)})` : 'none', 'Already taken out of revenue and orders'],
     ['Failed payment attempts', NUM.format(e.marketing.failedPayments), 'Stripe retries these automatically'],

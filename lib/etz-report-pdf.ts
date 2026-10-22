@@ -41,7 +41,10 @@ function pageOne(pdf: PDFDocument, reg: any, bold: any, d: EtzReportData, total:
         : '.'),
   ];
   if (d.spend && d.spend.total > 0) {
-    bullets.push(`• Marketing: ${money(d.spend.total)} spent on ads this month, which is ${'$' + (d.revenue.cur / d.spend.total).toFixed(2)} of revenue for every $1 of ad spend.`);
+    const after = d.revenue.cur - d.spend.total;
+    const afterPrior = d.spendPrior !== null ? d.revenue.prior - d.spendPrior : null;
+    bullets.push(`• Marketing: ${money(d.spend.total)} spent on ads this month, leaving ${money(after)} of revenue after ad spend` +
+      (afterPrior !== null ? ` (${money(afterPrior)} on the same days last month).` : '.'));
   }
   let top = callout(c, 84, 'At a glance', bullets, TINT, undefined, BLUE, INK, 8.6) + 10;
 
@@ -133,7 +136,7 @@ function pageTwo(pdf: PDFDocument, reg: any, bold: any, d: EtzReportData, total:
     keyValueRows(c, M + colW + 24, y + 22, colW, [
       ['Google Ads spend', s.googleOk ? money(s.google) : 'not available'],
       ['Meta Ads spend', s.metaOk ? money(s.meta) : 'not available'],
-      ['Revenue per $1 of ad spend', s.total > 0 ? `$${(d.revenue.cur / s.total).toFixed(2)}` : 'n/a', 'All ETZ revenue divided by all ad spend'],
+      ['Revenue after ad spend', money(d.revenue.cur - s.total), d.spendPrior !== null ? `${money(d.revenue.prior - d.spendPrior)} on the same days last month | revenue less ad spend` : 'Revenue less ad spend'],
       ['Marketing budget used', d.marketingBudget > 0 ? `${money(s.total)} of ${money(d.marketingBudget)}` : 'n/a',
         d.marketingBudget > 0 ? `${Math.round((s.total / d.marketingBudget) * 100)}% of the monthly budget, ${Math.round((d.target.daysElapsed / d.target.daysInMonth) * 100)}% of the month gone` : undefined],
     ]);

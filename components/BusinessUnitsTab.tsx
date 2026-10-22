@@ -524,7 +524,7 @@ export default function BusinessUnitsTab() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <MetricCard label="Revenue" value={data.current.revenue} prevValue={data.prev.revenue} fmt="currency" />
               <MetricCard label="Spend"   value={data.current.spend}   prevValue={data.prev.spend}   fmt="currency" />
-              <MetricCard label="ROAS"    value={data.current.roas}    prevValue={data.prev.roas}    fmt="roas"    />
+              <MetricCard label="Revenue after ad spend" value={data.current.revenue - data.current.spend} prevValue={data.prev.revenue - data.prev.spend} fmt="currency" />
               <MetricCard label="Orders"  value={data.current.orders}  prevValue={data.prev.orders}  fmt="number"  />
             </div>
 

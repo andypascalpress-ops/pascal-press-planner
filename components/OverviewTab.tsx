@@ -681,9 +681,9 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers }: {
         </div>
         {data.adsConnected && (
           <div>
-            <p className="text-xs text-gray-500 mb-0.5">Paid ROAS</p>
-            <p className={`text-lg font-bold ${roasColor(data.roas)}`}>
-              {data.roas > 0 ? `${data.roas}x` : <span className="text-gray-400 text-sm">—</span>}
+            <p className="text-xs text-gray-500 mb-0.5">Revenue after ad spend</p>
+            <p className={`text-lg font-bold ${data.revenue - (data.totalSpend ?? data.spend) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+              {(data.totalSpend ?? data.spend) > 0 ? AUD.format(data.revenue - (data.totalSpend ?? data.spend)) : <span className="text-gray-400 text-sm">—</span>}
             </p>
             {(data.totalSpend ?? data.spend) > 0 && (
               <p className="text-xs text-gray-400">
@@ -1113,10 +1113,10 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
             sub={`of ${AUD.format(pp.budget + etz.budget + hsc.budget + (blake?.adsConnected ? blake.budget : 0))} budget`}
           />
           <KpiCard
-            label="Combined ROAS"
-            value={combined.roas > 0 ? `${combined.roas}x` : '—'}
-            sub="Revenue ÷ ad spend"
-            valueClass={roasColor(combined.roas)}
+            label="Revenue after ad spend"
+            value={combined.spend > 0 ? AUD.format(combined.revenue - combined.spend) : '—'}
+            sub="Revenue less ad spend"
+            valueClass={combined.revenue - combined.spend >= 0 ? 'text-emerald-600' : 'text-red-600'}
           />
           <KpiCard
             label="Email Open Rate"
