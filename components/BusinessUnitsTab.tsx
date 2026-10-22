@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import CouponUsagePanel from './CouponUsagePanel';
 import YoyPanel from './YoyPanel';
 import BlakeDownloadsPanel from './BlakeDownloadsPanel';
@@ -50,6 +50,7 @@ interface BUData {
   products: BUProduct[];
   subscriptions: BUSubscriptions | null;
   sparkline: { date: string; revenue: number }[];
+  warnings?: string[];
   period: { label: string; start: string; end: string };
   comparison: { label: string; start: string; end: string };
 }
@@ -283,7 +284,9 @@ export default function BusinessUnitsTab() {
   const [ppSegments,        setPPSegments]        = useState<PPSegmentData | null>(null);
   const [ppSegmentsLoading, setPPSegmentsLoading] = useState(true);
 
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;   // only the latest request may update the screen
     setLoading(true);
     setError('');
     try {
@@ -292,11 +295,12 @@ export default function BusinessUnitsTab() {
         : '';
       const res = await fetch(`/api/business-unit?brand=${brand}&range=${range}&yoy=${yoy}${customQs}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setData(await res.json());
+      const json = await res.json();
+      if (seq === loadSeq.current) setData(json);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load');
+      if (seq === loadSeq.current) setError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }, [brand, range, yoy, customMonths]);
 
@@ -513,6 +517,13 @@ export default function BusinessUnitsTab() {
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">{error}</div>
         ) : data ? (
           <>
+            {data.warnings && data.warnings.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+                {data.warnings.map((w, i) => <p key={i}>{w}</p>)}
+                <button onClick={load} className="mt-1 text-xs font-semibold text-amber-900 underline">Try again</button>
+              </div>
+            )}
+
             {/* Period context */}
             <p className="text-xs text-gray-400">
               <span className="font-medium text-gray-600">{data.period.label}</span>

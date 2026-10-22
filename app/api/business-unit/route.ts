@@ -448,6 +448,10 @@ export async function GET(request: Request) {
   const compUms = compUmsR.status === 'fulfilled' ? compUmsR.value : null;
   const useUms  = Boolean(curUms && compUms);
 
+  const warnings: string[] = [];
+  if (!curRev) warnings.push('Revenue for the selected period could not be read (the sales system was busy). Please try again in a minute.');
+  if (!compRev) warnings.push('Revenue for the comparison period could not be read (the sales system was busy). Please try again in a minute.');
+
   const sparkline = sparkDays.map((date, i) => ({
     date,
     revenue: sparkR[i]?.status === 'fulfilled'
@@ -456,7 +460,7 @@ export async function GET(request: Request) {
   }));
 
   return NextResponse.json({
-    brand, range, yoy,
+    brand, range, yoy, warnings,
     period:      { start: cur.start,  end: cur.end,  label: cur.label  },
     comparison:  { start: comp.start, end: comp.end, label: comp.label },
     current:     { ...buildMetrics(curRev,  curSpend),  trialsStarted: useUms ? curUms!.trials : (curTrials ? curTrials.totalEverStarted : null), trialsFamilies: useUms ? curUms!.customers : null, trialsFamiliesBought: useUms ? curUms!.customersWhoBought : null, trialsSource: useUms ? 'ums' : 'hubspot' },

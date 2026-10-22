@@ -219,13 +219,20 @@ async function fetchStripeRevenueWithKey(
       });
       if (startingAfter) params.set('starting_after', startingAfter);
 
-      const res = await fetch(`${STRIPE_BASE}/charges?${params}`, {
-        headers: stripeHeaders(secretKey),
-        cache: 'no-store',
-      });
-      if (!res.ok) {
-        const err = await res.text();
-        throw new Error(`Stripe charges error (${res.status}): ${err.slice(0, 200)}`);
+      // a busy Stripe (429) or a hiccup (5xx) is retried with backoff rather than zeroing the whole period
+      let res: Response | null = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        res = await fetch(`${STRIPE_BASE}/charges?${params}`, {
+          headers: stripeHeaders(secretKey),
+          cache: 'no-store',
+        });
+        if (res.ok) break;
+        if (res.status !== 429 && res.status < 500) break;
+        await sleep(500 * Math.pow(2, attempt));
+      }
+      if (!res || !res.ok) {
+        const err = res ? await res.text() : '';
+        throw new Error(`Stripe charges error (${res?.status ?? 'no response'}): ${err.slice(0, 200)}`);
       }
 
       const data: StripeList<StripeCharge> = await res.json();
