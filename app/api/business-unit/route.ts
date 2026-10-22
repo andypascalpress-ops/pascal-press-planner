@@ -469,5 +469,8 @@ export async function GET(request: Request) {
     subscriptions: subs,
     sparkline,
     connected: true,
-  });
+  }, warnings.length === 0 && (range === 'custom' || range === 'lastmonth')
+    // finished or chosen periods barely change and are slow to build, so repeat views are served from the cache
+    ? { headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' } }
+    : undefined);
 }

@@ -398,7 +398,12 @@ export default function BusinessUnitsTab() {
     }
   }, [showContactsBreakdown]);
 
-  useEffect(() => { load(); }, [load]);
+  // a quarter or month range is slow to build, so wait until the clicking stops before asking for it
+  useEffect(() => {
+    if (range !== 'custom') { load(); return; }
+    const t = setTimeout(load, 700);
+    return () => clearTimeout(t);
+  }, [load, range]);
   useEffect(() => { loadTrend(); }, [loadTrend]);
   useEffect(() => { loadPPContacts(); }, [loadPPContacts]);
   useEffect(() => { loadPPSegments(); }, [loadPPSegments]);
