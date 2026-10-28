@@ -1511,3 +1511,27 @@ export async function fetchEtzSiteEngagement(
     avgSessionSeconds: parseFloat(m[2]?.value ?? '0') || 0,
   };
 }
+
+// ---------------------------------------------------------------------------
+// ETZ traffic by hostname (diagnostic): which addresses record the traffic, staging and test hosts included
+// ---------------------------------------------------------------------------
+
+export interface HostnameRow { hostname: string; sessions: number; newUsers: number }
+
+export async function fetchEtzHostnameBreakdown(startDate: string, endDate: string): Promise<HostnameRow[]> {
+  if (!isETZConnected()) throw new Error('ETZ GA4 is not connected');
+  const accessToken = await getAccessToken();
+  const data = await runReportOnProperty(accessToken, GA4_ETZ_BASE, {
+    dateRanges: [{ startDate, endDate }],
+    dimensions: [{ name: 'hostname' }],
+    metrics: [{ name: 'sessions' }, { name: 'newUsers' }],
+    orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+    limit: 25,
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (data.rows ?? []).map((r: any) => ({
+    hostname: String(r.dimensionValues?.[0]?.value ?? '(not set)'),
+    sessions: parseInt(r.metricValues?.[0]?.value ?? '0', 10) || 0,
+    newUsers: parseInt(r.metricValues?.[1]?.value ?? '0', 10) || 0,
+  }));
+}
