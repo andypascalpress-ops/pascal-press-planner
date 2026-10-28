@@ -13,7 +13,6 @@ import { fetchChannelRevenue, fetchEtzFunnelTraffic, fetchEtzAppTraffic, fetchEt
 import { fetchTrialConversion, fetchOfflineTrials } from '@/lib/hubspot-trials';
 import { etzSpend } from '@/lib/etz-spend';
 import { fetchUmsTrials, umsConfigured } from '@/lib/ums-trials';
-import { fetchEtzAppLandingPages, fetchEtzTopEvents } from '@/lib/google-analytics';
 import { ETZ_MONTHLY_REVENUE_TARGETS, MONTHLY_GOOGLE_BUDGETS, ETZ_MONTHLY_MARKETING_BUDGET } from '@/lib/constants';
 
 export const dynamic = 'force-dynamic';
@@ -188,10 +187,6 @@ export async function GET(request: Request) {
   const monthlyTarget = ETZ_MONTHLY_REVENUE_TARGETS[monthNum] ?? 0;
   const monthlyBudget = MONTHLY_GOOGLE_BUDGETS['Excel Test Zone'] ?? 0;
 
-  // TEMPORARY diagnostics (?diag=1): top app landing pages and top events, to find the register page and sign-up event
-  const diag = sp.get('diag') === '1'
-    ? await Promise.allSettled([fetchEtzAppLandingPages(start, end), fetchEtzTopEvents(start, end)])
-    : null;
   const umsRes = umsPromise ? await umsPromise : null;
   const ums = umsRes === null
     ? { configured: false as const }
@@ -206,7 +201,6 @@ export async function GET(request: Request) {
     connected: true,
     failed,
     ums,
-    diag: diag ? { landingPages: diag[0].status === 'fulfilled' ? diag[0].value : String((diag[0] as PromiseRejectedResult).reason), events: diag[1].status === 'fulfilled' ? diag[1].value : String((diag[1] as PromiseRejectedResult).reason) } : undefined,
     period: { start, end, days: len },
     comparison: { start: pStart, end: pEnd, label: comparisonLabel },
     revenue: { current: revenue, prior: revenueP, pctChange: pct(revenue, revenueP) },
