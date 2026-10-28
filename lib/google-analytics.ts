@@ -1535,3 +1535,45 @@ export async function fetchEtzHostnameBreakdown(startDate: string, endDate: stri
     newUsers: parseInt(r.metricValues?.[1]?.value ?? '0', 10) || 0,
   }));
 }
+
+// ---------------------------------------------------------------------------
+// ETZ diagnostics: top landing pages on the app and top events (find the register page and sign-up event)
+// ---------------------------------------------------------------------------
+
+export async function fetchEtzAppLandingPages(startDate: string, endDate: string): Promise<{ page: string; sessions: number; newUsers: number }[]> {
+  if (!isETZConnected()) throw new Error('ETZ GA4 is not connected');
+  const accessToken = await getAccessToken();
+  const data = await runReportOnProperty(accessToken, GA4_ETZ_BASE, {
+    dateRanges: [{ startDate, endDate }],
+    dimensions: [{ name: 'landingPage' }],
+    metrics: [{ name: 'sessions' }, { name: 'newUsers' }],
+    dimensionFilter: { filter: { fieldName: 'hostname', stringFilter: { matchType: 'EXACT', value: 'app.exceltestzone.com.au' } } },
+    orderBys: [{ metric: { metricName: 'newUsers' }, desc: true }],
+    limit: 20,
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (data.rows ?? []).map((r: any) => ({
+    page: String(r.dimensionValues?.[0]?.value ?? ''),
+    sessions: parseInt(r.metricValues?.[0]?.value ?? '0', 10) || 0,
+    newUsers: parseInt(r.metricValues?.[1]?.value ?? '0', 10) || 0,
+  }));
+}
+
+export async function fetchEtzTopEvents(startDate: string, endDate: string): Promise<{ event: string; count: number; users: number }[]> {
+  if (!isETZConnected()) throw new Error('ETZ GA4 is not connected');
+  const accessToken = await getAccessToken();
+  const data = await runReportOnProperty(accessToken, GA4_ETZ_BASE, {
+    dateRanges: [{ startDate, endDate }],
+    dimensions: [{ name: 'eventName' }],
+    metrics: [{ name: 'eventCount' }, { name: 'totalUsers' }],
+    dimensionFilter: { filter: { fieldName: 'hostname', stringFilter: { matchType: 'CONTAINS', value: 'exceltestzone.com.au' } } },
+    orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
+    limit: 40,
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (data.rows ?? []).map((r: any) => ({
+    event: String(r.dimensionValues?.[0]?.value ?? ''),
+    count: parseInt(r.metricValues?.[0]?.value ?? '0', 10) || 0,
+    users: parseInt(r.metricValues?.[1]?.value ?? '0', 10) || 0,
+  }));
+}
