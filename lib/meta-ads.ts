@@ -267,3 +267,27 @@ export async function fetchMetaCampaigns(
 
   return results.sort((a, b) => b.spend - a.spend);
 }
+
+// ---------------------------------------------------------------------------
+// Ads list (names and status only): used to confirm which ads the planner can see in an ad account
+// ---------------------------------------------------------------------------
+
+export interface MetaAdListItem { name: string; status: string; campaign: string; adset: string }
+
+export async function fetchMetaAdsList(adAccountId: string): Promise<MetaAdListItem[]> {
+  if (!ACCESS_TOKEN || !adAccountId) return [];
+  const out: MetaAdListItem[] = [];
+  let next: string | null = `${META_GRAPH_API}/${adAccountId}/ads?${new URLSearchParams({
+    fields: 'name,effective_status,campaign{name},adset{name}', limit: '100', access_token: ACCESS_TOKEN,
+  })}`;
+  for (let page = 0; next && page < 10; page++) {
+    const res: Response = await fetch(next, { cache: 'no-store' });
+    const json = await res.json().catch(() => null) as any;
+    if (!res.ok || !json || json.error) throw new Error(`Meta ads ${adAccountId}: ${String(json?.error?.message ?? res.status).replace(/access_token=[^&\s]+/g, 'access_token=…')}`);
+    for (const a of json.data ?? []) {
+      out.push({ name: String(a.name ?? ''), status: String(a.effective_status ?? ''), campaign: String(a.campaign?.name ?? ''), adset: String(a.adset?.name ?? '') });
+    }
+    next = json.paging?.next ?? null;
+  }
+  return out;
+}
