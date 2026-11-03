@@ -35,11 +35,26 @@ export const META_ETZ_OWN_ACCOUNT_ID = OWN_RAW ? (OWN_RAW.startsWith('act_') ? O
 /** The shared account's ETZ campaigns are only read when it is a different account from the new ETZ one. */
 const readLegacyEtz = () => META_ETZ_ACCOUNT_ID !== '' && META_ETZ_ACCOUNT_ID !== META_ETZ_OWN_ACCOUNT_ID;
 
+/**
+ * Both accounts ran side by side until 3 Nov 2026. From 4 Nov 2026 only the new ETZ account counts: spend from ETZ-named
+ * campaigns in the shared account is read up to and including this date, and ignored after it.
+ * (Override with META_ETZ_LEGACY_END=YYYY-MM-DD if the hand-over date changes.)
+ */
+const LEGACY_ETZ_LAST_DAY = (process.env.META_ETZ_LEGACY_END ?? '').trim() || '2026-11-03';
+
+/** The part of [start, end] on or before the legacy cut-off, or null when the range is entirely after it. */
+function legacyRange(startDate: string, endDate: string): { start: string; end: string } | null {
+  if (startDate > LEGACY_ETZ_LAST_DAY) return null;
+  return { start: startDate, end: endDate > LEGACY_ETZ_LAST_DAY ? LEGACY_ETZ_LAST_DAY : endDate };
+}
+
 /** Total Excel Test Zone Meta spend for a range: the new ETZ account plus ETZ-named campaigns in the shared account. */
 export async function fetchEtzMetaSpend(startDate: string, endDate: string): Promise<number> {
   const [own, legacy] = await Promise.all([
     META_ETZ_OWN_ACCOUNT_ID ? fetchMetaSpend(META_ETZ_OWN_ACCOUNT_ID, startDate, endDate) : Promise.resolve(0),
-    readLegacyEtz() ? fetchMetaSpend(META_ETZ_ACCOUNT_ID, startDate, endDate, { contains: 'ETZ' }) : Promise.resolve(0),
+    readLegacyEtz() && legacyRange(startDate, endDate)
+      ? fetchMetaSpend(META_ETZ_ACCOUNT_ID, legacyRange(startDate, endDate)!.start, legacyRange(startDate, endDate)!.end, { contains: 'ETZ' })
+      : Promise.resolve(0),
   ]);
   return own + legacy;
 }
@@ -48,7 +63,9 @@ export async function fetchEtzMetaSpend(startDate: string, endDate: string): Pro
 export async function fetchEtzMetaCampaigns(startDate: string, endDate: string): Promise<MetaCampaign[]> {
   const [own, legacy] = await Promise.all([
     META_ETZ_OWN_ACCOUNT_ID ? fetchMetaCampaigns(META_ETZ_OWN_ACCOUNT_ID, startDate, endDate) : Promise.resolve([] as MetaCampaign[]),
-    readLegacyEtz() ? fetchMetaCampaigns(META_ETZ_ACCOUNT_ID, startDate, endDate, { contains: 'ETZ' }) : Promise.resolve([] as MetaCampaign[]),
+    readLegacyEtz() && legacyRange(startDate, endDate)
+      ? fetchMetaCampaigns(META_ETZ_ACCOUNT_ID, legacyRange(startDate, endDate)!.start, legacyRange(startDate, endDate)!.end, { contains: 'ETZ' })
+      : Promise.resolve([] as MetaCampaign[]),
   ]);
   return [...own, ...legacy].sort((a, b) => b.spend - a.spend);
 }
