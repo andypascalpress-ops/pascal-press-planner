@@ -22,6 +22,37 @@ const ACCESS_TOKEN   = process.env.META_ADS_ACCESS_TOKEN   ?? '';
 export const META_PP_ACCOUNT_ID  = process.env.META_PP_AD_ACCOUNT_ID  ?? '';
 export const META_ETZ_ACCOUNT_ID = process.env.META_ETZ_AD_ACCOUNT_ID ?? '';
 
+/**
+ * Excel Test Zone's own, separate ad account (set up Oct 2026), e.g. "act_961174946972901" or just the number.
+ * Optional: when unset, ETZ spend comes only from the shared account as before.
+ *   META_ETZ_OWN_AD_ACCOUNT_ID  - the new ETZ account. Everything in it is ETZ, so no campaign filter is applied.
+ * Earlier ETZ campaigns still sit in the shared account (names contain "ETZ"), so ETZ spend is the sum of both and
+ * history stays complete without a cut-over date. Pascal Press keeps reading the shared account (excluding "ETZ").
+ */
+const OWN_RAW = (process.env.META_ETZ_OWN_AD_ACCOUNT_ID ?? '').trim();
+export const META_ETZ_OWN_ACCOUNT_ID = OWN_RAW ? (OWN_RAW.startsWith('act_') ? OWN_RAW : `act_${OWN_RAW}`) : '';
+
+/** The shared account's ETZ campaigns are only read when it is a different account from the new ETZ one. */
+const readLegacyEtz = () => META_ETZ_ACCOUNT_ID !== '' && META_ETZ_ACCOUNT_ID !== META_ETZ_OWN_ACCOUNT_ID;
+
+/** Total Excel Test Zone Meta spend for a range: the new ETZ account plus ETZ-named campaigns in the shared account. */
+export async function fetchEtzMetaSpend(startDate: string, endDate: string): Promise<number> {
+  const [own, legacy] = await Promise.all([
+    META_ETZ_OWN_ACCOUNT_ID ? fetchMetaSpend(META_ETZ_OWN_ACCOUNT_ID, startDate, endDate) : Promise.resolve(0),
+    readLegacyEtz() ? fetchMetaSpend(META_ETZ_ACCOUNT_ID, startDate, endDate, { contains: 'ETZ' }) : Promise.resolve(0),
+  ]);
+  return own + legacy;
+}
+
+/** Excel Test Zone campaigns for a range, from both the new ETZ account and the shared account. */
+export async function fetchEtzMetaCampaigns(startDate: string, endDate: string): Promise<MetaCampaign[]> {
+  const [own, legacy] = await Promise.all([
+    META_ETZ_OWN_ACCOUNT_ID ? fetchMetaCampaigns(META_ETZ_OWN_ACCOUNT_ID, startDate, endDate) : Promise.resolve([] as MetaCampaign[]),
+    readLegacyEtz() ? fetchMetaCampaigns(META_ETZ_ACCOUNT_ID, startDate, endDate, { contains: 'ETZ' }) : Promise.resolve([] as MetaCampaign[]),
+  ]);
+  return [...own, ...legacy].sort((a, b) => b.spend - a.spend);
+}
+
 /** Optional campaign-name filter (case-insensitive substring match). */
 export interface MetaCampaignFilter {
   contains?: string;  // campaign name MUST contain this string

@@ -8,6 +8,8 @@ import {
   fetchMetaCampaigns,
   META_PP_ACCOUNT_ID,
   META_ETZ_ACCOUNT_ID,
+  META_ETZ_OWN_ACCOUNT_ID,
+  fetchEtzMetaCampaigns,
   type MetaCampaign,
 } from '@/lib/meta-ads';
 
@@ -48,7 +50,7 @@ export async function GET(request: Request) {
 
   const [ppResult, etzResult] = await Promise.allSettled([
     fetchMetaCampaigns(META_PP_ACCOUNT_ID,  start, end, { excludes: 'ETZ' }),
-    fetchMetaCampaigns(META_ETZ_ACCOUNT_ID, start, end, { contains: 'ETZ' }),
+    fetchEtzMetaCampaigns(start, end),
   ]);
 
   const ppCampaigns  = ppResult.status  === 'fulfilled' ? ppResult.value  : [];
@@ -71,7 +73,7 @@ export async function GET(request: Request) {
     etz: {
       campaigns: etzCampaigns,
       totals:    makeTotals(etzCampaigns),
-      connected: META_ETZ_ACCOUNT_ID !== '' && !etzError,
+      connected: (META_ETZ_ACCOUNT_ID !== '' || META_ETZ_OWN_ACCOUNT_ID !== '') && !etzError,
       error:     etzError,
     },
   }, {

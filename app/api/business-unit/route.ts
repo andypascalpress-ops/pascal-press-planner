@@ -12,7 +12,7 @@ import { NextResponse } from 'next/server';
 import { fetchPPRevenue, fetchBlakeRevenue } from '@/lib/bigcommerce-revenue';
 import { fetchETZStripeRevenue, fetchHSCStripeRevenue, fetchStripeProductMap, fetchStripeSubscriptionSummary } from '@/lib/stripe-revenue';
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
-import { fetchMetaSpend, META_PP_ACCOUNT_ID, META_ETZ_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
+import { fetchMetaSpend, fetchEtzMetaSpend, META_PP_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
 import { PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
 import { fetchTrialConversion } from '@/lib/hubspot-trials';
 import { fetchUmsTrials, umsConfigured } from '@/lib/ums-trials';
@@ -378,7 +378,7 @@ export async function GET(request: Request) {
               : ppCfg
                 ? fetchMonthlySpend(ppCfg, s, e, { contains: 'ETZ' }).then(r => r.reduce((a, v) => a + v.actualSpend, 0))
                 : Promise.resolve(0),
-            fetchMetaSpend(META_ETZ_ACCOUNT_ID, s, e, { contains: 'ETZ' } satisfies MetaCampaignFilter).catch(() => 0),
+            fetchEtzMetaSpend(s, e).catch(() => 0),
           ]);
           return gAds + meta + chatgptETZ;
         }

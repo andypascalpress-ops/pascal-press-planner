@@ -14,7 +14,7 @@ import { scopeEtzProdHosts } from '@/lib/ga4-scope';
 import { NextResponse } from 'next/server';
 import { fetchPPRevenue }       from '@/lib/bigcommerce-revenue';
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
-import { fetchMetaSpend, META_PP_ACCOUNT_ID, META_ETZ_ACCOUNT_ID } from '@/lib/meta-ads';
+import { fetchMetaSpend, fetchEtzMetaSpend, META_PP_ACCOUNT_ID } from '@/lib/meta-ads';
 
 export const dynamic    = 'force-dynamic';
 export const maxDuration = 30;
@@ -184,8 +184,8 @@ export async function GET() {
     googleAdsSpendForDay('etz', sevenDaysAgo),
     fetchMetaSpend(META_PP_ACCOUNT_ID,  today,        today).catch(() => 0),
     fetchMetaSpend(META_PP_ACCOUNT_ID,  sevenDaysAgo, sevenDaysAgo).catch(() => 0),
-    fetchMetaSpend(META_ETZ_ACCOUNT_ID, today,        today).catch(() => 0),
-    fetchMetaSpend(META_ETZ_ACCOUNT_ID, sevenDaysAgo, sevenDaysAgo).catch(() => 0),
+    fetchEtzMetaSpend(today,        today).catch(() => 0),
+    fetchEtzMetaSpend(sevenDaysAgo, sevenDaysAgo).catch(() => 0),
   ]);
 
   // GA4 traffic (needs token first)

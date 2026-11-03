@@ -13,7 +13,7 @@ import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-reven
 import { fetchEmailCampaigns } from '@/lib/hubspot-email';
 import { fetchPPWebsiteConversion, fetchETZWebsiteConversion } from '@/lib/google-analytics';
 import { MONTHLY_GOOGLE_BUDGETS, PP_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_REVENUE_TARGETS, BLAKE_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_MARKETING_BUDGET, ETZ_MONTHLY_MARKETING_BUDGET, PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
-import { fetchMetaSpend, META_PP_ACCOUNT_ID, META_ETZ_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
+import { fetchMetaSpend, fetchEtzMetaSpend, META_PP_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
 import { OverviewAlert } from '@/lib/types';
 
 // Previous-month PP revenue never changes once the month closes — cache it for 24 h.
@@ -160,10 +160,10 @@ export async function GET(request: Request) {
       fetchPPWebsiteConversion(startDate, endDate, isMonthly ? 'alignMonth' : 'priorEqual'),
       fetchETZWebsiteConversion(startDate, endDate, isMonthly ? 'alignMonth' : 'priorEqual'),
       fetchPPRevenueCached(prevMonth, prevStart, prevEnd),
-      // Meta (Facebook) Ads — PP and ETZ share one account; split by campaign name.
-      // PP campaigns do NOT contain "ETZ"; ETZ campaigns do.
+      // Meta (Facebook) Ads — PP reads the shared account (excluding ETZ campaigns); ETZ reads its own new account
+      // plus any ETZ-named campaigns left in the shared account.
       fetchMetaSpend(META_PP_ACCOUNT_ID,  startDate, endDate, { excludes: 'ETZ' } satisfies MetaCampaignFilter),
-      fetchMetaSpend(META_ETZ_ACCOUNT_ID, startDate, endDate, { contains: 'ETZ' } satisfies MetaCampaignFilter),
+      fetchEtzMetaSpend(startDate, endDate),
     ]);
 
   const ppSpend  = ppAdsResult.status  === 'fulfilled'
