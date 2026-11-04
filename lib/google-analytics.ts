@@ -1577,3 +1577,69 @@ export async function fetchEtzTopEvents(startDate: string, endDate: string): Pro
     users: parseInt(r.metricValues?.[1]?.value ?? '0', 10) || 0,
   }));
 }
+
+// ---------------------------------------------------------------------------
+// ETZ: people who came from the main website (exceltestzone.com.au) to the app
+// site and signed up. Counts only, from GA4. A "main website" session on the app
+// is one whose session source contains exceltestzone.com.au. If cross-domain
+// linking keeps the original source instead, those people are not counted, so
+// the figure is a lower bound. The sign-up event is ua_sign_up.
+// ---------------------------------------------------------------------------
+
+export interface EtzWebsiteToAppFunnel {
+  connected:            boolean;
+  fromMainSite:         { sessions: number; newUsers: number };
+  signUpsFromMainSite:  { newUsers: number; returningUsers: number; total: number };
+  signUpsAll:           { newUsers: number; returningUsers: number; total: number };
+  topSources:           { source: string; sessions: number }[];
+  eventsFromMainSite:   { event: string; users: number }[];
+}
+
+export async function fetchEtzWebsiteToAppFunnel(startDate: string, endDate: string): Promise<EtzWebsiteToAppFunnel> {
+  const empty: EtzWebsiteToAppFunnel = {
+    connected: false, fromMainSite: { sessions: 0, newUsers: 0 },
+    signUpsFromMainSite: { newUsers: 0, returningUsers: 0, total: 0 },
+    signUpsAll: { newUsers: 0, returningUsers: 0, total: 0 },
+    topSources: [], eventsFromMainSite: [],
+  };
+  if (!isConnected() || !GA4_ETZ_PROPERTY_ID) return empty;
+
+  const f = (fieldName: string, matchType: string, value: string) => ({ filter: { fieldName, stringFilter: { matchType, value } } });
+  const appHost = f('hostname', 'EXACT', 'app.exceltestzone.com.au');
+  const fromSite = f('sessionSource', 'CONTAINS', 'exceltestzone.com.au');
+  const signUp = f('eventName', 'EXACT', 'ua_sign_up');
+  const and = (...expressions: object[]) => ({ andGroup: { expressions } });
+  const dateRanges = [{ startDate, endDate }];
+  const n = (row: any, i: number) => parseInt(row?.metricValues?.[i]?.value ?? '0', 10) || 0;
+  const dv = (row: any, i: number) => (row?.dimensionValues?.[i]?.value ?? '') as string;
+
+  try {
+    const token = await getAccessToken();
+    const run = (body: object) => runReportOnProperty(token, GA4_ETZ_BASE, { dateRanges, ...body });
+    const [src, sessions, signMain, signAll, events] = await Promise.all([
+      run({ dimensions: [{ name: 'sessionSource' }], metrics: [{ name: 'sessions' }], dimensionFilter: appHost,
+            orderBys: [{ metric: { metricName: 'sessions' }, desc: true }], limit: 8 }),
+      run({ metrics: [{ name: 'sessions' }, { name: 'newUsers' }], dimensionFilter: and(appHost, fromSite) }),
+      run({ dimensions: [{ name: 'newVsReturning' }], metrics: [{ name: 'totalUsers' }], dimensionFilter: and(appHost, fromSite, signUp) }),
+      run({ dimensions: [{ name: 'newVsReturning' }], metrics: [{ name: 'totalUsers' }], dimensionFilter: and(appHost, signUp) }),
+      run({ dimensions: [{ name: 'eventName' }], metrics: [{ name: 'totalUsers' }], dimensionFilter: and(appHost, fromSite),
+            orderBys: [{ metric: { metricName: 'totalUsers' }, desc: true }], limit: 15 }),
+    ]);
+    const split = (d: any) => {
+      let newUsers = 0, returningUsers = 0;
+      for (const r of d.rows ?? []) { if (dv(r, 0) === 'new') newUsers += n(r, 0); else returningUsers += n(r, 0); }
+      return { newUsers, returningUsers, total: newUsers + returningUsers };
+    };
+    return {
+      connected: true,
+      fromMainSite: { sessions: n(sessions.rows?.[0], 0), newUsers: n(sessions.rows?.[0], 1) },
+      signUpsFromMainSite: split(signMain),
+      signUpsAll: split(signAll),
+      topSources: (src.rows ?? []).map((r: any) => ({ source: dv(r, 0), sessions: n(r, 0) })),
+      eventsFromMainSite: (events.rows ?? []).map((r: any) => ({ event: dv(r, 0), users: n(r, 0) })),
+    };
+  } catch (err) {
+    console.error('[google-analytics fetchEtzWebsiteToAppFunnel]', err);
+    return empty;
+  }
+}
