@@ -1,8 +1,8 @@
 /**
  * GET /api/etz-website-to-app?start=YYYY-MM-DD&end=YYYY-MM-DD
  *
- * Aggregate counts only: sessions and new users on app.exceltestzone.com.au that arrived from
- * exceltestzone.com.au, and how many people signed up (GA4 event ua_sign_up), split new / returning.
+ * Aggregate counts only, from the GA4 funnel report: people on exceltestzone.com.au who then visited
+ * app.exceltestzone.com.au and signed up (event ua_sign_up).
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchEtzWebsiteToAppFunnel } from '@/lib/google-analytics';
