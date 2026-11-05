@@ -73,7 +73,7 @@ export default function RevenueStreamsPanel({
   const sc = data?.current, sp = data?.prior;
   const total = online.revenue + (sc?.revenue ?? 0), totalPrev = onlinePrev.revenue + (sp?.revenue ?? 0);
   const schoolShare = total > 0 ? Math.round(((sc?.revenue ?? 0) / total) * 100) : 0;
-  const chart = (data?.months ?? []).map(m => ({ month: m.month, schools: m.schools, online: Math.round(trend?.find(t => t.month === m.month)?.revenue ?? 0) }));
+  const chart = (data?.months ?? []).filter(m => (trend ?? []).some(t => t.month === m.month)).map(m => ({ month: m.month, schools: m.schools, online: Math.round(trend?.find(t => t.month === m.month)?.revenue ?? 0) }));
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4">
@@ -97,6 +97,9 @@ export default function RevenueStreamsPanel({
           </div>
 
           <p className="mb-1 mt-4 text-[11px] font-semibold uppercase tracking-wider text-gray-500">Last 12 months</p>
+          {!trend || trend.length === 0 ? (
+            <div className="flex h-[240px] items-center justify-center rounded-lg bg-gray-50 text-sm text-gray-400">Loading monthly parent revenue…</div>
+          ) : (
           <div role="img" aria-label="Monthly ETZ revenue for the last 12 months, parents and schools stacked.">
             <ResponsiveContainer width="100%" height={240}>
               <BarChart data={chart} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -114,6 +117,7 @@ export default function RevenueStreamsPanel({
               </BarChart>
             </ResponsiveContainer>
           </div>
+          )}
           <p className="mt-2 text-[11px] text-gray-400">
             Schools are invoice orders, so this is the amount invoiced; it does not show when the school paid. The latest month is the month so far. The revenue cards above are parents (Stripe) only.
           </p>

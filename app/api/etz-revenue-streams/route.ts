@@ -33,8 +33,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ connected: false, error: 'start, end, compStart and compEnd required (YYYY-MM-DD)' }, { status: 400 });
   }
 
-  // last 12 calendar months up to the end of the selected period (or today), plus the comparison period
-  const lastMonth = end > sydneyToday() ? sydneyToday() : end;
+  // last 12 calendar months ending with the current month (same months as the dashboard's monthly trend), plus the comparison period
+  const lastMonth = sydneyToday();
   const [ey, em] = lastMonth.split('-').map(Number);
   const first = new Date(Date.UTC(ey!, em! - 12, 1, 12)).toISOString().slice(0, 10);   // 11 months before + the current month
   const winStart = [first, cs].sort()[0]!;
