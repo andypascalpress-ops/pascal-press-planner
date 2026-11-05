@@ -21,6 +21,19 @@ export interface UmsTransactionSummary {
   /** Trial rows where the same family started the same product again. */
   repeatTrialRows: number;
   trialsByDay: Record<string, number>;
+  /** Orders report (id, purchase_date, status, total, payment_method, returning_customer, items): counts only. */
+  orders: OrdersAgg;
+}
+
+export interface OrdersAgg {
+  count: number;
+  byStatus: Record<string, { orders: number; total: number }>;
+  byPaymentMethod: Record<string, number>;
+  byReturning: Record<string, number>;
+  perDay: Record<string, { orders: number; total: number }>;
+  itemFieldNames: string[];
+  byItemType: Record<string, number>;
+  topItems: { name: string; quantity: number }[];
 }
 
 function origin(): string {
@@ -69,6 +82,9 @@ export async function fetchUmsTransactionSummary(start: string, end: string): Pr
   const familySet = new Set<string>();
   const seenPairs = new Set<string>();
   let rows = 0, trialRows = 0, repeat = 0;
+  const orders: OrdersAgg = { count: 0, byStatus: {}, byPaymentMethod: {}, byReturning: {}, perDay: {}, itemFieldNames: [], byItemType: {}, topItems: [] };
+  const itemQty = new Map<string, number>();
+  const sydneyDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit' });
   let fieldNames: string[] = [], topLevelKeys: string[] = [], sampleDateFormat: string | null = null;
 
   for (const chunk of monthChunks(start, end)) {
@@ -93,6 +109,23 @@ export async function fetchUmsTransactionSummary(start: string, end: string): Pr
 
     for (const r of data) {
       rows += 1;
+      if ('purchase_date' in r) {
+        orders.count += 1;
+        const status = String(r.status ?? 'unknown');
+        const total = parseFloat(String(r.total ?? '0')) || 0;
+        const st = (orders.byStatus[status] ??= { orders: 0, total: 0 }); st.orders += 1; st.total = Math.round((st.total + total) * 100) / 100;
+        const pm = String(r.payment_method ?? 'unknown'); orders.byPaymentMethod[pm] = (orders.byPaymentMethod[pm] ?? 0) + 1;
+        const rc = String(r.returning_customer ?? 'unknown'); orders.byReturning[rc] = (orders.byReturning[rc] ?? 0) + 1;
+        const d = new Date(String(r.purchase_date));
+        if (!isNaN(d.getTime())) { const day = sydneyDay.format(d); const pd = (orders.perDay[day] ??= { orders: 0, total: 0 }); pd.orders += 1; pd.total = Math.round((pd.total + total) * 100) / 100; }
+        const items = Array.isArray(r.items) ? (r.items as Record<string, unknown>[]) : [];
+        for (const it of items) {
+          if (orders.itemFieldNames.length === 0) orders.itemFieldNames = Object.keys(it);
+          const t = String(it.type ?? 'unknown'); orders.byItemType[t] = (orders.byItemType[t] ?? 0) + 1;
+          const nm = String(it.name ?? 'unknown'); itemQty.set(nm, (itemQty.get(nm) ?? 0) + (Number(it.quantity) || 1));
+        }
+        continue;
+      }
       const type = String(typeKey ? r[typeKey] ?? '' : '').trim() || 'unknown';
       byType[type] = (byType[type] ?? 0) + 1;
       if (!/trial/i.test(type)) continue;
@@ -105,5 +138,5 @@ export async function fetchUmsTransactionSummary(start: string, end: string): Pr
       if (day) trialsByDay[day] = (trialsByDay[day] ?? 0) + 1;
     }
   }
-  return { rows, fieldNames, topLevelKeys, sampleDateFormat, byType, trialRows, trialFamilies: familySet.size, repeatTrialRows: repeat, trialsByDay };
+  return { rows, fieldNames, topLevelKeys, sampleDateFormat, byType, trialRows, trialFamilies: familySet.size, repeatTrialRows: repeat, trialsByDay, orders: { ...orders, topItems: [...itemQty.entries()].map(([name, quantity]) => ({ name, quantity })).sort((a, b) => b.quantity - a.quantity).slice(0, 12) } };
 }
