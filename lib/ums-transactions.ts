@@ -31,6 +31,8 @@ export interface OrdersAgg {
   byPaymentMethod: Record<string, { orders: number; total: number }>;
   byReturning: Record<string, number>;
   perDay: Record<string, { orders: number; total: number }>;
+  /** Per payment method and Sydney day: rows and items (a row can hold several packs). */
+  perMethodDay: Record<string, Record<string, { rows: number; items: number; returning: number }>>;
   itemFieldNames: string[];
   byItemType: Record<string, number>;
   topItems: { name: string; quantity: number }[];
@@ -82,7 +84,7 @@ export async function fetchUmsTransactionSummary(start: string, end: string): Pr
   const familySet = new Set<string>();
   const seenPairs = new Set<string>();
   let rows = 0, trialRows = 0, repeat = 0;
-  const orders: OrdersAgg = { count: 0, byStatus: {}, byPaymentMethod: {}, byReturning: {}, perDay: {}, itemFieldNames: [], byItemType: {}, topItems: [] };
+  const orders: OrdersAgg = { count: 0, byStatus: {}, byPaymentMethod: {}, byReturning: {}, perDay: {}, perMethodDay: {}, itemFieldNames: [], byItemType: {}, topItems: [] };
   const itemQty = new Map<string, number>();
   const sydneyDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit' });
   let fieldNames: string[] = [], topLevelKeys: string[] = [], sampleDateFormat: string | null = null;
@@ -119,6 +121,7 @@ export async function fetchUmsTransactionSummary(start: string, end: string): Pr
         const d = new Date(String(r.purchase_date));
         if (!isNaN(d.getTime())) { const day = sydneyDay.format(d); const pd = (orders.perDay[day] ??= { orders: 0, total: 0 }); pd.orders += 1; pd.total = Math.round((pd.total + total) * 100) / 100; }
         const items = Array.isArray(r.items) ? (r.items as Record<string, unknown>[]) : [];
+        if (!isNaN(d.getTime())) { const md = ((orders.perMethodDay[pm] ??= {})[sydneyDay.format(d)] ??= { rows: 0, items: 0, returning: 0 }); md.rows += 1; md.items += items.reduce((n, it) => n + (Number(it.quantity) || 1), 0); if (String(r.returning_customer) === 'true') md.returning += 1; }
         for (const it of items) {
           if (orders.itemFieldNames.length === 0) orders.itemFieldNames = Object.keys(it);
           const t = String(it.type ?? 'unknown'); orders.byItemType[t] = (orders.byItemType[t] ?? 0) + 1;
