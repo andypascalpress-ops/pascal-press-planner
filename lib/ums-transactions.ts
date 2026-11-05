@@ -142,6 +142,38 @@ export async function fetchUmsDailyTrials(start: string, end: string): Promise<R
   return out;
 }
 
+export interface DailyStreams { cardOrders: number; cardTotal: number; invoiceOrders: number; invoiceTotal: number; invoicePaidOrders: number; invoiceAllocations: number }
+
+/**
+ * Paid revenue per Sydney day by stream, from the UMS transaction list: CARD = online orders by parents (matches Stripe),
+ * INVOICE = school orders (paid invoices and $0 allocations). Free trials, manual and unknown rows are left out.
+ */
+export async function fetchUmsDailyStreams(start: string, end: string): Promise<Record<string, DailyStreams>> {
+  const token = (process.env.UMS_API_TOKEN ?? '').trim();
+  if (!token) throw new Error('UMS_API_TOKEN is not set');
+  const sydney = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const today = sydney.format(new Date());
+  const out: Record<string, DailyStreams> = {};
+  for (const chunk of monthChunks(start, end, 30)) {
+    const finished = chunk.end < today.slice(0, 8) + '01';
+    const { rows } = findRows(await fetchTransactionsChunk(token, chunk, { next: { revalidate: finished ? 86_400 : 900 } }));
+    for (const r of rows) {
+      const method = String(r.payment_method ?? '').toUpperCase();
+      if (method !== 'CARD' && method !== 'INVOICE') continue;
+      if (String(r.status ?? 'PAID').toUpperCase() !== 'PAID') continue;
+      const d = new Date(String(r.purchase_date));
+      if (isNaN(d.getTime())) continue;
+      const day = sydney.format(d);
+      if (day < start || day > end) continue;
+      const total = parseFloat(String(r.total ?? '0')) || 0;
+      const a = (out[day] ??= { cardOrders: 0, cardTotal: 0, invoiceOrders: 0, invoiceTotal: 0, invoicePaidOrders: 0, invoiceAllocations: 0 });
+      if (method === 'CARD') { a.cardOrders += 1; a.cardTotal += total; }
+      else { a.invoiceOrders += 1; a.invoiceTotal += total; if (total > 0) a.invoicePaidOrders += 1; else a.invoiceAllocations += 1; }
+    }
+  }
+  return out;
+}
+
 export async function fetchUmsTransactionSummary(start: string, end: string): Promise<UmsTransactionSummary> {
   const token = (process.env.UMS_API_TOKEN ?? '').trim();
   if (!token) throw new Error('UMS_API_TOKEN is not set');

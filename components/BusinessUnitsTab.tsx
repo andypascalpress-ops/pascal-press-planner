@@ -6,6 +6,7 @@ import BlakeDownloadsPanel from './BlakeDownloadsPanel';
 import MonthRangePicker, { recentQuarters, monthRangeToDates, type MonthRange } from './MonthRangePicker';
 import DailyRevenueTrend from './DailyRevenueTrend';
 import TrialsTrend from './TrialsTrend';
+import RevenueStreamsPanel from './RevenueStreamsPanel';
 import EhcHubspotOverview from './EhcHubspotOverview';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -564,6 +565,10 @@ export default function BusinessUnitsTab() {
               trendLastYear={trendLastYear}
               accent={color}
             />
+
+            {brand === 'etz' && (
+              <RevenueStreamsPanel start={data.period.start} end={data.period.end} compStart={data.comparison.start} compEnd={data.comparison.end} accent={color} />
+            )}
 
             {brand === 'etz' && data.current.trialsSource === 'ums' && data.current.trialsFamilies != null ? (
               <div className="bg-white rounded-xl border border-gray-200 p-4">
