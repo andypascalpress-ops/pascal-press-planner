@@ -5,6 +5,7 @@ import YoyPanel from './YoyPanel';
 import BlakeDownloadsPanel from './BlakeDownloadsPanel';
 import MonthRangePicker, { recentQuarters, monthRangeToDates, type MonthRange } from './MonthRangePicker';
 import DailyRevenueTrend from './DailyRevenueTrend';
+import TrialsTrend from './TrialsTrend';
 import EhcHubspotOverview from './EhcHubspotOverview';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -589,6 +590,8 @@ export default function BusinessUnitsTab() {
                   detail="every trial started, incl. school imports" />
               </div>
             )}
+
+            {brand === 'etz' && <TrialsTrend color={color} />}
 
             {brand === 'blake' && (
               <BlakeDownloadsPanel start={data.period.start} end={data.period.end} compStart={data.comparison.start} compEnd={data.comparison.end} comparisonLabel={data.comparison.label} accent={color} />

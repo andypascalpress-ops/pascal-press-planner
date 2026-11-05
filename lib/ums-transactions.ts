@@ -43,10 +43,10 @@ function origin(): string {
   try { return configured ? new URL(configured).origin : DEFAULT_ORIGIN; } catch { return DEFAULT_ORIGIN; }
 }
 
-function monthChunks(start: string, end: string): { start: string; end: string }[] {
+function monthChunks(start: string, end: string, max = 4): { start: string; end: string }[] {
   const out: { start: string; end: string }[] = [];
   let cur = start;
-  while (cur <= end && out.length < 4) {
+  while (cur <= end && out.length < max) {
     const [y, m] = cur.split('-').map(Number);
     const last = new Date(Date.UTC(y!, m!, 0)).toISOString().slice(0, 10);
     const chunkEnd = last < end ? last : end;
@@ -117,6 +117,29 @@ export async function fetchUmsTrialPacks(start: string, end: string): Promise<{ 
     }
   }
   return { trials, byProduct: [...byProduct.entries()].map(([name, n]) => ({ name, trials: n })).sort((x, y) => y.trials - x.trials) };
+}
+
+/** Free trials started per Sydney day (one per pack), for a line chart. Days with no trials are 0. */
+export async function fetchUmsDailyTrials(start: string, end: string): Promise<Record<string, number>> {
+  const token = (process.env.UMS_API_TOKEN ?? '').trim();
+  if (!token) throw new Error('UMS_API_TOKEN is not set');
+  const sydney = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const today = sydney.format(new Date());
+  const out: Record<string, number> = {};
+  for (const chunk of monthChunks(start, end, 14)) {
+    const finished = chunk.end < today.slice(0, 8) + '01';
+    const { rows } = findRows(await fetchTransactionsChunk(token, chunk, { next: { revalidate: finished ? 86_400 : 900 } }));
+    for (const r of rows) {
+      if (String(r.payment_method ?? '').toUpperCase() !== 'FREE_TRIAL') continue;
+      const d = new Date(String(r.purchase_date));
+      if (isNaN(d.getTime())) continue;
+      const day = sydney.format(d);
+      if (day < start || day > end) continue;
+      const items = Array.isArray(r.items) ? (r.items as Record<string, unknown>[]) : [];
+      out[day] = (out[day] ?? 0) + (items.length ? items.reduce((n, it) => n + (Number(it.quantity) || 1), 0) : 1);
+    }
+  }
+  return out;
 }
 
 export async function fetchUmsTransactionSummary(start: string, end: string): Promise<UmsTransactionSummary> {
