@@ -98,8 +98,8 @@ export default function RevenueStreamsPanel({
                 <XAxis dataKey="month" tickFormatter={monthLabel} tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
                 <YAxis tickFormatter={axisMoney} width={44} tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
                 <Tooltip
-                  formatter={(v: number, name: string) => [AUD.format(v), name]}
-                  labelFormatter={(l: string) => monthLabel(l)}
+                  formatter={(v: unknown, name: unknown) => [AUD.format(Number(v)), String(name)]}
+                  labelFormatter={(l: unknown) => monthLabel(String(l))}
                   contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }}
                 />
                 <Legend iconType="square" wrapperStyle={{ fontSize: 11 }} />
