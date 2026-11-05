@@ -72,12 +72,17 @@ export async function fetchUmsTransactionSummary(start: string, end: string): Pr
   let fieldNames: string[] = [], topLevelKeys: string[] = [], sampleDateFormat: string | null = null;
 
   for (const chunk of monthChunks(start, end)) {
-    const res = await fetch(`${origin()}/reporting/transaction?start_date=${chunk.start}&end_date=${chunk.end}`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-      cache: 'no-store',
-      signal: AbortSignal.timeout(50_000),
-    });
-    if (!res.ok) throw new Error(`UMS transaction report failed (${res.status}) for ${chunk.start} to ${chunk.end}`);
+    // Greg's address has a double slash (host//reporting/transaction); try the plain form first, then his form
+    let res: Response | null = null;
+    for (const sep of ['/', '//']) {
+      res = await fetch(`${origin()}${sep}reporting/transaction?start_date=${chunk.start}&end_date=${chunk.end}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        cache: 'no-store',
+        signal: AbortSignal.timeout(50_000),
+      });
+      if (res.status !== 404) break;
+    }
+    if (!res || !res.ok) throw new Error(`UMS transaction report failed (${res?.status}) for ${chunk.start} to ${chunk.end}`);
     const { rows: data, topKeys } = findRows(await res.json());
     if (topKeys.length) topLevelKeys = topKeys;
     if (data.length && fieldNames.length === 0) fieldNames = Object.keys(data[0]!);
