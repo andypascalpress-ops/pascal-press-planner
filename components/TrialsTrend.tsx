@@ -3,13 +3,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
-interface Point { date: string; trials: number; ma7: number | null }
+interface Point { date: string; trials: number; ma7: number | null; ly: number | null; lyMa7: number | null }
 interface Summary {
   last30Avg: number; prior30Avg: number; last30Change: number | null;
   last7Avg: number; prior7Avg: number; last7Change: number | null;
   hasPrior30: boolean; total: number;
+  lastYear30Avg: number | null; lastYear30Change: number | null; lastYearTotal: number | null;
 }
-interface TrialsResponse { connected: boolean; series: Point[]; summary: Summary; days: number; start: string; end: string; error?: string }
+interface TrialsResponse { connected: boolean; lastYearOk: boolean; series: Point[]; summary: Summary; days: number; start: string; end: string; error?: string }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const NUM = new Intl.NumberFormat('en-AU');
@@ -43,6 +44,11 @@ function TrialsTooltip({ active, payload }: { active?: boolean; payload?: Readon
       <p className="font-semibold text-gray-900">{longDate(p.date)}</p>
       <p className="mt-1 text-gray-600">Free trials started <span className="font-semibold text-gray-900">{p.trials}</span></p>
       {p.ma7 !== null && <p className="text-gray-600">7-day average <span className="font-semibold text-gray-900">{one(p.ma7)}</span></p>}
+      {p.lyMa7 !== null && (
+        <p className="mt-1 border-t border-gray-100 pt-1 text-gray-500">
+          Same day last year <span className="font-semibold text-gray-700">{p.ly}</span> (7-day average {one(p.lyMa7)})
+        </p>
+      )}
     </div>
   );
 }
@@ -86,6 +92,7 @@ export default function TrialsTrend({ color }: { color: string }) {
             <p className="mt-1 text-xs text-gray-500">
               Last 30 days <span className="font-semibold text-gray-900">{one(data.summary.last30Avg)}/day</span>
               {data.summary.hasPrior30 && <> vs {one(data.summary.prior30Avg)}/day in the 30 before ({signed(data.summary.last30Change)})</>}
+              {data.summary.lastYear30Avg !== null && data.summary.lastYear30Avg > 0 && <> <span className="mx-2 text-gray-300">|</span>Same 30 days last year <span className="font-semibold text-gray-900">{one(data.summary.lastYear30Avg)}/day</span> ({signed(data.summary.lastYear30Change)})</>}
               <span className="mx-2 text-gray-300">|</span>
               Last 7 days <span className="font-semibold text-gray-900">{one(data.summary.last7Avg)}/day</span>
               {data.summary.prior7Avg > 0 && <> vs {one(data.summary.prior7Avg)}/day ({signed(data.summary.last7Change)})</>}
@@ -122,7 +129,8 @@ export default function TrialsTrend({ color }: { color: string }) {
           <div className="mb-2 flex flex-wrap items-center gap-4 text-[11px] text-gray-500">
             <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-4 rounded" style={{ background: color, opacity: 0.35 }} />Trials each day</span>
             <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-4 rounded" style={{ background: color }} />7-day average</span>
-            <span className="text-gray-400">{NUM.format(data.summary.total)} trials in {data.days} days. Complete days only, up to yesterday.</span>
+            {data.lastYearOk && <span className="inline-flex items-center gap-1.5"><svg width="16" height="4" aria-hidden="true"><line x1="0" y1="2" x2="16" y2="2" stroke="#6b7280" strokeWidth="2" strokeDasharray="4 3" /></svg>Same dates last year (7-day average)</span>}
+            <span className="text-gray-400">{NUM.format(data.summary.total)} trials in {data.days} days{data.summary.lastYearTotal !== null && <> (last year {NUM.format(data.summary.lastYearTotal)})</>}. Complete days only, up to yesterday.</span>
           </div>
           <div
             role="img"
@@ -135,6 +143,7 @@ export default function TrialsTrend({ color }: { color: string }) {
                 <YAxis width={32} allowDecimals={false} tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
                 <Tooltip content={<TrialsTooltip />} cursor={{ stroke: '#cbd5e1', strokeWidth: 1 }} />
                 <Line type="monotone" dataKey="trials" stroke={color} strokeOpacity={0.35} strokeWidth={1.25} dot={false} activeDot={false} isAnimationActive={false} />
+                {data.lastYearOk && <Line type="monotone" dataKey="lyMa7" stroke="#6b7280" strokeWidth={2} strokeDasharray="5 4" dot={false} activeDot={{ r: 3, fill: '#6b7280', stroke: '#fff', strokeWidth: 2 }} connectNulls={false} isAnimationActive={false} />}
                 <Line type="monotone" dataKey="ma7" stroke={color} strokeWidth={2.5} dot={false} activeDot={{ r: 4, fill: color, stroke: '#fff', strokeWidth: 2 }} connectNulls={false} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
