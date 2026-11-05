@@ -18,6 +18,8 @@
  *   - returns only aggregate counts (no per-customer rows leave this file).
  */
 
+import { fetchUmsTrialPacks } from './ums-transactions';
+
 const DEFAULT_URL = 'https://vc3bydynt2.execute-api.ap-southeast-2.amazonaws.com/reporting/conversion-report';
 
 interface UmsRow {
@@ -38,6 +40,11 @@ export interface UmsTrialSummary {
   customersWithMultipleTrials: number;
   /** Trial records per product name, largest first. */
   byProduct: { name: string; trials: number }[];
+  /**
+   * Where `trials` and `byProduct` come from. 'transactions' = the UMS transaction report (matches the UMS export).
+   * Families, bought and pct always come from the conversion report, which counts fewer trials than the full list.
+   */
+  trialsSource: 'transactions' | 'conversion-report';
 }
 
 export function umsConfigured(): boolean {
@@ -98,12 +105,17 @@ export async function fetchUmsTrials(start: string, end: string): Promise<UmsTri
       byProduct.set(name, (byProduct.get(name) ?? 0) + 1);
     }
   }
+  // the transaction report has every trial (it matches the UMS export); the conversion report undercounts
+  let tx: Awaited<ReturnType<typeof fetchUmsTrialPacks>> | null = null;
+  try { tx = await fetchUmsTrialPacks(start, end); } catch (err) { console.error('[ums-trials] transaction report unavailable, using the conversion report', err); }
+
   return {
+    trialsSource: tx ? 'transactions' : 'conversion-report',
     customers: rows.length,
-    trials,
+    trials: tx ? tx.trials : trials,
     customersWhoBought: bought,
     pct: rows.length > 0 ? Math.round((bought / rows.length) * 100) : null,
     customersWithMultipleTrials: multi,
-    byProduct: [...byProduct.entries()].map(([name, n]) => ({ name, trials: n })).sort((a, b) => b.trials - a.trials),
+    byProduct: tx ? tx.byProduct : [...byProduct.entries()].map(([name, n]) => ({ name, trials: n })).sort((a, b) => b.trials - a.trials),
   };
 }

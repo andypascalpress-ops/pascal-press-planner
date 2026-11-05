@@ -119,7 +119,7 @@ export async function GET(request: Request) {
     trials: useUms
       ? {
           current: curUms!.trials, prior: compUms!.trials, pctChange: pctChange(curUms!.trials, compUms!.trials),
-          families: curUms!.customers, familiesPrior: compUms!.customers, source: 'ums' as const,
+          families: curUms!.trialsSource === 'transactions' ? null : curUms!.customers, familiesPrior: curUms!.trialsSource === 'transactions' ? null : compUms!.customers, source: 'ums' as const,
         }
       : {
           // every trial started in the month, including those that have since paid

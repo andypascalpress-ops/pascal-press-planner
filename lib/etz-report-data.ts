@@ -28,7 +28,7 @@ export interface EtzReportData {
   orders: { cur: number; prior: number };
   aov: { cur: number; prior: number };
   /** Free trials started: UMS trial records (real parent trials) when reachable, otherwise HubSpot deals. */
-  trials: { cur: number; prior: number; families: number | null; source: 'ums' | 'hubspot' };
+  trials: { cur: number; prior: number; families: number | null; source: 'ums' | 'hubspot'; fullList?: boolean };
   /**
    * UMS: families who bought after starting a trial, out of families who started one (this month and the same days
    * last month). If the UMS is unreachable: Stripe paid orders divided by HubSpot trials, and `unit` says so.
@@ -148,7 +148,7 @@ export async function gatherEtzReportData(): Promise<EtzReportData> {
     orders: { cur: orders, prior: ordersP },
     aov: { cur: orders > 0 ? revenue / orders : 0, prior: ordersP > 0 ? revP.totalRevenue / ordersP : 0 },
     trials: useUms
-      ? { cur: umsC!.trials, prior: umsP!.trials, families: umsC!.customers, source: 'ums' }
+      ? { cur: umsC!.trials, prior: umsP!.trials, families: umsC!.trialsSource === 'transactions' ? null : umsC!.customers, source: 'ums', fullList: umsC!.trialsSource === 'transactions' }
       : { cur: trialC.totalEverStarted, prior: trialP.totalEverStarted, families: null, source: 'hubspot' },
     trialToPaid: useUms
       ? { bought: umsC!.customersWhoBought, base: umsC!.customers, pct: umsC!.pct, priorBought: umsP!.customersWhoBought, priorBase: umsP!.customers, priorPct: umsP!.pct, unit: 'families' }

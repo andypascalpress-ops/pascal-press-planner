@@ -148,7 +148,7 @@ function pageTwo(pdf: PDFDocument, reg: any, bold: any, d: EtzReportData, total:
   callout(c, Math.min(y, 640), 'How to read these numbers', [
     'Yesterday is the full previous day (Sydney time). Month to date runs from the 1st through the end of yesterday and is compared with the same days last month. Revenue and orders are from Stripe.',
     d.trials.source === 'ums'
-      ? 'Free trials started comes from the Excel Test Zone user system: every trial a parent has started, counting one per child or product, so a family can start more than one (bulk school sign-ups are not trials). Free trial to paid is the share of families who started a trial and have since bought; recent trials may still be in progress. Orders and revenue are from Stripe.'
+      ? 'Free trials started comes from the Excel Test Zone user system transaction list: every trial a parent has started, counting one per child or product, so a family can start more than one (bulk school sign-ups are not trials). Free trial to paid is the share of families who started a trial and have since bought, taken from the system conversion report, which lists fewer families than the full trial list, so treat it as a guide; recent trials may still be in progress. Orders and revenue are from Stripe.'
       : 'Free trials started comes from HubSpot (the user system was not reachable today) and includes bulk school sign-ups. Free trial to paid is paid orders (Stripe) divided by trials started, a simple ratio: orders can include customers who bought without a trial.',
     'Visits, bounce rate and sales by channel come from Google Analytics for the production website and app only, so channel revenue can differ a little from Stripe revenue.',
   ], '#F6F8FA', undefined, NAVY, INK, 7.8);

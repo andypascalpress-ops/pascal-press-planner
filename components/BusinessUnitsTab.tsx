@@ -26,6 +26,7 @@ interface BUMetrics {
   trialsStarted: number | null;
   trialsFamilies?: number | null;
   trialsFamiliesBought?: number | null;
+  trialsCountSource?: 'transactions' | 'conversion-report' | null;
   trialsSource?: 'ums' | 'hubspot';
 }
 
@@ -571,9 +572,9 @@ export default function BusinessUnitsTab() {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <MetricCard label="Free trials started" value={data.current.trialsStarted} prevValue={data.prev.trialsStarted} fmt="number"
-                    detail="Every trial a parent started: one per child or product" />
+                    detail="Every trial a parent started: one per child or product (UMS transaction list)" />
                   <MetricCard label="Families who started a trial" value={data.current.trialsFamilies} prevValue={data.prev.trialsFamilies ?? null} fmt="number"
-                    detail="A family can start more than one trial" />
+                    detail={data.current.trialsCountSource === 'transactions' ? 'From the UMS conversion report, which counts fewer families than the full trial list: a guide only' : 'A family can start more than one trial'} />
                   <MetricCard label="Families who have bought" value={data.current.trialsFamiliesBought ?? null} prevValue={data.prev.trialsFamiliesBought ?? null} fmt="number"
                     detail={data.current.trialsFamilies > 0 && data.current.trialsFamiliesBought != null
                       ? `${Math.round((data.current.trialsFamiliesBought / data.current.trialsFamilies) * 100)}% of families who started a trial`
