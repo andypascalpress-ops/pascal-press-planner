@@ -28,7 +28,7 @@ export interface UmsTransactionSummary {
 export interface OrdersAgg {
   count: number;
   byStatus: Record<string, { orders: number; total: number }>;
-  byPaymentMethod: Record<string, number>;
+  byPaymentMethod: Record<string, { orders: number; total: number }>;
   byReturning: Record<string, number>;
   perDay: Record<string, { orders: number; total: number }>;
   itemFieldNames: string[];
@@ -114,7 +114,7 @@ export async function fetchUmsTransactionSummary(start: string, end: string): Pr
         const status = String(r.status ?? 'unknown');
         const total = parseFloat(String(r.total ?? '0')) || 0;
         const st = (orders.byStatus[status] ??= { orders: 0, total: 0 }); st.orders += 1; st.total = Math.round((st.total + total) * 100) / 100;
-        const pm = String(r.payment_method ?? 'unknown'); orders.byPaymentMethod[pm] = (orders.byPaymentMethod[pm] ?? 0) + 1;
+        const pm = String(r.payment_method ?? 'unknown'); const pmA = (orders.byPaymentMethod[pm] ??= { orders: 0, total: 0 }); pmA.orders += 1; pmA.total = Math.round((pmA.total + total) * 100) / 100;
         const rc = String(r.returning_customer ?? 'unknown'); orders.byReturning[rc] = (orders.byReturning[rc] ?? 0) + 1;
         const d = new Date(String(r.purchase_date));
         if (!isNaN(d.getTime())) { const day = sydneyDay.format(d); const pd = (orders.perDay[day] ??= { orders: 0, total: 0 }); pd.orders += 1; pd.total = Math.round((pd.total + total) * 100) / 100; }
