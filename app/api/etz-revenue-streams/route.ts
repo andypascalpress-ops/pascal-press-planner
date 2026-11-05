@@ -1,8 +1,9 @@
 /**
  * GET /api/etz-revenue-streams?start&end&compStart&compEnd
  *
- * Excel Test Zone revenue split into online (parents, paid by card; matches Stripe) and schools (invoices), from the
- * UMS transaction list, for the selected period, a comparison period, and the last 12 months by month. Counts and totals only.
+ * Excel Test Zone school revenue (invoice orders) from the UMS transaction list, for the selected period, a comparison
+ * period and the last 12 months by month. Counts and totals only. Parent (online) revenue is NOT taken from here: the UMS
+ * card totals include duplicated bundle rows before Sep 2026, so the dashboard uses Stripe for that.
  */
 import { NextResponse } from 'next/server';
 import { fetchUmsDailyStreams, type DailyStreams } from '@/lib/ums-transactions';
@@ -16,16 +17,12 @@ const sydneyToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Australi
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 function sum(days: Record<string, DailyStreams>, from: string, to: string) {
-  let cardOrders = 0, cardTotal = 0, invoiceOrders = 0, invoiceTotal = 0, paid = 0, alloc = 0;
+  let invoiceOrders = 0, invoiceTotal = 0, paid = 0, alloc = 0;
   for (const [d, v] of Object.entries(days)) {
     if (d < from || d > to) continue;
-    cardOrders += v.cardOrders; cardTotal += v.cardTotal; invoiceOrders += v.invoiceOrders; invoiceTotal += v.invoiceTotal; paid += v.invoicePaidOrders; alloc += v.invoiceAllocations;
+    invoiceOrders += v.invoiceOrders; invoiceTotal += v.invoiceTotal; paid += v.invoicePaidOrders; alloc += v.invoiceAllocations;
   }
-  return {
-    online: { revenue: r2(cardTotal), orders: cardOrders },
-    schools: { revenue: r2(invoiceTotal), orders: invoiceOrders, paidOrders: paid, allocations: alloc },
-    total: r2(cardTotal + invoiceTotal),
-  };
+  return { revenue: r2(invoiceTotal), orders: invoiceOrders, paidOrders: paid, allocations: alloc };
 }
 
 export async function GET(request: Request) {
@@ -48,13 +45,13 @@ export async function GET(request: Request) {
     return NextResponse.json({ connected: false, error: e instanceof Error ? e.message.slice(0, 200) : 'Failed to load' }, { status: 502 });
   }
 
-  const months: { month: string; online: number; schools: number }[] = [];
+  const months: { month: string; schools: number }[] = [];
   for (let i = 0; i < 12; i++) {
     const m = new Date(Date.UTC(ey!, em! - 12 + i, 1, 12));
     const key = m.toISOString().slice(0, 7);
     const a = `${key}-01`, b = `${key}-31`;
     const t = sum(days, a, b);
-    months.push({ month: key, online: t.online.revenue, schools: t.schools.revenue });
+    months.push({ month: key, schools: t.revenue });
   }
 
   return NextResponse.json(

@@ -3,14 +3,14 @@
 import { useEffect, useState } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from 'recharts';
 
-interface Stream { revenue: number; orders: number }
-interface Schools extends Stream { paidOrders: number; allocations: number }
-interface Side { online: Stream; schools: Schools; total: number }
+interface Schools { revenue: number; orders: number; paidOrders: number; allocations: number }
 interface Resp {
   connected: boolean; error?: string;
-  current: Side; prior: Side;
-  months: { month: string; online: number; schools: number }[];
+  current: Schools; prior: Schools;
+  months: { month: string; schools: number }[];
 }
+interface Online { revenue: number; orders: number }
+interface TrendMonth { month: string; revenue: number }
 
 const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
 const NUM = new Intl.NumberFormat('en-AU');
@@ -44,9 +44,13 @@ function StreamCard({ label, value, prev, detail, color }: { label: string; valu
   );
 }
 
+/**
+ * Parent (online) revenue is Stripe, passed in from the page (the same numbers as the cards above and the monthly trend);
+ * school revenue is invoiced orders from the UMS transaction list.
+ */
 export default function RevenueStreamsPanel({
-  start, end, compStart, compEnd, accent,
-}: { start: string; end: string; compStart: string; compEnd: string; accent: string }) {
+  start, end, compStart, compEnd, accent, online, onlinePrev, trend,
+}: { start: string; end: string; compStart: string; compEnd: string; accent: string; online: Online; onlinePrev: Online; trend: TrendMonth[] | null }) {
   const [data, setData] = useState<Resp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -66,34 +70,36 @@ export default function RevenueStreamsPanel({
     return () => { cancelled = true; };
   }, [start, end, compStart, compEnd]);
 
-  const c = data?.current, p = data?.prior;
-  const schoolShare = c && c.total > 0 ? Math.round((c.schools.revenue / c.total) * 100) : 0;
+  const sc = data?.current, sp = data?.prior;
+  const total = online.revenue + (sc?.revenue ?? 0), totalPrev = onlinePrev.revenue + (sp?.revenue ?? 0);
+  const schoolShare = total > 0 ? Math.round(((sc?.revenue ?? 0) / total) * 100) : 0;
+  const chart = (data?.months ?? []).map(m => ({ month: m.month, schools: m.schools, online: Math.round(trend?.find(t => t.month === m.month)?.revenue ?? 0) }));
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-600">Revenue: parents vs schools</p>
-        <p className="text-[11px] text-gray-400">From the Excel Test Zone user system (UMS). Parents match Stripe card orders.</p>
+        <p className="text-[11px] text-gray-400">Parents: Stripe. Schools: invoices from the Excel Test Zone user system (UMS).</p>
       </div>
 
       {loading && <div className="h-[300px] animate-pulse rounded-lg bg-gray-50" />}
       {!loading && error && <p className="py-8 text-center text-sm text-gray-400">Could not load school and parent revenue ({error}).</p>}
 
-      {!loading && data && c && p && (
+      {!loading && data && sc && sp && (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <StreamCard label="Parent revenue (online)" value={c.online.revenue} prev={p.online.revenue} color={accent}
-              detail={`${NUM.format(c.online.orders)} orders (${NUM.format(p.online.orders)} last time)`} />
-            <StreamCard label="School revenue (invoiced)" value={c.schools.revenue} prev={p.schools.revenue} color={SCHOOL_COLOR}
-              detail={`${NUM.format(c.schools.paidOrders)} paid invoices${c.schools.allocations > 0 ? `, ${NUM.format(c.schools.allocations)} free allocations` : ''} (${NUM.format(p.schools.paidOrders)} paid last time)`} />
-            <StreamCard label="Total ETZ revenue" value={c.total} prev={p.total} color="#6b7280"
+            <StreamCard label="Parent revenue (online)" value={online.revenue} prev={onlinePrev.revenue} color={accent}
+              detail={`${NUM.format(online.orders)} orders (${NUM.format(onlinePrev.orders)} last time)`} />
+            <StreamCard label="School revenue (invoiced)" value={sc.revenue} prev={sp.revenue} color={SCHOOL_COLOR}
+              detail={`${NUM.format(sc.paidOrders)} paid invoices${sc.allocations > 0 ? `, ${NUM.format(sc.allocations)} free allocations` : ''} (${NUM.format(sp.paidOrders)} paid last time)`} />
+            <StreamCard label="Total ETZ revenue" value={total} prev={totalPrev} color="#6b7280"
               detail={`Schools are ${schoolShare}% of the total`} />
           </div>
 
           <p className="mb-1 mt-4 text-[11px] font-semibold uppercase tracking-wider text-gray-500">Last 12 months</p>
           <div role="img" aria-label="Monthly ETZ revenue for the last 12 months, parents and schools stacked.">
             <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={data.months} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <BarChart data={chart} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="month" tickFormatter={monthLabel} tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
                 <YAxis tickFormatter={axisMoney} width={44} tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
@@ -109,7 +115,7 @@ export default function RevenueStreamsPanel({
             </ResponsiveContainer>
           </div>
           <p className="mt-2 text-[11px] text-gray-400">
-            Schools are invoice orders, so this is the amount invoiced; it does not show when the school paid. The latest month is the month so far. Existing revenue cards above stay Stripe (parents) only.
+            Schools are invoice orders, so this is the amount invoiced; it does not show when the school paid. The latest month is the month so far. The revenue cards above are parents (Stripe) only.
           </p>
         </>
       )}

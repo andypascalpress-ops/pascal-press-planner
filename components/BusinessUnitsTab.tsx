@@ -567,7 +567,8 @@ export default function BusinessUnitsTab() {
             />
 
             {brand === 'etz' && (
-              <RevenueStreamsPanel start={data.period.start} end={data.period.end} compStart={data.comparison.start} compEnd={data.comparison.end} accent={color} />
+              <RevenueStreamsPanel start={data.period.start} end={data.period.end} compStart={data.comparison.start} compEnd={data.comparison.end} accent={color}
+                online={{ revenue: data.current.revenue, orders: data.current.orders }} onlinePrev={{ revenue: data.prev.revenue, orders: data.prev.orders }} trend={trend} />
             )}
 
             {brand === 'etz' && data.current.trialsSource === 'ums' && data.current.trialsFamilies != null ? (
