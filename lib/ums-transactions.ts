@@ -1,7 +1,7 @@
 /**
  * UMS transaction report (the same list as the UMS "transactions" export), read straight from the API.
  *
- *   GET {UMS address}/reporting/transaction?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
+ *   GET {UMS address}/reporting/transactions?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
  *   Authorization: Bearer UMS_API_TOKEN   (environment variable only; never logged or returned)
  *
  * Only aggregate counts leave this file: no names, emails or any per-customer row. The field names of the
@@ -72,10 +72,10 @@ export async function fetchUmsTransactionSummary(start: string, end: string): Pr
   let fieldNames: string[] = [], topLevelKeys: string[] = [], sampleDateFormat: string | null = null;
 
   for (const chunk of monthChunks(start, end)) {
-    // Greg's address has a double slash (host//reporting/transaction); try the plain form first, then his form
+    // The live path is /reporting/transactions (plural); Greg's message had the singular, which is a 404
     let res: Response | null = null;
-    for (const sep of ['/', '//']) {
-      res = await fetch(`${origin()}${sep}reporting/transaction?start_date=${chunk.start}&end_date=${chunk.end}`, {
+    for (const path of ['reporting/transactions', 'reporting/transaction']) {
+      res = await fetch(`${origin()}/${path}?start_date=${chunk.start}&end_date=${chunk.end}`, {
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
         cache: 'no-store',
         signal: AbortSignal.timeout(50_000),
