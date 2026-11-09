@@ -60,16 +60,10 @@ function monthRange(month: string): { start: string; end: string } {
   };
 }
 
-/** Sydney's UTC offset on a given date as +1000 (AEST) or +1100 (AEDT). */
-function sydneyOffset(dateStr: string): string {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const part = new Intl.DateTimeFormat('en-US', { timeZone: 'Australia/Sydney', timeZoneName: 'longOffset' })
-    .formatToParts(new Date(Date.UTC(y!, m! - 1, d!, 12, 0, 0))).find(p => p.type === 'timeZoneName')?.value ?? 'GMT+10:00';
-  const mm = /GMT([+-])(\d{2}):?(\d{2})?/.exec(part);
-  return mm ? `${mm[1]}${mm[2]}${mm[3] ?? '00'}` : '+1000';
-}
-
-/** Convert YYYY-MM-DD to RFC 2822 format with the Sydney offset for that date (AEST or AEDT) — required by BigCommerce v2 API */
+/**
+ * Convert YYYY-MM-DD to RFC 2822 format at UTC+10 all year — required by BigCommerce v2 API.
+ * BigCommerce's own days run on UTC+10 (no daylight saving), so the dashboard uses the same clock to match its screens.
+ */
 function toRFC2822(dateStr: string, endOfDay = false): string {
   const DAYS   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -79,20 +73,20 @@ function toRFC2822(dateStr: string, endOfDay = false): string {
   const dd  = String(day!).padStart(2, '0');
   const mmm = MONTHS[mon! - 1]!;
   const time = endOfDay ? '23:59:59' : '00:00:00';
-  return `${dow}, ${dd} ${mmm} ${year} ${time} ${sydneyOffset(dateStr)}`;
+  return `${dow}, ${dd} ${mmm} ${year} ${time} +1000`;
 }
 
-/** Convert a Date to YYYY-MM-DD in Australia/Sydney */
+/** Convert a Date to YYYY-MM-DD on BigCommerce's clock (UTC+10, no daylight saving) */
 function toSydneyDateStr(d: Date): string {
   return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Australia/Sydney',
+    timeZone: 'Etc/GMT-10',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
   }).format(d);
 }
 
-/** Parse BC's RFC 2822 date_created field and return YYYY-MM-DD in Sydney */
+/** Parse BC's RFC 2822 date_created field and return YYYY-MM-DD on BigCommerce's clock (UTC+10) */
 function orderDateSydney(bcDateCreated: string): string {
   return toSydneyDateStr(new Date(bcDateCreated));
 }

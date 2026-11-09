@@ -15,8 +15,8 @@ export const maxDuration = 60;
 
 type Brand = 'pp' | 'etz' | 'ehc' | 'blake';
 
-function sydneyToday(): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+function sydneyToday(zone = 'Australia/Sydney'): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 
 function addDays(ymd: string, n: number): string {
@@ -36,7 +36,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'brand must be pp, etz, ehc or blake' }, { status: 400 });
   }
 
-  const today = sydneyToday();
+  // BigCommerce brands run on BigCommerce's own clock (UTC+10 all year) so "today" matches its screens; Stripe brands stay on Sydney time
+  const today = brand === 'pp' || brand === 'blake' ? sydneyToday('Etc/GMT-10') : sydneyToday();
   const start = addDays(today, -(days - 1));
 
   let byDay: Record<string, { revenue: number; orders: number }>;

@@ -469,8 +469,9 @@ function bcDateParam(dateStr: string, endOfDay = false): string {
   return encodeURIComponent(rfc);
 }
 
+/** Order date on BigCommerce's clock (UTC+10, no daylight saving), so days match the BigCommerce screens. */
 function orderDateAEST(bcDateCreated: string): string {
-  return toSydneyDateStr(new Date(bcDateCreated));
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Etc/GMT-10', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(bcDateCreated));
 }
 
 async function fetchMonthOrders(base: string, token: string, yearMon: string): Promise<BCOrder[]> {

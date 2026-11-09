@@ -254,9 +254,7 @@ async function debugStripeAccount(label: string, secretKey: string, month: strin
 /** One Sydney day of Pascal Press orders, one line per order: status and money only (no customer details). */
 async function debugBCDay(date: string) {
   if (!STORE_HASH || !ACCESS_TOKEN) return { error: 'BigCommerce env vars not set' };
-  const probe = new Intl.DateTimeFormat('en-US', { timeZone: ACCOUNT_TZ, timeZoneName: 'longOffset' })
-    .formatToParts(new Date(`${date}T12:00:00Z`)).find(p => p.type === 'timeZoneName')?.value ?? 'GMT+10:00';
-  const tz = probe.replace('GMT', '') || '+10:00';
+  const tz = '+10:00';   // BigCommerce's own clock: UTC+10 all year
   const qs = new URLSearchParams({ min_date_created: `${date}T00:00:00${tz}`, max_date_created: `${date}T23:59:59${tz}`, limit: '250' });
   const res = await fetch(`${BC_BASE}/orders?${qs}`, { headers: bcHeaders() });
   if (res.status === 204) return { date, tz, orders: [] };
@@ -266,7 +264,7 @@ async function debugBCDay(date: string) {
   const orders = data.map(o => ({
     id: o.id,
     status: o.status,
-    created: new Intl.DateTimeFormat('en-AU', { timeZone: ACCOUNT_TZ, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(o.date_created)),
+    created: new Intl.DateTimeFormat('en-AU', { timeZone: 'Etc/GMT-10', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(o.date_created)),
     total_inc_tax: num(o.total_inc_tax),
     total_ex_tax: num(o.total_ex_tax),
     tax: num(o.total_tax),
