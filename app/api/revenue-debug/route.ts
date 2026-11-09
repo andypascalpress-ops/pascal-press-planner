@@ -251,7 +251,40 @@ async function debugStripeAccount(label: string, secretKey: string, month: strin
 
 // ─── Route handler ────────────────────────────────────────────────────────────
 
+/** One Sydney day of Pascal Press orders, one line per order: status and money only (no customer details). */
+async function debugBCDay(date: string) {
+  if (!STORE_HASH || !ACCESS_TOKEN) return { error: 'BigCommerce env vars not set' };
+  const probe = new Intl.DateTimeFormat('en-US', { timeZone: ACCOUNT_TZ, timeZoneName: 'longOffset' })
+    .formatToParts(new Date(`${date}T12:00:00Z`)).find(p => p.type === 'timeZoneName')?.value ?? 'GMT+10:00';
+  const tz = probe.replace('GMT', '') || '+10:00';
+  const qs = new URLSearchParams({ min_date_created: `${date}T00:00:00${tz}`, max_date_created: `${date}T23:59:59${tz}`, limit: '250' });
+  const res = await fetch(`${BC_BASE}/orders?${qs}`, { headers: bcHeaders() });
+  if (res.status === 204) return { date, tz, orders: [] };
+  if (!res.ok) return { error: `BigCommerce ${res.status}` };
+  const data = (await res.json()) as any[];
+  const num = (v: unknown) => Math.round((parseFloat(String(v ?? '0')) || 0) * 100) / 100;
+  const orders = data.map(o => ({
+    id: o.id,
+    status: o.status,
+    created: new Intl.DateTimeFormat('en-AU', { timeZone: ACCOUNT_TZ, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(o.date_created)),
+    total_inc_tax: num(o.total_inc_tax),
+    total_ex_tax: num(o.total_ex_tax),
+    tax: num(o.total_tax),
+    shipping_inc_tax: num(o.shipping_cost_inc_tax),
+    subtotal_ex_tax: num(o.subtotal_ex_tax),
+    discount: num(o.discount_amount) + num(o.coupon_discount),
+    refunded: num(o.refunded_amount),
+    store_credit: num(o.store_credit_amount),
+    gift_cert: num(o.gift_certificate_amount),
+    payment_method: o.payment_method,
+    channel_id: o.channel_id,
+  }));
+  return { date, tz, count: orders.length, orders };
+}
+
 export async function GET(req: NextRequest) {
+  const day = req.nextUrl.searchParams.get('date');
+  if (day && /^\d{4}-\d{2}-\d{2}$/.test(day)) return NextResponse.json(await debugBCDay(day));
   const month = req.nextUrl.searchParams.get('month')
     ?? new Intl.DateTimeFormat('en-CA', {
       timeZone: ACCOUNT_TZ, year: 'numeric', month: '2-digit',

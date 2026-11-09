@@ -60,7 +60,16 @@ function monthRange(month: string): { start: string; end: string } {
   };
 }
 
-/** Convert YYYY-MM-DD to RFC 2822 format with AEST offset — required by BigCommerce v2 API */
+/** Sydney's UTC offset on a given date as +1000 (AEST) or +1100 (AEDT). */
+function sydneyOffset(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const part = new Intl.DateTimeFormat('en-US', { timeZone: 'Australia/Sydney', timeZoneName: 'longOffset' })
+    .formatToParts(new Date(Date.UTC(y!, m! - 1, d!, 12, 0, 0))).find(p => p.type === 'timeZoneName')?.value ?? 'GMT+10:00';
+  const mm = /GMT([+-])(\d{2}):?(\d{2})?/.exec(part);
+  return mm ? `${mm[1]}${mm[2]}${mm[3] ?? '00'}` : '+1000';
+}
+
+/** Convert YYYY-MM-DD to RFC 2822 format with the Sydney offset for that date (AEST or AEDT) — required by BigCommerce v2 API */
 function toRFC2822(dateStr: string, endOfDay = false): string {
   const DAYS   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -70,7 +79,7 @@ function toRFC2822(dateStr: string, endOfDay = false): string {
   const dd  = String(day!).padStart(2, '0');
   const mmm = MONTHS[mon! - 1]!;
   const time = endOfDay ? '23:59:59' : '00:00:00';
-  return `${dow}, ${dd} ${mmm} ${year} ${time} +1000`;
+  return `${dow}, ${dd} ${mmm} ${year} ${time} ${sydneyOffset(dateStr)}`;
 }
 
 /** Convert a Date to YYYY-MM-DD in Australia/Sydney */
