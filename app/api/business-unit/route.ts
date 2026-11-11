@@ -398,7 +398,7 @@ export async function GET(request: Request) {
   // Pascal Press: Bing spend and the sales Google Analytics attributes to paid Bing clicks
   async function fetchBingBlock(s: string, e: string) {
     let spend: number | null = null, error = '';
-    try { spend = await fetchBingSpendTotal(s, e); } catch (err) { error = err instanceof Error ? err.message.slice(0, 160) : 'failed'; }
+    try { spend = await fetchBingSpendTotal(s, e); } catch (err) { error = err instanceof Error ? err.message.slice(0, 360) : 'failed'; }
     const ga = await fetchBingPaidTraffic(s, e);
     const revenue = ga.revenue, sp = spend ?? 0;
     return {
