@@ -33,8 +33,7 @@ const MONTH_NAMES: Record<string, string> = {
 const _tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
 /** Trim whitespace and any quotes or line breaks that came in when the value was pasted. */
-const cleanEnv = (v: string | undefined) => (v ?? '').replace(/^["'\s]+|["'\s]+$/g, '').replace(/[
-]/g, '');
+const cleanEnv = (v: string | undefined) => (v ?? '').replace(/^["'\s]+|["'\s]+$/g, '').replace(/[\r\n]/g, '');
 
 async function getAccessToken(): Promise<string> {
   const clientId = cleanEnv(process.env.BING_ADS_CLIENT_ID);
@@ -60,8 +59,7 @@ async function getAccessToken(): Promise<string> {
   let { res, data } = await attempt(true);
   if (!data.access_token) ({ res, data } = await attempt(false));         // a different scope than the one the token was issued for can also be rejected
   if (!data.access_token) {
-    const code = String(data.error ?? ''), desc = String(data.error_description ?? '').split('')[0]!.split('
-')[0]!.slice(0, 160);
+    const code = String(data.error ?? ''), desc = String(data.error_description ?? '').split(/[\r\n]/)[0]!.slice(0, 160);
     throw new Error(`Bing Ads OAuth failed (HTTP ${res.status}) ${code}: ${desc} [${shape}]`);
   }
   const ttl = ((data.expires_in as number ?? 3600) - 60) * 1000;
