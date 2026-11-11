@@ -47,7 +47,7 @@ interface BUSubscriptions {
   mrr: number;
 }
 
-interface BUBing { configured: boolean; gaConnected?: boolean; error: string; spend: number; revenue: number; orders: number; sessions: number; roas: number | null; revenueAfterSpend: number }
+interface BUBing { configured: boolean; gaConnected?: boolean; error: string; spend: number; revenue: number; paidRevenue?: number; paidOrders?: number; orders: number; sessions: number; roas: number | null; revenueAfterSpend: number }
 
 interface BUData {
   bing?: { current: BUBing; prev: BUBing } | null;
@@ -555,16 +555,16 @@ export default function BusinessUnitsTab() {
               <div className="bg-white rounded-xl border border-gray-200 p-4">
                 <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
                   <p className="text-[11px] font-semibold text-gray-600 uppercase tracking-wider">Bing Ads</p>
-                  <p className="text-[11px] text-gray-400">Spend from Microsoft Advertising (all campaigns). Revenue from Google Analytics: purchases from paid Bing clicks.</p>
+                  <p className="text-[11px] text-gray-400">Spend from Microsoft Advertising (all campaigns). Revenue from Google Analytics: all sales from Bing traffic.</p>
                 </div>
                 {data.bing.current.error && <p className="mb-2 text-xs text-amber-700">Bing spend could not be read just now: {data.bing.current.error}</p>}
                 {!data.bing.current.configured && <p className="mb-2 text-xs text-amber-700">Bing spend is not connected yet (the Microsoft Advertising settings are missing in Vercel). Revenue below is from Google Analytics and already works.</p>}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <MetricCard label="Bing spend" value={data.bing.current.configured ? data.bing.current.spend : null} prevValue={data.bing.current.configured ? data.bing.prev.spend : null} fmt="currency" detail="Included in Spend above" />
                   <MetricCard label="Revenue (Google Analytics)" value={data.bing.current.revenue} prevValue={data.bing.prev.revenue} fmt="currency"
-                    detail={`${data.bing.current.orders} orders from ${data.bing.current.sessions.toLocaleString('en-AU')} visits`} />
-                  <MetricCard label="Revenue after Bing spend" value={data.bing.current.configured ? data.bing.current.revenueAfterSpend : null} prevValue={data.bing.current.configured ? data.bing.prev.revenueAfterSpend : null} fmt="currency" />
-                  <MetricCard label="Revenue per $1 of Bing spend" value={data.bing.current.configured ? data.bing.current.roas : null} prevValue={data.bing.current.configured ? data.bing.prev.roas : null} fmt="roas" />
+                    detail={`${data.bing.current.orders} orders from ${data.bing.current.sessions.toLocaleString('en-AU')} visits. Includes organic Bing search: Bing ad clicks show in Google Analytics as bing / organic.`} />
+                  <MetricCard label="Bing revenue after Bing spend" value={data.bing.current.configured ? data.bing.current.revenueAfterSpend : null} prevValue={data.bing.current.configured ? data.bing.prev.revenueAfterSpend : null} fmt="currency" />
+                  <MetricCard label="Bing revenue per $1 of Bing spend" value={data.bing.current.configured ? data.bing.current.roas : null} prevValue={data.bing.current.configured ? data.bing.prev.roas : null} fmt="roas" />
                 </div>
               </div>
             )}

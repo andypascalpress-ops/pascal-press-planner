@@ -1662,7 +1662,10 @@ export async function fetchEtzWebsiteToAppFunnel(startDate: string, endDate: str
 // ---------------------------------------------------------------------------
 
 export interface BingPaidTraffic {
+  /** All traffic whose source is Bing (organic and paid). Bing ad clicks are usually NOT tagged as paid, so they land here as bing / organic. */
   sessions: number; orders: number; revenue: number; connected: boolean;
+  /** Only the Bing rows Google Analytics sees as paid (medium cpc / ppc). */
+  paidSessions: number; paidOrders: number; paidRevenue: number;
   /** Every Bing-sourced (source or medium contains bing) row, so untagged clicks are visible too. */
   breakdown: { source: string; medium: string; sessions: number; orders: number; revenue: number }[];
 }
@@ -1670,7 +1673,7 @@ export interface BingPaidTraffic {
 const PAID_MEDIUMS = new Set(['cpc', 'ppc', 'paid', 'paidsearch', 'paid-search', 'sem']);
 
 export async function fetchBingPaidTraffic(startDate: string, endDate: string): Promise<BingPaidTraffic> {
-  const empty: BingPaidTraffic = { sessions: 0, orders: 0, revenue: 0, connected: false, breakdown: [] };
+  const empty: BingPaidTraffic = { sessions: 0, orders: 0, revenue: 0, connected: false, paidSessions: 0, paidOrders: 0, paidRevenue: 0, breakdown: [] };
   if (!isConnected()) return empty;
   try {
     const accessToken = await getAccessToken();
@@ -1690,9 +1693,16 @@ export async function fetchBingPaidTraffic(startDate: string, endDate: string): 
       orders: parseInt(r.metricValues?.[1]?.value ?? '0', 10) || 0,
       revenue: Math.round((parseFloat(r.metricValues?.[2]?.value ?? '0') || 0) * 100) / 100,
     }));
-    const paid = rows.filter((r: { medium: string }) => PAID_MEDIUMS.has(r.medium.toLowerCase()));
-    const sum = (k: 'sessions' | 'orders' | 'revenue') => paid.reduce((a: number, r: { [x: string]: number }) => a + (r[k] ?? 0), 0);
-    return { sessions: sum('sessions'), orders: sum('orders'), revenue: Math.round(sum('revenue') * 100) / 100, connected: true, breakdown: rows.slice(0, 8) };
+    type Row = { source: string; medium: string; sessions: number; orders: number; revenue: number };
+    const bing = (rows as Row[]).filter(r => r.source.toLowerCase().includes('bing'));     // not Teams / Microsoft login referrals
+    const paid = bing.filter(r => PAID_MEDIUMS.has(r.medium.toLowerCase()));
+    const sum = (xs: Row[], k: 'sessions' | 'orders' | 'revenue') => xs.reduce((a, r) => a + r[k], 0);
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    return {
+      sessions: sum(bing, 'sessions'), orders: sum(bing, 'orders'), revenue: r2(sum(bing, 'revenue')), connected: true,
+      paidSessions: sum(paid, 'sessions'), paidOrders: sum(paid, 'orders'), paidRevenue: r2(sum(paid, 'revenue')),
+      breakdown: bing.slice(0, 8),
+    };
   } catch (err) {
     console.error('[google-analytics fetchBingPaidTraffic]', err);
     return empty;
