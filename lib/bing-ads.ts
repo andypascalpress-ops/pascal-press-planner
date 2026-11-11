@@ -32,28 +32,37 @@ const MONTH_NAMES: Record<string, string> = {
 // Module-level token cache (survives across requests on the same instance)
 const _tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
+/** Trim whitespace and any quotes or line breaks that came in when the value was pasted. */
+const cleanEnv = (v: string | undefined) => (v ?? '').replace(/^["'\s]+|["'\s]+$/g, '').replace(/[
+]/g, '');
+
 async function getAccessToken(): Promise<string> {
-  const clientId = process.env.BING_ADS_CLIENT_ID;
+  const clientId = cleanEnv(process.env.BING_ADS_CLIENT_ID);
   if (!clientId) throw new Error('BING_ADS_CLIENT_ID is not set');
 
   const cached = _tokenCache.get(clientId);
   if (cached && Date.now() < cached.expiresAt) return cached.token;
 
-  const res = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id:     clientId,
-      client_secret: process.env.BING_ADS_CLIENT_SECRET!,
-      refresh_token: process.env.BING_ADS_REFRESH_TOKEN!,
-      grant_type:    'refresh_token',
-      scope:         'https://ads.microsoft.com/msads.manage offline_access',
-    }),
-    cache: 'no-store',
-  });
-  const data = await res.json() as Record<string, unknown>;
+  const secret = cleanEnv(process.env.BING_ADS_CLIENT_SECRET);
+  const refresh = cleanEnv(process.env.BING_ADS_REFRESH_TOKEN);
+  // lengths only, never the values, so a wrong or cut-off paste can be spotted
+  const shape = `client_id ${clientId.length} chars, secret ${secret ? secret.length + ' chars' : 'missing'}, refresh token ${refresh ? refresh.length + ' chars' : 'missing'}`;
+  if (!refresh) throw new Error(`BING_ADS_REFRESH_TOKEN is not set (${shape})`);
+
+  const attempt = async (withScope: boolean) => {
+    const body = new URLSearchParams({ client_id: clientId, refresh_token: refresh, grant_type: 'refresh_token' });
+    if (secret) body.set('client_secret', secret);                        // public client apps have no secret
+    if (withScope) body.set('scope', 'https://ads.microsoft.com/msads.manage offline_access');
+    const res = await fetch(TOKEN_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body, cache: 'no-store' });
+    return { res, data: await res.json() as Record<string, unknown> };
+  };
+
+  let { res, data } = await attempt(true);
+  if (!data.access_token) ({ res, data } = await attempt(false));         // a different scope than the one the token was issued for can also be rejected
   if (!data.access_token) {
-    throw new Error(`Bing Ads OAuth failed (HTTP ${res.status}): ${JSON.stringify(data)}`);
+    const code = String(data.error ?? ''), desc = String(data.error_description ?? '').split('')[0]!.split('
+')[0]!.slice(0, 160);
+    throw new Error(`Bing Ads OAuth failed (HTTP ${res.status}) ${code}: ${desc} [${shape}]`);
   }
   const ttl = ((data.expires_in as number ?? 3600) - 60) * 1000;
   _tokenCache.set(clientId, { token: data.access_token as string, expiresAt: Date.now() + ttl });
