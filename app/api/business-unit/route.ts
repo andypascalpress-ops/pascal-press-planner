@@ -402,7 +402,7 @@ export async function GET(request: Request) {
     const ga = await fetchBingPaidTraffic(s, e);
     const revenue = ga.revenue, sp = spend ?? 0;
     return {
-      configured: spend !== null || error !== '', error,
+      configured: spend !== null || error !== '', gaConnected: ga.connected, error,
       spend: sp, revenue, orders: ga.orders, sessions: ga.sessions,
       roas: sp > 0 ? Math.round((revenue / sp) * 10) / 10 : null,
       revenueAfterSpend: Math.round((revenue - sp) * 100) / 100,
@@ -488,7 +488,7 @@ export async function GET(request: Request) {
     comparison:  { start: comp.start, end: comp.end, label: comp.label },
     current:     { ...buildMetrics(curRev,  curSpend),  trialsStarted: useUms ? curUms!.trials : (curTrials ? curTrials.totalEverStarted : null), trialsFamilies: useUms ? curUms!.customers : null, trialsFamiliesBought: useUms ? curUms!.customersWhoBought : null, trialsSource: useUms ? 'ums' : 'hubspot', trialsCountSource: useUms ? curUms!.trialsSource : null },
     prev:        { ...buildMetrics(compRev, compSpend), trialsStarted: useUms ? compUms!.trials : (compTrials ? compTrials.totalEverStarted : null), trialsFamilies: useUms ? compUms!.customers : null, trialsFamiliesBought: useUms ? compUms!.customersWhoBought : null, trialsSource: useUms ? 'ums' : 'hubspot', trialsCountSource: useUms ? compUms!.trialsSource : null },
-    bing: brand === 'pp' && curBing && compBing && (curBing.configured || compBing.configured) ? { current: curBing, prev: compBing } : null,
+    bing: brand === 'pp' && curBing && compBing && (curBing.configured || curBing.gaConnected) ? { current: curBing, prev: compBing } : null,
     products,
     subscriptions: subs,
     sparkline,
