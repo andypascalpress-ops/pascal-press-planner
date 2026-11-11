@@ -1661,34 +1661,38 @@ export async function fetchEtzWebsiteToAppFunnel(startDate: string, endDate: str
 // Pascal Press: sales that Google Analytics attributes to paid Bing clicks (session source bing, medium cpc)
 // ---------------------------------------------------------------------------
 
-export interface BingPaidTraffic { sessions: number; orders: number; revenue: number; connected: boolean }
+export interface BingPaidTraffic {
+  sessions: number; orders: number; revenue: number; connected: boolean;
+  /** Every Bing-sourced (source or medium contains bing) row, so untagged clicks are visible too. */
+  breakdown: { source: string; medium: string; sessions: number; orders: number; revenue: number }[];
+}
+
+const PAID_MEDIUMS = new Set(['cpc', 'ppc', 'paid', 'paidsearch', 'paid-search', 'sem']);
 
 export async function fetchBingPaidTraffic(startDate: string, endDate: string): Promise<BingPaidTraffic> {
-  const empty: BingPaidTraffic = { sessions: 0, orders: 0, revenue: 0, connected: false };
+  const empty: BingPaidTraffic = { sessions: 0, orders: 0, revenue: 0, connected: false, breakdown: [] };
   if (!isConnected()) return empty;
   try {
     const accessToken = await getAccessToken();
+    const f = (fieldName: string, value: string) => ({ filter: { fieldName, stringFilter: { matchType: 'CONTAINS', value } } });
     const data = await runReportOnProperty(accessToken, GA4_BASE, {
       dateRanges: [{ startDate, endDate }],
+      dimensions: [{ name: 'sessionSource' }, { name: 'sessionMedium' }],
       metrics: [{ name: 'sessions' }, { name: 'transactions' }, { name: 'totalRevenue' }],
-      dimensionFilter: {
-        andGroup: {
-          expressions: [
-            { filter: { fieldName: 'sessionSource', stringFilter: { matchType: 'CONTAINS', value: 'bing' } } },
-            { filter: { fieldName: 'sessionMedium', stringFilter: { matchType: 'EXACT', value: 'cpc' } } },
-          ],
-        },
-      },
-      limit: 1,
+      dimensionFilter: { orGroup: { expressions: [f('sessionSource', 'bing'), f('sessionSource', 'microsoft'), f('sessionMedium', 'bing')] } },
+      orderBys: [{ metric: { metricName: 'totalRevenue' }, desc: true }],
+      limit: 25,
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const row: any = (data.rows ?? [])[0];
-    return {
-      sessions: parseInt(row?.metricValues?.[0]?.value ?? '0', 10) || 0,
-      orders: parseInt(row?.metricValues?.[1]?.value ?? '0', 10) || 0,
-      revenue: Math.round((parseFloat(row?.metricValues?.[2]?.value ?? '0') || 0) * 100) / 100,
-      connected: true,
-    };
+    const rows = (data.rows ?? []).map((r: any) => ({
+      source: r.dimensionValues?.[0]?.value ?? '', medium: r.dimensionValues?.[1]?.value ?? '',
+      sessions: parseInt(r.metricValues?.[0]?.value ?? '0', 10) || 0,
+      orders: parseInt(r.metricValues?.[1]?.value ?? '0', 10) || 0,
+      revenue: Math.round((parseFloat(r.metricValues?.[2]?.value ?? '0') || 0) * 100) / 100,
+    }));
+    const paid = rows.filter((r: { medium: string }) => PAID_MEDIUMS.has(r.medium.toLowerCase()));
+    const sum = (k: 'sessions' | 'orders' | 'revenue') => paid.reduce((a: number, r: { [x: string]: number }) => a + (r[k] ?? 0), 0);
+    return { sessions: sum('sessions'), orders: sum('orders'), revenue: Math.round(sum('revenue') * 100) / 100, connected: true, breakdown: rows.slice(0, 8) };
   } catch (err) {
     console.error('[google-analytics fetchBingPaidTraffic]', err);
     return empty;

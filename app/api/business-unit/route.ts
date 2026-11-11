@@ -403,7 +403,7 @@ export async function GET(request: Request) {
     const revenue = ga.revenue, sp = spend ?? 0;
     return {
       configured: spend !== null || error !== '', gaConnected: ga.connected, error,
-      spend: sp, revenue, orders: ga.orders, sessions: ga.sessions,
+      spend: sp, revenue, orders: ga.orders, sessions: ga.sessions, breakdown: ga.breakdown,
       roas: sp > 0 ? Math.round((revenue / sp) * 10) / 10 : null,
       revenueAfterSpend: Math.round((revenue - sp) * 100) / 100,
     };
