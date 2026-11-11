@@ -1655,3 +1655,42 @@ export async function fetchEtzWebsiteToAppFunnel(startDate: string, endDate: str
     return { ...empty, connected: true, error: String((err as Error).message ?? err).slice(0, 500) };
   }
 }
+
+
+// ---------------------------------------------------------------------------
+// Pascal Press: sales that Google Analytics attributes to paid Bing clicks (session source bing, medium cpc)
+// ---------------------------------------------------------------------------
+
+export interface BingPaidTraffic { sessions: number; orders: number; revenue: number; connected: boolean }
+
+export async function fetchBingPaidTraffic(startDate: string, endDate: string): Promise<BingPaidTraffic> {
+  const empty: BingPaidTraffic = { sessions: 0, orders: 0, revenue: 0, connected: false };
+  if (!isConnected()) return empty;
+  try {
+    const accessToken = await getAccessToken();
+    const data = await runReportOnProperty(accessToken, GA4_BASE, {
+      dateRanges: [{ startDate, endDate }],
+      metrics: [{ name: 'sessions' }, { name: 'transactions' }, { name: 'totalRevenue' }],
+      dimensionFilter: {
+        andGroup: {
+          expressions: [
+            { filter: { fieldName: 'sessionSource', stringFilter: { matchType: 'CONTAINS', value: 'bing' } } },
+            { filter: { fieldName: 'sessionMedium', stringFilter: { matchType: 'EXACT', value: 'cpc' } } },
+          ],
+        },
+      },
+      limit: 1,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row: any = (data.rows ?? [])[0];
+    return {
+      sessions: parseInt(row?.metricValues?.[0]?.value ?? '0', 10) || 0,
+      orders: parseInt(row?.metricValues?.[1]?.value ?? '0', 10) || 0,
+      revenue: Math.round((parseFloat(row?.metricValues?.[2]?.value ?? '0') || 0) * 100) / 100,
+      connected: true,
+    };
+  } catch (err) {
+    console.error('[google-analytics fetchBingPaidTraffic]', err);
+    return empty;
+  }
+}

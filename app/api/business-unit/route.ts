@@ -12,6 +12,8 @@ import { NextResponse } from 'next/server';
 import { fetchPPRevenue, fetchBlakeRevenue } from '@/lib/bigcommerce-revenue';
 import { fetchETZStripeRevenue, fetchHSCStripeRevenue, fetchStripeProductMap, fetchStripeSubscriptionSummary } from '@/lib/stripe-revenue';
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
+import { fetchBingSpendTotal } from '@/lib/bing-ads';
+import { fetchBingPaidTraffic } from '@/lib/google-analytics';
 import { fetchMetaSpend, fetchEtzMetaSpend, META_PP_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
 import { PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
 import { fetchTrialConversion } from '@/lib/hubspot-trials';
@@ -363,13 +365,14 @@ export async function GET(request: Request) {
     try {
       switch (brand) {
         case 'pp': {
-          const [gAds, meta] = await Promise.all([
+          const [gAds, meta, bing] = await Promise.all([
             ppCfg
               ? fetchMonthlySpend(ppCfg, s, e, { excludes: 'ETZ' }).then(r => r.reduce((a, v) => a + v.actualSpend, 0))
               : Promise.resolve(0),
             fetchMetaSpend(META_PP_ACCOUNT_ID, s, e, { excludes: 'ETZ' } satisfies MetaCampaignFilter).catch(() => 0),
+            fetchBingSpendTotal(s, e).catch(() => null),
           ]);
-          return gAds + meta + chatgptPP;
+          return gAds + meta + (bing ?? 0) + chatgptPP;
         }
         case 'etz': {
           const [gAds, meta] = await Promise.all([
@@ -392,6 +395,20 @@ export async function GET(request: Request) {
     } catch { return 0; }
   }
 
+  // Pascal Press: Bing spend and the sales Google Analytics attributes to paid Bing clicks
+  async function fetchBingBlock(s: string, e: string) {
+    let spend: number | null = null, error = '';
+    try { spend = await fetchBingSpendTotal(s, e); } catch (err) { error = err instanceof Error ? err.message.slice(0, 160) : 'failed'; }
+    const ga = await fetchBingPaidTraffic(s, e);
+    const revenue = ga.revenue, sp = spend ?? 0;
+    return {
+      configured: spend !== null || error !== '', error,
+      spend: sp, revenue, orders: ga.orders, sessions: ga.sessions,
+      roas: sp > 0 ? Math.round((revenue / sp) * 10) / 10 : null,
+      revenueAfterSpend: Math.round((revenue - sp) * 100) / 100,
+    };
+  }
+
   // 7-day sparkline: one revenue fetch per day, always last 7 days
   const today     = toYMD(new Date());
   const sparkDays = Array.from({ length: 7 }, (_, i) => subDays(today, 6 - i));
@@ -411,7 +428,7 @@ export async function GET(request: Request) {
   const compTrialsRangeMs = ymdToMsRangeAEST(comp.start, comp.end);
 
   const umsOn = brand === 'etz' && umsConfigured();
-  const [curRevR, compRevR, curSpendR, compSpendR, curProductsR, compProductsR, subsR, curTrialsR, compTrialsR, curUmsR, compUmsR, ...sparkR] =
+  const [curRevR, compRevR, curSpendR, compSpendR, curProductsR, compProductsR, subsR, curTrialsR, compTrialsR, curUmsR, compUmsR, curBingR, compBingR, ...sparkR] =
     await Promise.allSettled([
       fetchRev(cur.start, cur.end),
       fetchRev(comp.start, comp.end),
@@ -430,6 +447,8 @@ export async function GET(request: Request) {
         : Promise.resolve(null),
       umsOn ? fetchUmsTrials(cur.start, cur.end) : Promise.resolve(null),
       umsOn ? fetchUmsTrials(comp.start, comp.end) : Promise.resolve(null),
+      brand === 'pp' ? fetchBingBlock(cur.start, cur.end) : Promise.resolve(null),
+      brand === 'pp' ? fetchBingBlock(comp.start, comp.end) : Promise.resolve(null),
       ...sparkDays.map(d => fetchRev(d, d)),
     ]);
 
@@ -448,7 +467,11 @@ export async function GET(request: Request) {
   const compUms = compUmsR.status === 'fulfilled' ? compUmsR.value : null;
   const useUms  = Boolean(curUms && compUms);
 
+  const curBing  = curBingR.status  === 'fulfilled' ? curBingR.value  : null;
+  const compBing = compBingR.status === 'fulfilled' ? compBingR.value : null;
+
   const warnings: string[] = [];
+  if (curBing?.error) warnings.push(`Bing spend could not be read (${curBing.error}). The ad spend total may be missing Bing.`);
   if (!curRev) warnings.push('Revenue for the selected period could not be read (the sales system was busy). Please try again in a minute.');
   if (!compRev) warnings.push('Revenue for the comparison period could not be read (the sales system was busy). Please try again in a minute.');
 
@@ -465,6 +488,7 @@ export async function GET(request: Request) {
     comparison:  { start: comp.start, end: comp.end, label: comp.label },
     current:     { ...buildMetrics(curRev,  curSpend),  trialsStarted: useUms ? curUms!.trials : (curTrials ? curTrials.totalEverStarted : null), trialsFamilies: useUms ? curUms!.customers : null, trialsFamiliesBought: useUms ? curUms!.customersWhoBought : null, trialsSource: useUms ? 'ums' : 'hubspot', trialsCountSource: useUms ? curUms!.trialsSource : null },
     prev:        { ...buildMetrics(compRev, compSpend), trialsStarted: useUms ? compUms!.trials : (compTrials ? compTrials.totalEverStarted : null), trialsFamilies: useUms ? compUms!.customers : null, trialsFamiliesBought: useUms ? compUms!.customersWhoBought : null, trialsSource: useUms ? 'ums' : 'hubspot', trialsCountSource: useUms ? compUms!.trialsSource : null },
+    bing: brand === 'pp' && curBing && compBing && (curBing.configured || compBing.configured) ? { current: curBing, prev: compBing } : null,
     products,
     subscriptions: subs,
     sparkline,

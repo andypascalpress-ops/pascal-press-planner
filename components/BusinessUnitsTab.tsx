@@ -47,7 +47,10 @@ interface BUSubscriptions {
   mrr: number;
 }
 
+interface BUBing { configured: boolean; error: string; spend: number; revenue: number; orders: number; sessions: number; roas: number | null; revenueAfterSpend: number }
+
 interface BUData {
+  bing?: { current: BUBing; prev: BUBing } | null;
   current: BUMetrics;
   prev: BUMetrics;
   products: BUProduct[];
@@ -546,6 +549,24 @@ export default function BusinessUnitsTab() {
               <MetricCard label="Revenue after ad spend" value={data.current.revenue - data.current.spend} prevValue={data.prev.revenue - data.prev.spend} fmt="currency" />
               <MetricCard label="Orders"  value={data.current.orders}  prevValue={data.prev.orders}  fmt="number"  />
             </div>
+
+            {/* Pascal Press: Bing Ads spend and the sales Google Analytics credits to paid Bing clicks */}
+            {brand === 'pp' && data.bing && (
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+                  <p className="text-[11px] font-semibold text-gray-600 uppercase tracking-wider">Bing Ads</p>
+                  <p className="text-[11px] text-gray-400">Spend from Microsoft Advertising (all campaigns). Revenue from Google Analytics: purchases from paid Bing clicks.</p>
+                </div>
+                {data.bing.current.error && <p className="mb-2 text-xs text-amber-700">Bing spend could not be read just now: {data.bing.current.error}</p>}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <MetricCard label="Bing spend" value={data.bing.current.spend} prevValue={data.bing.prev.spend} fmt="currency" detail="Included in Spend above" />
+                  <MetricCard label="Revenue (Google Analytics)" value={data.bing.current.revenue} prevValue={data.bing.prev.revenue} fmt="currency"
+                    detail={`${data.bing.current.orders} orders from ${data.bing.current.sessions.toLocaleString('en-AU')} visits`} />
+                  <MetricCard label="Revenue after Bing spend" value={data.bing.current.revenueAfterSpend} prevValue={data.bing.prev.revenueAfterSpend} fmt="currency" />
+                  <MetricCard label="Revenue per $1 of Bing spend" value={data.bing.current.roas} prevValue={data.bing.prev.roas} fmt="roas" />
+                </div>
+              </div>
+            )}
 
             {/* Secondary metrics */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
