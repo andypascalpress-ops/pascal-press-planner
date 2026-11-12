@@ -68,9 +68,9 @@ async function getAccessToken(): Promise<string> {
 }
 
 function buildEnvelope(action: string, bodyContent: string, token: string): string {
-  const accountId  = process.env.BING_ADS_ACCOUNT_ID!;
-  const customerId = process.env.BING_ADS_CUSTOMER_ID!;
-  const devToken   = process.env.BING_ADS_DEVELOPER_TOKEN!;
+  const accountId  = cleanEnv(cleanEnv(process.env.BING_ADS_ACCOUNT_ID)!);
+  const customerId = cleanEnv(cleanEnv(process.env.BING_ADS_CUSTOMER_ID)!);
+  const devToken   = cleanEnv(cleanEnv(process.env.BING_ADS_DEVELOPER_TOKEN)!);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
             xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
@@ -100,7 +100,9 @@ async function soapCall(action: string, bodyContent: string, token: string): Pro
     // pull out just the error codes and messages so the reason is readable
     const pick = (tag: string) => Array.from(text.matchAll(new RegExp(`<${tag}[^>]*>([^<]*)</${tag}>`, 'g'))).map(m => m[1]).filter(Boolean).slice(0, 3).join('; ');
     const detail = [pick('Code'), pick('ErrorCode'), pick('Message'), pick('Details')].filter(Boolean).join(' | ');
-    throw new Error(`Bing Ads ${action} error (HTTP ${res.status}): ${detail || text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 300)}`);
+    const shapeOf = (v: string | undefined) => { const c = cleanEnv(v); return c ? `${c.length} chars${/^\d+$/.test(c) ? ', digits' : ''}` : 'missing'; };
+    const ids = ` [developer token ${shapeOf(process.env.BING_ADS_DEVELOPER_TOKEN)}, account id ${shapeOf(process.env.BING_ADS_ACCOUNT_ID)}, customer id ${shapeOf(process.env.BING_ADS_CUSTOMER_ID)}]`;
+    throw new Error(`Bing Ads ${action} error (HTTP ${res.status}): ${(detail || text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 300)) + ids}`);
   }
   return text;
 }
@@ -192,7 +194,7 @@ export async function fetchBingMonthlySpend(
   endDate:    string,
   campaignId: string | null = '490633545',   // null = every campaign in the account
 ): Promise<BingMonthlySpend[]> {
-  const accountId = process.env.BING_ADS_ACCOUNT_ID;
+  const accountId = cleanEnv(process.env.BING_ADS_ACCOUNT_ID);
   if (!accountId) throw new Error('BING_ADS_ACCOUNT_ID is not set');
 
   const token = await getAccessToken();
@@ -292,7 +294,7 @@ const _spendCache = new Map<string, { at: number; value: number }>();
  * Returns null when Bing is not configured; throws if the report fails.
  */
 export async function fetchBingSpendTotal(startDate: string, endDate: string): Promise<number | null> {
-  if (!process.env.BING_ADS_CLIENT_ID || !process.env.BING_ADS_ACCOUNT_ID) return null;
+  if (!process.env.BING_ADS_CLIENT_ID || !cleanEnv(process.env.BING_ADS_ACCOUNT_ID)) return null;
   const key = `${startDate}|${endDate}`;
   const hit = _spendCache.get(key);
   if (hit && Date.now() - hit.at < 30 * 60 * 1000) return hit.value;
