@@ -45,6 +45,10 @@ interface GoogleAdsHistoryItem {
   etz: number;
 }
 
+interface FbCampaignRow { id: string; name: string; spend: number; clicks: number; revenue: number; orders: number; sessions: number; roas: number | null; adsets?: { name: string; spend: number; revenue: number; orders: number }[] }
+interface FbCampaignBrand { campaigns: FbCampaignRow[]; unmatched: { tag: string; sessions: number; orders: number; revenue: number }[]; totals: { spend: number; revenue: number; orders: number } }
+interface FbCampaignResponse { month: string; pp: FbCampaignBrand; etz: FbCampaignBrand }
+
 interface FacebookPaidBrand { connected: boolean; revenue: number; orders: number; sessions: number; spend: number | null; otherRevenue?: number; otherOrders?: number }
 
 interface GA4RevenueResponse {
@@ -529,6 +533,8 @@ interface BrandPanelProps {
   channelRevenue?: ChannelRevenueBrand | null;
   /** Sales Google Analytics credits to paid Facebook / Instagram clicks, with the Meta ad spend for the month */
   facebookPaid?: FacebookPaidBrand | null;
+  /** Per Meta campaign: spend and the sales Google Analytics credits to it */
+  fbCampaigns?: FbCampaignBrand | null;
 }
 
 function BrandPanel({
@@ -538,6 +544,7 @@ function BrandPanel({
   websiteConversion,
   channelRevenue,
   facebookPaid,
+  fbCampaigns,
 }: BrandPanelProps) {
   const monthRecords = spendForBrandMonth(records, brand, selectedMonth);
   const annualBudget = (ANNUAL_BUDGETS as Record<string, number>)[brand] ?? 0;
@@ -756,6 +763,39 @@ function BrandPanel({
                 <p className="text-center text-[11px] text-gray-500">
                   Sales Google Analytics credits to paid Facebook and Instagram clicks this month ({facebookPaid.sessions.toLocaleString('en-AU')} visits). It is not the store's own order count.
                 </p>
+                {fbCampaigns && (fbCampaigns.campaigns.length > 0 || fbCampaigns.unmatched.length > 0) && (
+                  <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+                    <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 px-3 py-1.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-100">
+                      <span>Campaign</span><span className="text-right">Spend</span><span className="text-right">Revenue (GA)</span><span className="text-right">ROAS</span>
+                    </div>
+                    {fbCampaigns.campaigns.map(c => (
+                      <div key={c.id} className="border-b border-gray-50 last:border-0">
+                        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 px-3 py-1.5 text-xs">
+                          <span className="text-gray-800 font-medium truncate" title={c.name}>{c.name}</span>
+                          <span className="text-right tabular-nums text-gray-700">{c.spend > 0 ? AUD.format(c.spend) : '—'}</span>
+                          <span className="text-right tabular-nums text-indigo-700 font-semibold">{c.revenue > 0 ? AUD.format(c.revenue) : '—'}</span>
+                          <span className="text-right tabular-nums text-gray-600">{c.roas != null ? c.roas.toFixed(1) + 'x' : '—'}</span>
+                        </div>
+                        {(c.adsets ?? []).map(a => (
+                          <div key={a.name} className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 px-3 pb-1 text-[11px] text-gray-500">
+                            <span className="pl-3 truncate" title={a.name}>↳ {a.name}</span>
+                            <span className="text-right tabular-nums">{a.spend > 0 ? AUD.format(a.spend) : '—'}</span>
+                            <span className="text-right tabular-nums">{a.revenue > 0 ? AUD.format(a.revenue) : '—'}</span>
+                            <span className="text-right tabular-nums">{a.spend > 0 && a.revenue > 0 ? (a.revenue / a.spend).toFixed(1) + 'x' : '—'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                    {fbCampaigns.unmatched.map(u => (
+                      <div key={u.tag} className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 px-3 py-1.5 text-xs border-t border-gray-100 bg-amber-50/60">
+                        <span className="text-amber-800 truncate" title={u.tag}>Tag not matched to a campaign: {u.tag}</span>
+                        <span className="text-right text-gray-400">—</span>
+                        <span className="text-right tabular-nums text-amber-800 font-semibold">{u.revenue > 0 ? AUD.format(u.revenue) : '$0'}</span>
+                        <span className="text-right text-gray-400">—</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {(facebookPaid.otherRevenue ?? 0) > 0 && (
                   <p className="text-center text-[11px] text-amber-700">
                     Also {AUD.format(facebookPaid.otherRevenue!)} from {facebookPaid.otherOrders} order{facebookPaid.otherOrders === 1 ? '' : 's'} on Facebook links that Google Analytics does not see as paid (organic, or links tagged with a campaign name instead of a medium).
@@ -2872,6 +2912,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
   const [googleAdsSpend,   setGoogleAdsSpend  ] = useState<GoogleAdsSpendResponse | null>(null);
   const [googleAdsHistory, setGoogleAdsHistory] = useState<GoogleAdsHistoryItem[] | null>(null);
   const [ga4Revenue,       setGa4Revenue      ] = useState<GA4RevenueResponse | null>(null);
+  const [fbCampaigns,      setFbCampaigns     ] = useState<FbCampaignResponse | null>(null);
   const [ga4History,       setGa4History      ] = useState<GA4HistoryItem[] | null>(null);
   const [campaigns,            setCampaigns           ] = useState<CampaignsResponse | null>(null);
   const [loadingCampaigns,    setLoadingCampaigns    ] = useState(false);
@@ -2956,6 +2997,14 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
         setGa4Revenue(data);
       })
       .catch((e) => { if (e?.name !== 'AbortError') { /* ignore */ } });
+
+    fetch('/api/meta-campaign-performance?month=' + month, { signal })
+      .then(r => r.json())
+      .then((data: FbCampaignResponse) => {
+        if (data?.month && data.month !== month) return;
+        setFbCampaigns(data);
+      })
+      .catch((e) => { if (e?.name !== 'AbortError') setFbCampaigns(null); });
 
     setLoadingCampaigns(true);
     fetch('/api/google-ads-campaigns?month=' + month, { signal })
@@ -3402,6 +3451,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             websiteConversion={siteConversion?.pp ?? null}
             channelRevenue={channelRevenue?.pp ?? null}
             facebookPaid={ga4Revenue?.facebook?.pp ?? null}
+            fbCampaigns={fbCampaigns?.pp ?? null}
           />
           <BrandPanel
             brand="Excel Test Zone"
@@ -3419,6 +3469,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             websiteConversion={siteConversion?.etz ?? null}
             channelRevenue={channelRevenue?.etz ?? null}
             facebookPaid={ga4Revenue?.facebook?.etz ?? null}
+            fbCampaigns={fbCampaigns?.etz ?? null}
           />
         </div>
 

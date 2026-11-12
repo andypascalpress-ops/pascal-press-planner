@@ -7,7 +7,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  fetchMetaCampaigns, fetchEtzMetaCampaigns, fetchMetaCampaignUtmTags,
+  fetchMetaCampaigns, fetchEtzMetaCampaigns, fetchMetaCampaignUtmTags, fetchMetaAdsets, fetchEtzMetaAdsets, type MetaAdset,
   META_PP_ACCOUNT_ID, META_ETZ_ACCOUNT_ID, META_ETZ_OWN_ACCOUNT_ID, type MetaCampaign,
 } from '@/lib/meta-ads';
 import { fetchFacebookCampaignRevenue } from '@/lib/google-analytics';
@@ -18,9 +18,10 @@ export const maxDuration = 60;
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-function build(campaigns: MetaCampaign[], tags: Record<string, string[]>, ga: { campaign: string; sessions: number; orders: number; revenue: number }[]) {
-  type Row = { id: string; name: string; spend: number; clicks: number; revenue: number; orders: number; sessions: number; tags: string[]; roas: number | null };
-  const rows: Row[] = campaigns.map(c => ({ id: c.id, name: c.name, spend: r2(c.spend), clicks: c.clicks, revenue: 0, orders: 0, sessions: 0, tags: [], roas: null }));
+function build(campaigns: MetaCampaign[], tags: Record<string, string[]>, adsets: MetaAdset[], ga: { campaign: string; sessions: number; orders: number; revenue: number }[]) {
+  type Sub = { name: string; spend: number; revenue: number; orders: number; sessions: number };
+  type Row = { id: string; name: string; spend: number; clicks: number; revenue: number; orders: number; sessions: number; tags: string[]; roas: number | null; adsets: Sub[] };
+  const rows: Row[] = campaigns.map(c => ({ id: c.id, name: c.name, spend: r2(c.spend), clicks: c.clicks, revenue: 0, orders: 0, sessions: 0, tags: [], roas: null, adsets: [] }));
   // names a Google Analytics campaign could carry for each Meta campaign: its ID, its name, or the tags its ads use ({{campaign.id}} / {{campaign.name}} macros resolved)
   const keys = campaigns.map(c => {
     const set = new Set<string>([norm(c.id), norm(c.name)]);
@@ -38,6 +39,16 @@ function build(campaigns: MetaCampaign[], tags: Record<string, string[]>, ga: { 
     if (i >= 0) {
       rows[i]!.revenue = r2(rows[i]!.revenue + g.revenue); rows[i]!.orders += g.orders; rows[i]!.sessions += g.sessions;
       if (!rows[i]!.tags.includes(g.campaign)) rows[i]!.tags.push(g.campaign);
+    } else if (k && adsets.some(a => norm(a.adsetName) === k)) {
+      // the Google Analytics campaign name is an ad set name: add it to that ad set's campaign and keep the ad set as a sub-line
+      const a = adsets.find(x => norm(x.adsetName) === k)!;
+      const idx = rows.findIndex(r => r.id === a.campaignId);
+      if (idx >= 0) {
+        const row = rows[idx]!;
+        row.revenue = r2(row.revenue + g.revenue); row.orders += g.orders; row.sessions += g.sessions;
+        const same = adsets.filter(x => x.campaignId === a.campaignId && norm(x.adsetName) === k);
+        row.adsets.push({ name: a.adsetName, spend: r2(same.reduce((t, x) => t + x.spend, 0)), revenue: g.revenue, orders: g.orders, sessions: g.sessions });
+      } else unmatched.push({ tag: g.campaign || '(not set)', sessions: g.sessions, orders: g.orders, revenue: g.revenue });
     } else if (g.revenue > 0 || g.sessions >= 20) {
       unmatched.push({ tag: g.campaign || '(not set)', sessions: g.sessions, orders: g.orders, revenue: g.revenue });
     }
@@ -61,18 +72,20 @@ export async function GET(req: NextRequest) {
   const start = `${month}-01`, end = `${month}-${String(current ? Math.min(lastDay, now.getDate()) : lastDay).padStart(2, '0')}`;
 
   const safe = async <T,>(p: Promise<T>, fallback: T): Promise<T> => { try { return await p; } catch { return fallback; } };
-  const [ppCamps, etzCamps, ppTags, etzTagsOwn, etzTagsShared, ppGa, etzGa] = await Promise.all([
+  const [ppCamps, etzCamps, ppTags, etzTagsOwn, etzTagsShared, ppAdsets, etzAdsets, ppGa, etzGa] = await Promise.all([
     safe(fetchMetaCampaigns(META_PP_ACCOUNT_ID, start, end, { excludes: 'ETZ' }), [] as MetaCampaign[]),
     safe(fetchEtzMetaCampaigns(start, end), [] as MetaCampaign[]),
     safe(fetchMetaCampaignUtmTags(META_PP_ACCOUNT_ID), {} as Record<string, string[]>),
     safe(fetchMetaCampaignUtmTags(META_ETZ_OWN_ACCOUNT_ID), {} as Record<string, string[]>),
     safe(fetchMetaCampaignUtmTags(META_ETZ_ACCOUNT_ID), {} as Record<string, string[]>),
+    safe(fetchMetaAdsets(META_PP_ACCOUNT_ID, start, end, { excludes: 'ETZ' }), [] as MetaAdset[]),
+    safe(fetchEtzMetaAdsets(start, end), [] as MetaAdset[]),
     fetchFacebookCampaignRevenue(start, end, 'pp'),
     fetchFacebookCampaignRevenue(start, end, 'etz'),
   ]);
   return NextResponse.json({
     month, range: { start, end },
-    pp: build(ppCamps, ppTags, ppGa),
-    etz: build(etzCamps, { ...etzTagsShared, ...etzTagsOwn }, etzGa),
+    pp: build(ppCamps, ppTags, ppAdsets, ppGa),
+    etz: build(etzCamps, { ...etzTagsShared, ...etzTagsOwn }, etzAdsets, etzGa),
   }, { headers: { 'Cache-Control': 'public, s-maxage=600, stale-while-revalidate=300' } });
 }

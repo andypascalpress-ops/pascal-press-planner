@@ -324,3 +324,49 @@ export async function fetchMetaCampaignUtmTags(adAccountId: string): Promise<Rec
   }
   return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, [...v]]));
 }
+
+
+// ---------------------------------------------------------------------------
+// Ad set level spend, so Google Analytics campaign names that mirror an ad set name can be matched to spend
+// ---------------------------------------------------------------------------
+
+export interface MetaAdset { campaignId: string; campaignName: string; adsetName: string; spend: number; clicks: number }
+
+export async function fetchMetaAdsets(adAccountId: string, startDate: string, endDate: string, campaignFilter?: MetaCampaignFilter): Promise<MetaAdset[]> {
+  if (!ACCESS_TOKEN || !adAccountId) return [];
+  const containsLower = campaignFilter?.contains?.toLowerCase();
+  const excludesLower = campaignFilter?.excludes?.toLowerCase();
+  const params = new URLSearchParams({
+    fields: 'campaign_id,campaign_name,adset_name,spend,clicks',
+    level: 'adset',
+    time_range: JSON.stringify({ since: startDate, until: endDate }),
+    access_token: ACCESS_TOKEN,
+    limit: '500',
+  });
+  const out: MetaAdset[] = [];
+  let next: string | null = `${META_GRAPH_API}/${adAccountId}/insights?${params}`;
+  for (let page = 0; next && page < 6; page++) {
+    const res: Response = await fetch(next, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`Meta ad sets ${adAccountId} -> HTTP ${res.status}`);
+    const json = await res.json() as { data?: { campaign_id?: string; campaign_name?: string; adset_name?: string; spend?: string; clicks?: string }[]; paging?: { next?: string } };
+    for (const r of json.data ?? []) {
+      const cn = (r.campaign_name ?? '').toLowerCase();
+      if (containsLower && !cn.includes(containsLower)) continue;
+      if (excludesLower && cn.includes(excludesLower)) continue;
+      out.push({ campaignId: r.campaign_id ?? '', campaignName: r.campaign_name ?? '', adsetName: r.adset_name ?? '', spend: parseFloat(r.spend ?? '0') || 0, clicks: parseInt(r.clicks ?? '0', 10) || 0 });
+    }
+    const rawNext = json.paging?.next ?? null;
+    if (rawNext) { const u = new URL(rawNext); if (!u.searchParams.get('access_token')) u.searchParams.set('access_token', ACCESS_TOKEN); next = u.toString(); } else next = null;
+  }
+  return out;
+}
+
+/** Excel Test Zone ad sets: the new ETZ account plus ETZ-named campaigns in the shared account (to the hand-over date). */
+export async function fetchEtzMetaAdsets(startDate: string, endDate: string): Promise<MetaAdset[]> {
+  const lr = readLegacyEtz() ? legacyRange(startDate, endDate) : null;
+  const [own, legacy] = await Promise.all([
+    META_ETZ_OWN_ACCOUNT_ID ? fetchMetaAdsets(META_ETZ_OWN_ACCOUNT_ID, startDate, endDate) : Promise.resolve([] as MetaAdset[]),
+    lr ? fetchMetaAdsets(META_ETZ_ACCOUNT_ID, lr.start, lr.end, { contains: 'ETZ' }) : Promise.resolve([] as MetaAdset[]),
+  ]);
+  return [...own, ...legacy];
+}

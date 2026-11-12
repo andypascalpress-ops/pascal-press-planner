@@ -1725,6 +1725,9 @@ export interface FacebookPaidRevenue {
 
 const META_SOURCES = ['facebook', 'instagram', 'fb', 'ig', 'meta'];
 const FB_PAID_MEDIUMS = new Set(['cpc', 'ppc', 'paid', 'paid_social', 'paidsocial', 'paid-social', 'social_paid', 'fb_ad', 'cpm', 'display']);
+// mediums that mean ordinary, untagged visits (organic posts, shares, plain referrals)
+const FB_UNTAGGED_MEDIUMS = ['referral', 'social', 'organic', '(none)', '(not set)'];
+const isFbCampaignTraffic = (medium: string, channel: string) => channel === 'Paid Social' || FB_PAID_MEDIUMS.has(medium.toLowerCase()) || !FB_UNTAGGED_MEDIUMS.includes(medium.toLowerCase());
 
 export async function fetchFacebookPaidRevenue(startDate: string, endDate: string, property: 'pp' | 'etz' = 'pp'): Promise<FacebookPaidRevenue> {
   const empty: FacebookPaidRevenue = { connected: false, revenue: 0, orders: 0, sessions: 0, otherRevenue: 0, otherOrders: 0, breakdown: [] };
@@ -1748,7 +1751,7 @@ export async function fetchFacebookPaidRevenue(startDate: string, endDate: strin
       const source = r.dimensionValues?.[0]?.value ?? '', medium = r.dimensionValues?.[1]?.value ?? '', channel = r.dimensionValues?.[2]?.value ?? '';
       return {
         source, medium, channel,
-        paid: channel === 'Paid Social' || FB_PAID_MEDIUMS.has(medium.toLowerCase()),
+        paid: isFbCampaignTraffic(medium, channel),
         sessions: parseInt(r.metricValues?.[0]?.value ?? '0', 10) || 0,
         orders: parseInt(r.metricValues?.[1]?.value ?? '0', 10) || 0,
         revenue: Math.round((parseFloat(r.metricValues?.[2]?.value ?? '0') || 0) * 100) / 100,
@@ -1777,15 +1780,12 @@ export async function fetchFacebookCampaignRevenue(startDate: string, endDate: s
     const accessToken = await getAccessToken();
     const base = property === 'etz' ? GA4_ETZ_BASE : GA4_BASE;
     const src = (value: string) => ({ filter: { fieldName: 'sessionSource', stringFilter: { matchType: 'CONTAINS', value } } });
-    const paid = { orGroup: { expressions: [
-      { filter: { fieldName: 'sessionDefaultChannelGroup', stringFilter: { matchType: 'EXACT', value: 'Paid Social' } } },
-      ...Array.from(FB_PAID_MEDIUMS).map(v => ({ filter: { fieldName: 'sessionMedium', stringFilter: { matchType: 'EXACT', value: v } } })),
-    ] } };
+    const tagged = { notExpression: { filter: { fieldName: 'sessionMedium', inListFilter: { values: FB_UNTAGGED_MEDIUMS } } } };
     const data = await runReportOnProperty(accessToken, base, {
       dateRanges: [{ startDate, endDate }],
       dimensions: [{ name: 'sessionCampaignName' }],
       metrics: [{ name: 'sessions' }, { name: 'transactions' }, { name: 'totalRevenue' }],
-      dimensionFilter: { andGroup: { expressions: [{ orGroup: { expressions: META_SOURCES.map(src) } }, paid] } },
+      dimensionFilter: { andGroup: { expressions: [{ orGroup: { expressions: META_SOURCES.map(src) } }, tagged] } },
       orderBys: [{ metric: { metricName: 'totalRevenue' }, desc: true }],
       limit: 100,
     });
