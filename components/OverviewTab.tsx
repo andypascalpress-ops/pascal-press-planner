@@ -46,6 +46,7 @@ interface OverviewData {
   etz:          BrandData;
   hsc:          BrandData;
   blake:        BrandData;
+  esg?:         BrandData | null;   // Excel Study Guides (Shopify); only present when signed in and connected
   combined: {
     spend:          number;
     revenue:        number;
@@ -591,24 +592,26 @@ interface HubSpotSubscriberData {
   blake:     number;
 }
 
-function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers }: {
+function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers, linkLabel = 'View Finance →' }: {
   name: string;
   data: BrandData;
   dayPct: number;
   isMonthly: boolean;
   onNavigate: () => void;
   subscribers?: number | null;
+  linkLabel?: string;
 }) {
   const tagColor =
     name === 'Pascal Press' ? 'bg-blue-100 text-blue-700'
     : name === 'Blake Education' ? 'bg-violet-100 text-violet-700'
+    : name === 'Excel Study Guides' ? 'bg-cyan-100 text-cyan-700'
     : 'bg-emerald-100 text-emerald-700';
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${tagColor}`}>{name}</span>
         <button onClick={onNavigate} className="text-xs text-blue-600 hover:underline">
-          View Finance →
+          {linkLabel}
         </button>
       </div>
 
@@ -1000,7 +1003,7 @@ function Band6TrackerCard() {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 interface OverviewTabProps {
-  onNavigate: (view: 'finance' | 'email') => void;
+  onNavigate: (view: 'finance' | 'email' | 'business-units') => void;
 }
 
 export default function OverviewTab({ onNavigate }: OverviewTabProps) {
@@ -1067,7 +1070,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
     );
   }
 
-  const { month, daysInMonth, currentDay, pp, etz, hsc, blake, combined, email, rangeLabel, isMonthly } = data;
+  const { month, daysInMonth, currentDay, pp, etz, hsc, blake, esg, combined, email, rangeLabel, isMonthly } = data;
   const dayPct = currentDay / daysInMonth;
 
   return (
@@ -1143,6 +1146,9 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
           <BrandCard name="Pascal Press"      data={pp}    dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.pp    ?? null} />
           <BrandCard name="Excel Test Zone"   data={etz}   dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.etz   ?? null} />
           <BrandCard name="Excel HSC Copilot" data={hsc}   dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.hsc   ?? null} />
+          {esg && (
+            <BrandCard name="Excel Study Guides" data={esg} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('business-units')} linkLabel="View Business Units →" />
+          )}
           {blake && (
             <BrandCard name="Blake Education" data={blake} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.blake ?? null} />
           )}

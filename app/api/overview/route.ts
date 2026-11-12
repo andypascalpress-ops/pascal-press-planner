@@ -16,6 +16,7 @@ import { MONTHLY_GOOGLE_BUDGETS, PP_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_REVENUE
 import { fetchMetaSpend, fetchEtzMetaSpend, META_PP_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
 import { fetchBingSpendTotal } from '@/lib/bing-ads';
 import { fetchBingPaidTraffic } from '@/lib/google-analytics';
+import { fetchShopifySales, shopifyConfigured } from '@/lib/shopify';
 import { OverviewAlert } from '@/lib/types';
 
 // Previous-month PP revenue never changes once the month closes — cache it for 24 h.
@@ -113,7 +114,15 @@ function deriveRange(range: RangeParam): {
 // Bing reports can take a while on a cold start; allow the page up to a minute (same as the Business Units route)
 export const maxDuration = 60;
 
+function isSignedIn(request: Request): boolean {
+  const pw = process.env.SITE_PASSWORD;
+  if (!pw) return true;                                           // no site password configured: same as the rest of the site
+  const m = /(?:^|;\s*)pp_auth=([^;]*)/.exec(request.headers.get('cookie') ?? '');
+  return !!m && decodeURIComponent(m[1] ?? '') === pw;
+}
+
 export async function GET(request: Request) {
+  const signedIn = isSignedIn(request);
   const { searchParams } = new URL(request.url);
   const rangeParam = (searchParams.get('range') ?? 'mtd') as RangeParam;
   const { startDate, endDate, month, daysInMonth, currentDay, rangeLabel, isMonthly } = deriveRange(rangeParam);
@@ -141,7 +150,7 @@ export async function GET(request: Request) {
   const prevStart    = `${prevMonth}-01`;
   const prevEnd      = `${prevMonth}-${String(prevDays).padStart(2, '0')}`;
 
-  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult, ppConvResult, etzConvResult, ppPrevRevResult, ppMetaResult, etzMetaResult, ppBingResult, ppBingGaResult] =
+  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult, ppConvResult, etzConvResult, ppPrevRevResult, ppMetaResult, etzMetaResult, ppBingResult, ppBingGaResult, esgResult] =
     await Promise.allSettled([
       ppCfg
         ? fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' })
@@ -172,6 +181,9 @@ export async function GET(request: Request) {
       // Pascal Press Bing Ads spend (Microsoft Advertising) and the revenue Google Analytics credits to Bing traffic
       fetchBingSpendTotal(startDate, endDate),
       fetchBingPaidTraffic(startDate, endDate),
+      // Excel Study Guides (Shopify). The /api routes sit outside the site password, so this store's sales are only included
+      // when the request carries the planner's own login cookie.
+      shopifyConfigured() && signedIn ? fetchShopifySales(startDate, endDate) : Promise.resolve(null),
     ]);
 
   const ppSpend  = ppAdsResult.status  === 'fulfilled'
@@ -431,6 +443,18 @@ export async function GET(request: Request) {
       adsError:      null,
       conversion:    null,
     },
+    esg: esgResult.status === 'fulfilled' && esgResult.value ? {
+      spend:         0,
+      budget:        0,
+      revenue:       esgResult.value.revenue,
+      roas:          0,
+      orders:        esgResult.value.orders,
+      aov:           esgResult.value.orders > 0 ? Math.round(esgResult.value.revenue / esgResult.value.orders) : null,
+      revConnected:  true,
+      adsConnected:  false,
+      adsError:      null,
+      conversion:    null,
+    } : null,
     combined: {
       spend:         Math.round(totalSpend   * 100) / 100,
       revenue:       Math.round(totalRevenue * 100) / 100,
