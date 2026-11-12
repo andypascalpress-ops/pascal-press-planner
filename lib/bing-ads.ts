@@ -90,7 +90,7 @@ async function soapCall(action: string, bodyContent: string, token: string): Pro
     method: 'POST',
     headers: {
       'Content-Type': 'text/xml; charset=utf-8',
-      SOAPAction:     `"${REPORTING_NS}/${action}"`,
+      SOAPAction:     `"${action}"`,   // Microsoft expects the plain operation name, not a full URL
     },
     body:  buildEnvelope(action, bodyContent, token),
     cache: 'no-store',
