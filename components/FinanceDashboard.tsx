@@ -45,7 +45,7 @@ interface GoogleAdsHistoryItem {
   etz: number;
 }
 
-interface FacebookPaidBrand { connected: boolean; revenue: number; orders: number; sessions: number; spend: number | null }
+interface FacebookPaidBrand { connected: boolean; revenue: number; orders: number; sessions: number; spend: number | null; otherRevenue?: number; otherOrders?: number }
 
 interface GA4RevenueResponse {
   facebook?: { pp: FacebookPaidBrand; etz: FacebookPaidBrand };
@@ -756,6 +756,11 @@ function BrandPanel({
                 <p className="text-center text-[11px] text-gray-500">
                   Sales Google Analytics credits to paid Facebook and Instagram clicks this month ({facebookPaid.sessions.toLocaleString('en-AU')} visits). It is not the store's own order count.
                 </p>
+                {(facebookPaid.otherRevenue ?? 0) > 0 && (
+                  <p className="text-center text-[11px] text-amber-700">
+                    Also {AUD.format(facebookPaid.otherRevenue!)} from {facebookPaid.otherOrders} order{facebookPaid.otherOrders === 1 ? '' : 's'} on Facebook links that Google Analytics does not see as paid (organic, or links tagged with a campaign name instead of a medium).
+                  </p>
+                )}
               </div>
             </div>
           </div>

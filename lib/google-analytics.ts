@@ -1717,6 +1717,8 @@ export async function fetchBingPaidTraffic(startDate: string, endDate: string): 
 export interface FacebookPaidRevenue {
   connected: boolean;
   revenue: number; orders: number; sessions: number;
+  /** Facebook / Instagram-sourced sales that Google Analytics does NOT see as paid (organic, or links tagged with an unusual medium such as a campaign name). */
+  otherRevenue: number; otherOrders: number;
   /** Every Meta-sourced row (source facebook / instagram / fb / ig / meta), paid or not, so tagging gaps are visible. */
   breakdown: { source: string; medium: string; channel: string; paid: boolean; sessions: number; orders: number; revenue: number }[];
 }
@@ -1725,7 +1727,7 @@ const META_SOURCES = ['facebook', 'instagram', 'fb', 'ig', 'meta'];
 const FB_PAID_MEDIUMS = new Set(['cpc', 'ppc', 'paid', 'paid_social', 'paidsocial', 'paid-social', 'social_paid', 'fb_ad', 'cpm', 'display']);
 
 export async function fetchFacebookPaidRevenue(startDate: string, endDate: string, property: 'pp' | 'etz' = 'pp'): Promise<FacebookPaidRevenue> {
-  const empty: FacebookPaidRevenue = { connected: false, revenue: 0, orders: 0, sessions: 0, breakdown: [] };
+  const empty: FacebookPaidRevenue = { connected: false, revenue: 0, orders: 0, sessions: 0, otherRevenue: 0, otherOrders: 0, breakdown: [] };
   if (property === 'pp' && !isConnected()) return empty;
   if (property === 'etz' && !isETZConnected()) return empty;
   try {
@@ -1754,7 +1756,12 @@ export async function fetchFacebookPaidRevenue(startDate: string, endDate: strin
     });
     const paid = rows.filter(r => r.paid);
     const sum = (k: 'sessions' | 'orders' | 'revenue') => paid.reduce((a, r) => a + r[k], 0);
-    return { connected: true, revenue: Math.round(sum('revenue') * 100) / 100, orders: sum('orders'), sessions: sum('sessions'), breakdown: rows.slice(0, 10) };
+    const other = rows.filter(r => !r.paid && r.revenue > 0);
+    return {
+      connected: true, revenue: Math.round(sum('revenue') * 100) / 100, orders: sum('orders'), sessions: sum('sessions'),
+      otherRevenue: Math.round(other.reduce((a, r) => a + r.revenue, 0) * 100) / 100, otherOrders: other.reduce((a, r) => a + r.orders, 0),
+      breakdown: rows.slice(0, 10),
+    };
   } catch (err) {
     console.error(`[google-analytics fetchFacebookPaidRevenue ${property}]`, err);
     return empty;
