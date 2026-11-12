@@ -290,20 +290,33 @@ ${campaignId ? `          <Campaigns>
 }
 
 
-// Reports take 5-35 seconds to generate, so keep the total for a date range for 30 minutes (per server instance).
+// Reports take 5-35 seconds to generate, so keep the total for a date range for 30 minutes (per server instance),
+// share one in-flight request per range, and give up after 28 seconds so a slow Bing report can never time out the whole page.
 const _spendCache = new Map<string, { at: number; value: number }>();
+const _inflight = new Map<string, Promise<number>>();
 
 /**
  * Total Microsoft Advertising spend for the whole account (every campaign) between two dates, in AUD.
- * Returns null when Bing is not configured; throws if the report fails.
+ * Returns null when Bing is not configured; throws if the report fails or takes too long.
  */
 export async function fetchBingSpendTotal(startDate: string, endDate: string): Promise<number | null> {
-  if (!process.env.BING_ADS_CLIENT_ID || !cleanEnv(process.env.BING_ADS_ACCOUNT_ID)) return null;
+  if (!cleanEnv(process.env.BING_ADS_CLIENT_ID) || !cleanEnv(process.env.BING_ADS_ACCOUNT_ID)) return null;
   const key = `${startDate}|${endDate}`;
   const hit = _spendCache.get(key);
   if (hit && Date.now() - hit.at < 30 * 60 * 1000) return hit.value;
-  const rows = await fetchBingMonthlySpend(startDate, endDate, null);
-  const value = Math.round(rows.reduce((a, r) => a + r.actualSpend, 0) * 100) / 100;
-  _spendCache.set(key, { at: Date.now(), value });
-  return value;
+  let job = _inflight.get(key);
+  if (!job) {
+    job = fetchBingMonthlySpend(startDate, endDate, null)
+      .then(rows => {
+        const value = Math.round(rows.reduce((a, r) => a + r.actualSpend, 0) * 100) / 100;
+        _spendCache.set(key, { at: Date.now(), value });
+        return value;
+      })
+      .finally(() => { _inflight.delete(key); });
+    _inflight.set(key, job);
+  }
+  return Promise.race([
+    job,
+    new Promise<number>((_, reject) => setTimeout(() => reject(new Error('the Bing report took too long for this date range')), 28_000)),
+  ]);
 }
