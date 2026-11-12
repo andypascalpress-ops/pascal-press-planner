@@ -299,6 +299,9 @@ async function fetchStripeSubscriptionMetrics(key: string, brand: BrandParam) {
 
 type RevData = { totalRevenue: number; totalOrders: number; newCustomers: number; returningCustomers: number } | null;
 
+// Bing reports take a long time for long ranges; beyond about four months the page would risk timing out, so Bing is left out.
+const bingTooLong = (s: string, e: string) => (new Date(`${e}T12:00:00Z`).getTime() - new Date(`${s}T12:00:00Z`).getTime()) / 86_400_000 > 120;
+
 function buildMetrics(rev: RevData, spend: number) {
   const revenue          = rev?.totalRevenue        ?? 0;
   const orders           = rev?.totalOrders         ?? 0;
@@ -370,7 +373,7 @@ export async function GET(request: Request) {
               ? fetchMonthlySpend(ppCfg, s, e, { excludes: 'ETZ' }).then(r => r.reduce((a, v) => a + v.actualSpend, 0))
               : Promise.resolve(0),
             fetchMetaSpend(META_PP_ACCOUNT_ID, s, e, { excludes: 'ETZ' } satisfies MetaCampaignFilter).catch(() => 0),
-            fetchBingSpendTotal(s, e).catch(() => null),
+            bingTooLong(s, e) ? Promise.resolve(null) : fetchBingSpendTotal(s, e).catch(() => null),
           ]);
           return gAds + meta + (bing ?? 0) + chatgptPP;
         }
@@ -398,7 +401,8 @@ export async function GET(request: Request) {
   // Pascal Press: Bing spend and the sales Google Analytics attributes to paid Bing clicks
   async function fetchBingBlock(s: string, e: string) {
     let spend: number | null = null, error = '';
-    try { spend = await fetchBingSpendTotal(s, e); } catch (err) { error = err instanceof Error ? err.message.slice(0, 360) : 'failed'; }
+    if (bingTooLong(s, e)) error = 'this date range is too long for the Bing report; choose a range of about four months or less to see Bing spend';
+    else try { spend = await fetchBingSpendTotal(s, e); } catch (err) { error = err instanceof Error ? err.message.slice(0, 360) : 'failed'; }
     const ga = await fetchBingPaidTraffic(s, e);
     const revenue = ga.revenue, sp = spend ?? 0;
     return {
