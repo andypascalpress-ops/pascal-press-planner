@@ -226,16 +226,16 @@ ${campaignId ? `          <Campaigns>
           </Campaigns>` : ''}
         </Scope>
         <Time>
-          <CustomDateRangeStart>
-            <Day>${parseInt(sd, 10)}</Day>
-            <Month>${parseInt(sm, 10)}</Month>
-            <Year>${sy}</Year>
-          </CustomDateRangeStart>
           <CustomDateRangeEnd>
             <Day>${parseInt(ed, 10)}</Day>
             <Month>${parseInt(em, 10)}</Month>
             <Year>${ey}</Year>
           </CustomDateRangeEnd>
+          <CustomDateRangeStart>
+            <Day>${parseInt(sd, 10)}</Day>
+            <Month>${parseInt(sm, 10)}</Month>
+            <Year>${sy}</Year>
+          </CustomDateRangeStart>
           <ReportTimeZone>Hobart</ReportTimeZone>
         </Time>
       </ReportRequest>
