@@ -173,3 +173,37 @@ export async function fetchShopifySalesReport(start: string, end: string): Promi
   out.debug = { columns: cols, rowCount: rawRows.length, firstRows: rawRows.slice(0, 3) };
   return out;
 }
+
+
+// ---------------------------------------------------------------------------
+// Sales by product from Shopify's sales report (any date range, needs only read_reports).
+// Revenue is net sales: after discounts and returns, before GST and shipping.
+// ---------------------------------------------------------------------------
+
+export interface ShopifyProductSales { title: string; units: number | null; revenue: number }
+
+export async function fetchShopifyProductSales(start: string, end: string): Promise<ShopifyProductSales[]> {
+  // the units metric is tried under its likely names; the table still works (revenue only) if none is accepted
+  const unitMetrics = ['net_items_sold', 'ordered_item_quantity', ''];
+  let lastErr = '';
+  for (const um of unitMetrics) {
+    const q = `FROM sales SHOW ${um ? `${um}, ` : ''}net_sales GROUP BY product_title SINCE ${start} UNTIL ${end} ORDER BY net_sales DESC LIMIT 25`;
+    try {
+      const data = await shopifyGraphql<{ shopifyqlQuery: { parseErrors?: unknown; tableData?: { columns?: { name: string }[]; rows?: unknown } | null } }>(
+        `query($q: String!) { shopifyqlQuery(query: $q) { parseErrors tableData { columns { name } rows } } }`, { q });
+      const res = data.shopifyqlQuery;
+      if (Array.isArray(res?.parseErrors) && res.parseErrors.length) { lastErr = JSON.stringify(res.parseErrors).slice(0, 200); continue; }
+      const cols = (res?.tableData?.columns ?? []).map(c => c.name);
+      const rows = Array.isArray(res?.tableData?.rows) ? (res!.tableData!.rows as unknown[]) : [];
+      return rows.map(raw => {
+        const row: Record<string, unknown> = Array.isArray(raw) ? Object.fromEntries(cols.map((c, i) => [c, (raw as unknown[])[i]])) : (raw as Record<string, unknown>);
+        return {
+          title: String(row.product_title ?? '(no product)') || '(no product)',
+          units: um ? Math.round(parseFloat(String(row[um] ?? '0')) || 0) : null,
+          revenue: Math.round((parseFloat(String(row.net_sales ?? '0')) || 0) * 100) / 100,
+        };
+      }).filter(r => r.revenue !== 0 || (r.units ?? 0) !== 0);
+    } catch (e) { lastErr = e instanceof Error ? e.message : 'failed'; }
+  }
+  throw new Error(`Shopify product report failed: ${lastErr.slice(0, 250)}`);
+}

@@ -9,7 +9,8 @@ interface Sales {
   bySource: { source: string; orders: number; revenue: number }[];
   byDiscountCode: { code: string; orders: number; revenue: number }[];
 }
-interface Resp { configured?: boolean; error?: string; priorSource?: 'orders' | 'report' | null; priorError?: string | null; period?: { start: string; end: string }; comparison?: { start: string; end: string } | null; current?: Sales; prior?: Sales | null }
+interface Item { title: string; units: number | null; revenue: number }
+interface Resp { configured?: boolean; error?: string; priorSource?: 'orders' | 'report' | null; priorError?: string | null; period?: { start: string; end: string }; comparison?: { start: string; end: string } | null; current?: Sales; prior?: Sales | null; products?: Item[] | null; priorProducts?: Item[] | null; productsError?: string | null }
 
 type RangeKey = 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth';
 const RANGES: { key: RangeKey; label: string }[] = [
@@ -163,6 +164,38 @@ export default function EsgPanel({ color }: { color: string }) {
                 </table>
               )}
             </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-500">Revenue by item</p>
+            {!data?.products ? <p className="text-sm text-gray-400">Item sales could not be loaded{data?.productsError ? `: ${data.productsError}` : '.'}</p>
+              : data.products.length === 0 ? <p className="text-sm text-gray-400">No item sales in this period.</p> : (() => {
+                const prevMap = new Map((data.priorProducts ?? []).map(x => [x.title, x]));
+                const hasUnits = data.products.some(x => x.units != null);
+                const showPrev = true;
+                return (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm tabular-nums">
+                      <thead><tr className="text-left text-[11px] text-gray-400">
+                        <th className="py-1 font-medium">Item</th>{hasUnits && <th className="py-1 text-right font-medium">Units</th>}
+                        <th className="py-1 text-right font-medium">Revenue</th>{showPrev && data.priorProducts && <th className="py-1 text-right font-medium">{yoy ? 'Last year' : 'Previous period'}</th>}
+                      </tr></thead>
+                      <tbody>{data.products.map(it => {
+                        const pv = prevMap.get(it.title);
+                        return (
+                          <tr key={it.title} className="border-t border-gray-50">
+                            <td className="py-1.5 pr-3 text-gray-800">{it.title}</td>
+                            {hasUnits && <td className="py-1.5 text-right text-gray-600">{it.units ?? ''}</td>}
+                            <td className="py-1.5 text-right font-medium text-gray-900">{AUD.format(it.revenue)}</td>
+                            {showPrev && data.priorProducts && <td className="py-1.5 text-right text-gray-500">{pv ? AUD.format(pv.revenue) : '–'}</td>}
+                          </tr>
+                        );
+                      })}</tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            <p className="mt-2 text-[11px] text-gray-400">Top 25 items by revenue after discounts and refunds, before GST and shipping, so it adds up to less than the revenue card above.</p>
           </div>
 
           <p className="text-[11px] text-gray-400">

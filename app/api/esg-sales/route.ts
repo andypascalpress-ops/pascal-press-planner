@@ -8,7 +8,7 @@
  * (the same one the site sets after the password page). Without it the answer is 401 and no sales data is returned.
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchShopifySales, fetchShopifySalesReport, shopifyConfigured } from '@/lib/shopify';
+import { fetchShopifySales, fetchShopifySalesReport, fetchShopifyProductSales, shopifyConfigured } from '@/lib/shopify';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -35,9 +35,15 @@ export async function GET(req: NextRequest) {
     let priorError = '';
     const priorPromise = !hasComp ? Promise.resolve(null)
       : (useReport ? fetchShopifySalesReport(cs, ce) : fetchShopifySales(cs, ce)).catch((e: unknown) => { priorError = e instanceof Error ? e.message.slice(0, 300) : 'failed'; return null; });
-    const [current, prior] = await Promise.all([fetchShopifySales(start, end), priorPromise]);
+    let productsError = '';
+    const noteErr = (e: unknown) => { productsError = e instanceof Error ? e.message.slice(0, 300) : 'failed'; return null; };
+    const [current, prior, products, priorProducts] = await Promise.all([
+      fetchShopifySales(start, end), priorPromise,
+      fetchShopifyProductSales(start, end).catch(noteErr),
+      hasComp ? fetchShopifyProductSales(cs, ce).catch(() => null) : Promise.resolve(null),
+    ]);
     return NextResponse.json({
-      configured: true, period: { start, end }, comparison: prior ? { start: cs, end: ce } : null, current, prior,
+      configured: true, period: { start, end }, comparison: prior ? { start: cs, end: ce } : null, current, prior, products, priorProducts, productsError: productsError || null,
       priorSource: prior ? (useReport ? 'report' : 'orders') : null, priorError: priorError || null,
     }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (e) {
