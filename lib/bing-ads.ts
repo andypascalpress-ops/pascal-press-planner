@@ -97,7 +97,10 @@ async function soapCall(action: string, bodyContent: string, token: string): Pro
   });
   const text = await res.text();
   if (!res.ok || text.includes('<s:Fault>')) {
-    throw new Error(`Bing Ads ${action} error (HTTP ${res.status}): ${text.slice(0, 600)}`);
+    // pull out just the error codes and messages so the reason is readable
+    const pick = (tag: string) => Array.from(text.matchAll(new RegExp(`<${tag}[^>]*>([^<]*)</${tag}>`, 'g'))).map(m => m[1]).filter(Boolean).slice(0, 3).join('; ');
+    const detail = [pick('Code'), pick('ErrorCode'), pick('Message'), pick('Details')].filter(Boolean).join(' | ');
+    throw new Error(`Bing Ads ${action} error (HTTP ${res.status}): ${detail || text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 300)}`);
   }
   return text;
 }
