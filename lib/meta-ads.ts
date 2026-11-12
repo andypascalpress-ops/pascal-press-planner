@@ -291,3 +291,36 @@ export async function fetchMetaAdsList(adAccountId: string): Promise<MetaAdListI
   }
   return out;
 }
+
+
+// ---------------------------------------------------------------------------
+// Campaign tracking tags: the utm_campaign value each Meta campaign's ads send to the website, so Google Analytics
+// campaign names can be matched back to Meta campaigns. Read-only; ad creative links only (no people).
+// ---------------------------------------------------------------------------
+
+export async function fetchMetaCampaignUtmTags(adAccountId: string): Promise<Record<string, string[]>> {
+  const out: Record<string, Set<string>> = {};
+  if (!ACCESS_TOKEN || !adAccountId) return {};
+  const params = new URLSearchParams({
+    fields: 'campaign_id,creative{url_tags,object_story_spec,asset_feed_spec}',
+    limit: '100',
+    access_token: ACCESS_TOKEN,
+  });
+  let next: string | null = `${META_GRAPH_API}/${adAccountId}/ads?${params}`;
+  for (let page = 0; next && page < 8; page++) {
+    const res: Response = await fetch(next, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`Meta ads ${adAccountId} -> HTTP ${res.status}`);
+    const json = await res.json() as { data?: { campaign_id?: string; creative?: unknown }[]; paging?: { next?: string } };
+    for (const ad of json.data ?? []) {
+      if (!ad.campaign_id) continue;
+      const text = JSON.stringify(ad.creative ?? {});
+      for (const m of text.matchAll(/utm_campaign=([^&"\\\s]+)/g)) {
+        let v = m[1]!;
+        try { v = decodeURIComponent(v); } catch { /* keep raw */ }
+        (out[ad.campaign_id] ??= new Set()).add(v);
+      }
+    }
+    next = json.paging?.next ?? null;
+  }
+  return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, [...v]]));
+}

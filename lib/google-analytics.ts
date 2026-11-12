@@ -1767,3 +1767,37 @@ export async function fetchFacebookPaidRevenue(startDate: string, endDate: strin
     return empty;
   }
 }
+
+
+// Paid Facebook / Instagram sales by Google Analytics campaign name (utm_campaign)
+export async function fetchFacebookCampaignRevenue(startDate: string, endDate: string, property: 'pp' | 'etz' = 'pp'): Promise<{ campaign: string; sessions: number; orders: number; revenue: number }[]> {
+  if (property === 'pp' && !isConnected()) return [];
+  if (property === 'etz' && !isETZConnected()) return [];
+  try {
+    const accessToken = await getAccessToken();
+    const base = property === 'etz' ? GA4_ETZ_BASE : GA4_BASE;
+    const src = (value: string) => ({ filter: { fieldName: 'sessionSource', stringFilter: { matchType: 'CONTAINS', value } } });
+    const paid = { orGroup: { expressions: [
+      { filter: { fieldName: 'sessionDefaultChannelGroup', stringFilter: { matchType: 'EXACT', value: 'Paid Social' } } },
+      ...Array.from(FB_PAID_MEDIUMS).map(v => ({ filter: { fieldName: 'sessionMedium', stringFilter: { matchType: 'EXACT', value: v } } })),
+    ] } };
+    const data = await runReportOnProperty(accessToken, base, {
+      dateRanges: [{ startDate, endDate }],
+      dimensions: [{ name: 'sessionCampaignName' }],
+      metrics: [{ name: 'sessions' }, { name: 'transactions' }, { name: 'totalRevenue' }],
+      dimensionFilter: { andGroup: { expressions: [{ orGroup: { expressions: META_SOURCES.map(src) } }, paid] } },
+      orderBys: [{ metric: { metricName: 'totalRevenue' }, desc: true }],
+      limit: 100,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (data.rows ?? []).map((r: any) => ({
+      campaign: r.dimensionValues?.[0]?.value ?? '',
+      sessions: parseInt(r.metricValues?.[0]?.value ?? '0', 10) || 0,
+      orders: parseInt(r.metricValues?.[1]?.value ?? '0', 10) || 0,
+      revenue: Math.round((parseFloat(r.metricValues?.[2]?.value ?? '0') || 0) * 100) / 100,
+    }));
+  } catch (err) {
+    console.error(`[google-analytics fetchFacebookCampaignRevenue ${property}]`, err);
+    return [];
+  }
+}
