@@ -8,6 +8,7 @@ interface Sales {
   byDay: Record<string, { revenue: number; orders: number }>;
   bySource: { source: string; orders: number; revenue: number }[];
   byDiscountCode: { code: string; orders: number; revenue: number }[];
+  byCampaign?: { campaign: string; channel: string; orders: number; revenue: number }[];
 }
 interface Item { title: string; units: number | null; revenue: number }
 interface Resp { configured?: boolean; error?: string; priorSource?: 'orders' | 'report' | null; priorError?: string | null; period?: { start: string; end: string }; comparison?: { start: string; end: string } | null; current?: Sales; prior?: Sales | null; products?: Item[] | null; priorProducts?: Item[] | null; productsError?: string | null }
@@ -164,6 +165,19 @@ export default function EsgPanel({ color }: { color: string }) {
                 </table>
               )}
             </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-500">Campaigns (from tagged links)</p>
+            {!c.byCampaign || c.byCampaign.length === 0 ? <p className="text-sm text-gray-400">No orders came through links with a campaign name in this period.</p> : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm tabular-nums">
+                  <thead><tr className="text-left text-[11px] text-gray-400"><th className="py-1 font-medium">Campaign</th><th className="py-1 font-medium">Channel</th><th className="py-1 text-right font-medium">Orders</th><th className="py-1 text-right font-medium">Revenue</th></tr></thead>
+                  <tbody>{c.byCampaign.map(s => <tr key={s.channel + s.campaign} className="border-t border-gray-50"><td className="py-1.5 pr-3 text-gray-800">{s.campaign}</td><td className="py-1.5 pr-3 text-gray-500">{s.channel}</td><td className="py-1.5 text-right text-gray-600">{s.orders}</td><td className="py-1.5 text-right font-medium text-gray-900">{AUD.format(s.revenue)}</td></tr>)}</tbody>
+                </table>
+              </div>
+            )}
+            <p className="mt-2 text-[11px] text-gray-400">Only orders whose link carried a campaign name (utm_campaign) can be named. Google Ads clicks are recognised as paid by their click ID even without a name.</p>
           </div>
 
           <div className="rounded-xl border border-gray-200 bg-white p-4">

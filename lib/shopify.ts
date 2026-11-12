@@ -80,7 +80,7 @@ interface OrderNode {
   totalDiscountsSet: { shopMoney: { amount: string } };
   discountCodes: string[];
   sourceName: string | null;
-  customerJourneySummary: { lastVisit: { source: string | null; sourceType: string | null; utmParameters: { source: string | null; medium: string | null } | null } | null } | null;
+  customerJourneySummary: { lastVisit: { source: string | null; sourceType: string | null; landingPage: string | null; utmParameters: { source: string | null; medium: string | null; campaign: string | null } | null } | null } | null;
 }
 
 const ORDERS_QUERY = `query($q: String!, $cursor: String) {
@@ -91,7 +91,7 @@ const ORDERS_QUERY = `query($q: String!, $cursor: String) {
       totalPriceSet { shopMoney { amount } }
       totalRefundedSet { shopMoney { amount } }
       totalDiscountsSet { shopMoney { amount } }
-      customerJourneySummary { lastVisit { source sourceType utmParameters { source medium } } }
+      customerJourneySummary { lastVisit { source sourceType landingPage utmParameters { source medium campaign } } }
     }
   }
 }`;
@@ -105,7 +105,44 @@ export interface ShopifySales {
   byDay: Record<string, { revenue: number; orders: number }>;
   bySource: { source: string; orders: number; revenue: number }[];
   byDiscountCode: { code: string; orders: number; revenue: number }[];
+  byCampaign?: { campaign: string; channel: string; orders: number; revenue: number }[];
   debug?: unknown;
+}
+
+
+const PAID_MEDIUMS = new Set(['cpc', 'ppc', 'paid', 'paid_social', 'paidsocial', 'paid-social', 'social_paid', 'cpm', 'display', 'shopping', 'paid_search', 'paidsearch']);
+function platformName(raw: string): string {
+  const s = raw.toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '');
+  if (s.startsWith('google') || s === 'adwords') return s.includes('mail') ? 'Gmail' : 'Google';
+  if (/(facebook|^fb$|instagram|^ig$|^meta$)/.test(s)) return 'Facebook & Instagram';
+  if (s.startsWith('bing')) return 'Bing';
+  if (s === 'direct' || s === '(direct)' || s === '') return 'Direct';
+  if (s.startsWith('duckduckgo')) return 'DuckDuckGo';
+  if (s.startsWith('search.brave')) return 'Brave';
+  if (s.startsWith('android-app')) return s.includes('gm') ? 'Gmail' : 'App';
+  return raw.length > 24 ? raw.slice(0, 24) + '...' : raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+/** Channel such as "Google - paid" or "Google - organic search", from the visit's tracking tags and click IDs. */
+function classifyVisit(lv: NonNullable<OrderNode['customerJourneySummary']>['lastVisit'], sourceName: string | null): { channel: string; campaign: string } {
+  const utm = lv?.utmParameters;
+  const rawSource = (utm?.source || lv?.source || lv?.sourceType || (sourceName === 'web' ? 'direct' : sourceName) || 'Unknown').toString();
+  const platform = platformName(rawSource);
+  let medium = (utm?.medium ?? '').toLowerCase();
+  let clickId = '';
+  try {
+    const u = new URL(lv?.landingPage ?? '', 'https://x.invalid');
+    if (u.searchParams.get('gclid') || u.searchParams.get('gbraid') || u.searchParams.get('wbraid')) clickId = 'google';
+    else if (u.searchParams.get('msclkid')) clickId = 'bing';
+    if (!medium) medium = (u.searchParams.get('utm_medium') ?? '').toLowerCase();
+  } catch { /* no landing page */ }
+  const paid = PAID_MEDIUMS.has(medium) || Boolean(clickId);
+  let channel = platform;
+  if (platform === 'Direct') channel = 'Direct';
+  else if (paid) channel = `${platform === 'Unknown' ? (clickId === 'bing' ? 'Bing' : 'Google') : platform} \u2013 paid`;
+  else if (platform === 'Google' || platform === 'Bing' || platform === 'DuckDuckGo' || platform === 'Brave') channel = `${platform} \u2013 organic search`;
+  else if (platform === 'Facebook & Instagram') channel = `${platform} \u2013 no ad tag (organic or untagged ad)`;
+  else if (medium === 'email') channel = `${platform} \u2013 email`;
+  return { channel, campaign: (utm?.campaign ?? '').trim() };
 }
 
 export async function fetchShopifySales(start: string, end: string): Promise<ShopifySales> {
@@ -120,6 +157,7 @@ export async function fetchShopifySales(start: string, end: string): Promise<Sho
   }
   const num = (v: string | undefined) => parseFloat(v ?? '0') || 0;
   const out: ShopifySales = { orders: 0, revenue: 0, refunds: 0, discounts: 0, discountedOrders: 0, byDay: {}, bySource: [], byDiscountCode: [] };
+  const camps = new Map<string, { channel: string; orders: number; revenue: number }>();
   const src = new Map<string, { orders: number; revenue: number }>(), codes = new Map<string, { orders: number; revenue: number }>();
   for (const o of nodes) {
     if (o.test || o.cancelledAt) continue;
@@ -130,13 +168,15 @@ export async function fetchShopifySales(start: string, end: string): Promise<Sho
     const day = sydneyDay.format(new Date(o.createdAt));
     const cell = (out.byDay[day] ??= { revenue: 0, orders: 0 }); cell.revenue += net; cell.orders += 1;
     const lv = o.customerJourneySummary?.lastVisit;
-    const s = (lv?.utmParameters?.source || lv?.source || (lv?.sourceType) || (o.sourceName === 'web' ? 'Direct / unknown' : o.sourceName) || 'Unknown').toString();
+    const { channel: s, campaign } = classifyVisit(lv ?? null, o.sourceName);
+    if (campaign) { const key = `${s}||${campaign}`; const cc = camps.get(key) ?? { channel: s, orders: 0, revenue: 0 }; cc.orders += 1; cc.revenue += net; camps.set(key, cc); }
     const sc = src.get(s) ?? { orders: 0, revenue: 0 }; sc.orders += 1; sc.revenue += net; src.set(s, sc);
     for (const code of o.discountCodes ?? []) { const c = codes.get(code) ?? { orders: 0, revenue: 0 }; c.orders += 1; c.revenue += net; codes.set(code, c); }
   }
   const r2 = (n: number) => Math.round(n * 100) / 100;
   out.revenue = r2(out.revenue); out.refunds = r2(out.refunds); out.discounts = r2(out.discounts);
   for (const d of Object.values(out.byDay)) d.revenue = r2(d.revenue);
+  out.byCampaign = [...camps.entries()].map(([k, v]) => ({ campaign: k.split('||')[1]!, channel: v.channel, orders: v.orders, revenue: r2(v.revenue) })).sort((a, b) => b.revenue - a.revenue).slice(0, 15);
   out.bySource = [...src.entries()].map(([source, v]) => ({ source, orders: v.orders, revenue: r2(v.revenue) })).sort((a, b) => b.revenue - a.revenue).slice(0, 12);
   out.byDiscountCode = [...codes.entries()].map(([code, v]) => ({ code, orders: v.orders, revenue: r2(v.revenue) })).sort((a, b) => b.revenue - a.revenue).slice(0, 12);
   return out;
