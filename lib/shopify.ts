@@ -140,3 +140,34 @@ export async function fetchShopifySales(start: string, end: string): Promise<Sho
   out.byDiscountCode = [...codes.entries()].map(([code, v]) => ({ code, orders: v.orders, revenue: r2(v.revenue) })).sort((a, b) => b.revenue - a.revenue).slice(0, 12);
   return out;
 }
+
+
+// ---------------------------------------------------------------------------
+// Sales from Shopify's own sales report (ShopifyQL). Needs only read_reports, so it can look back further than the
+// 60 days the order list allows without read_all_orders. Revenue (total sales: after discounts and returns, including
+// GST and shipping), orders and discounts by day. No source or discount-code breakdown.
+// ---------------------------------------------------------------------------
+
+export async function fetchShopifySalesReport(start: string, end: string): Promise<ShopifySales> {
+  const q = `FROM sales SHOW orders, total_sales, discounts, returns GROUP BY day SINCE ${start} UNTIL ${end} ORDER BY day`;
+  const data = await shopifyGraphql<{ shopifyqlQuery: { parseErrors?: unknown; tableData?: { columns?: { name: string }[]; rows?: unknown } | null } }>(
+    `query($q: String!) { shopifyqlQuery(query: $q) { parseErrors tableData { columns { name } rows } } }`, { q });
+  const res = data.shopifyqlQuery;
+  const errs = Array.isArray(res?.parseErrors) ? (res.parseErrors as unknown[]).map(e => (typeof e === 'string' ? e : (e as { message?: string })?.message ?? JSON.stringify(e))) : [];
+  if (errs.length) throw new Error(`Shopify report query rejected: ${errs.join('; ').slice(0, 250)}`);
+  const cols = (res?.tableData?.columns ?? []).map(c => c.name);
+  const rawRows = Array.isArray(res?.tableData?.rows) ? (res!.tableData!.rows as unknown[]) : [];
+  const num = (v: unknown) => Math.abs(parseFloat(String(v ?? '0'))) || 0;
+  const signed = (v: unknown) => parseFloat(String(v ?? '0')) || 0;
+  const out: ShopifySales = { orders: 0, revenue: 0, refunds: 0, discounts: 0, discountedOrders: 0, byDay: {}, bySource: [], byDiscountCode: [] };
+  for (const raw of rawRows) {
+    const row: Record<string, unknown> = Array.isArray(raw) ? Object.fromEntries(cols.map((c, i) => [c, (raw as unknown[])[i]])) : (raw as Record<string, unknown>);
+    const day = String(row.day ?? '').slice(0, 10);
+    const orders = Math.round(signed(row.orders)), revenue = signed(row.total_sales);
+    out.orders += orders; out.revenue += revenue; out.discounts += num(row.discounts); out.refunds += num(row.returns);
+    if (day) out.byDay[day] = { revenue: Math.round(revenue * 100) / 100, orders };
+  }
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  out.revenue = r2(out.revenue); out.discounts = r2(out.discounts); out.refunds = r2(out.refunds);
+  return out;
+}

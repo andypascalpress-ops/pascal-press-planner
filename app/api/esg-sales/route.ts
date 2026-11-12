@@ -8,7 +8,7 @@
  * (the same one the site sets after the password page). Without it the answer is 401 and no sales data is returned.
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchShopifySales, shopifyConfigured } from '@/lib/shopify';
+import { fetchShopifySales, fetchShopifySalesReport, shopifyConfigured } from '@/lib/shopify';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -26,12 +26,20 @@ export async function GET(req: NextRequest) {
   const cs = sp.get('compStart') ?? '', ce = sp.get('compEnd') ?? '';
   if (!ymd.test(start) || !ymd.test(end) || start > end) return NextResponse.json({ error: 'start and end required (YYYY-MM-DD)' }, { status: 400 });
   try {
-    const [current, prior] = await Promise.all([
-      fetchShopifySales(start, end),
-      ymd.test(cs) && ymd.test(ce) ? fetchShopifySales(cs, ce).catch(() => null) : Promise.resolve(null),
-    ]);
-    return NextResponse.json({ configured: true, period: { start, end }, comparison: prior ? { start: cs, end: ce } : null, current, prior },
-      { headers: { 'Cache-Control': 'private, no-store' } });
+    // the order list only reaches back about 60 days without read_all_orders; older comparison dates use Shopify's sales report
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const limit = new Date(`${today}T12:00:00Z`); limit.setUTCDate(limit.getUTCDate() - 55);
+    const limitYmd = limit.toISOString().slice(0, 10);
+    const hasComp = ymd.test(cs) && ymd.test(ce);
+    const useReport = hasComp && cs < limitYmd;
+    let priorError = '';
+    const priorPromise = !hasComp ? Promise.resolve(null)
+      : (useReport ? fetchShopifySalesReport(cs, ce) : fetchShopifySales(cs, ce)).catch((e: unknown) => { priorError = e instanceof Error ? e.message.slice(0, 300) : 'failed'; return null; });
+    const [current, prior] = await Promise.all([fetchShopifySales(start, end), priorPromise]);
+    return NextResponse.json({
+      configured: true, period: { start, end }, comparison: prior ? { start: cs, end: ce } : null, current, prior,
+      priorSource: prior ? (useReport ? 'report' : 'orders') : null, priorError: priorError || null,
+    }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (e) {
     return NextResponse.json({ configured: true, error: e instanceof Error ? e.message.slice(0, 500) : 'Failed to load' }, { status: 502 });
   }

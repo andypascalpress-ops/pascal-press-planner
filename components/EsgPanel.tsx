@@ -9,7 +9,7 @@ interface Sales {
   bySource: { source: string; orders: number; revenue: number }[];
   byDiscountCode: { code: string; orders: number; revenue: number }[];
 }
-interface Resp { configured?: boolean; error?: string; period?: { start: string; end: string }; comparison?: { start: string; end: string } | null; current?: Sales; prior?: Sales | null }
+interface Resp { configured?: boolean; error?: string; priorSource?: 'orders' | 'report' | null; priorError?: string | null; period?: { start: string; end: string }; comparison?: { start: string; end: string } | null; current?: Sales; prior?: Sales | null }
 
 type RangeKey = 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth';
 const RANGES: { key: RangeKey; label: string }[] = [
@@ -119,7 +119,8 @@ export default function EsgPanel({ color }: { color: string }) {
 
       {!loading && c && (
         <>
-          {yoy && !p && <p className="text-xs text-amber-700">Last year's orders are not available yet. Shopify only returns the last 60 days until the app is given the &ldquo;read all orders&rdquo; permission.</p>}
+          {yoy && !p && <p className="text-xs text-amber-700">Last year&rsquo;s figures could not be loaded{data?.priorError ? `: ${data.priorError}` : '.'}</p>}
+          {p && data?.priorSource === 'report' && <p className="text-xs text-gray-400">Last year&rsquo;s revenue, orders and discounts come from Shopify&rsquo;s sales report (no source or discount-code detail for last year).</p>}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Card label="Revenue" value={AUD.format(c.revenue)} detail={<Delta cur={c.revenue} prev={p?.revenue} />} prev={p ? `prev ${AUD.format(p.revenue)}` : undefined} />
             <Card label="Orders" value={String(c.orders)} detail={<Delta cur={c.orders} prev={p?.orders} />} prev={p ? `prev ${p.orders}` : undefined} />
