@@ -105,6 +105,7 @@ export interface ShopifySales {
   byDay: Record<string, { revenue: number; orders: number }>;
   bySource: { source: string; orders: number; revenue: number }[];
   byDiscountCode: { code: string; orders: number; revenue: number }[];
+  debug?: unknown;
 }
 
 export async function fetchShopifySales(start: string, end: string): Promise<ShopifySales> {
@@ -169,5 +170,6 @@ export async function fetchShopifySalesReport(start: string, end: string): Promi
   }
   const r2 = (n: number) => Math.round(n * 100) / 100;
   out.revenue = r2(out.revenue); out.discounts = r2(out.discounts); out.refunds = r2(out.refunds);
+  out.debug = { columns: cols, rowCount: rawRows.length, firstRows: rawRows.slice(0, 3) };
   return out;
 }
