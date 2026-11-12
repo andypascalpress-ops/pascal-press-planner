@@ -45,7 +45,10 @@ interface GoogleAdsHistoryItem {
   etz: number;
 }
 
+interface FacebookPaidBrand { connected: boolean; revenue: number; orders: number; sessions: number; spend: number | null }
+
 interface GA4RevenueResponse {
+  facebook?: { pp: FacebookPaidBrand; etz: FacebookPaidBrand };
   month: string;
   pp: {
     paidSearchRevenue:    number;
@@ -524,6 +527,8 @@ interface BrandPanelProps {
   websiteConversion?: WebsiteConversionBrand | null;
   /** GA4 revenue split by channel (Organic Search, Paid Search, Email, Direct, …) */
   channelRevenue?: ChannelRevenueBrand | null;
+  /** Sales Google Analytics credits to paid Facebook / Instagram clicks, with the Meta ad spend for the month */
+  facebookPaid?: FacebookPaidBrand | null;
 }
 
 function BrandPanel({
@@ -532,6 +537,7 @@ function BrandPanel({
   liveGoogleAdsSpend, liveGoogleAdsConnected,
   websiteConversion,
   channelRevenue,
+  facebookPaid,
 }: BrandPanelProps) {
   const monthRecords = spendForBrandMonth(records, brand, selectedMonth);
   const annualBudget = (ANNUAL_BUDGETS as Record<string, number>)[brand] ?? 0;
@@ -719,6 +725,41 @@ function BrandPanel({
             </div>
           </div>
         </div>
+
+        {/* ── Facebook & Instagram paid revenue (Google Analytics) ── */}
+        {facebookPaid?.connected && (
+          <div className="px-4 pb-4">
+            <div className="rounded-xl border border-indigo-100 overflow-hidden">
+              <div className="bg-indigo-600 px-4 py-2.5 flex items-center justify-between">
+                <span className="text-white font-bold text-sm tracking-wide">Facebook &amp; Instagram Paid</span>
+                {facebookPaid.spend != null && facebookPaid.spend > 0 && facebookPaid.revenue > 0 && (
+                  <span className="font-bold text-sm px-2.5 py-0.5 rounded-full bg-white/90 text-indigo-800">
+                    {(facebookPaid.revenue / facebookPaid.spend).toFixed(1)}x ROAS
+                  </span>
+                )}
+              </div>
+              <div className="bg-indigo-50 px-3 py-3 space-y-2">
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-white rounded-lg py-2 px-1 shadow-sm">
+                    <div className="text-xs text-gray-500 mb-1 leading-tight">Meta Ad Spend</div>
+                    <div className="text-base font-bold text-gray-900">{facebookPaid.spend != null && facebookPaid.spend > 0 ? AUD.format(facebookPaid.spend) : '—'}</div>
+                  </div>
+                  <div className="bg-white rounded-lg py-2 px-1 shadow-sm">
+                    <div className="text-xs text-gray-500 mb-1 leading-tight">Paid Revenue (GA)</div>
+                    <div className="text-base font-bold text-indigo-700">{facebookPaid.revenue > 0 ? AUD.format(facebookPaid.revenue) : '$0'}</div>
+                  </div>
+                  <div className="bg-white rounded-lg py-2 px-1 shadow-sm">
+                    <div className="text-xs text-gray-500 mb-1 leading-tight">Orders</div>
+                    <div className="text-base font-bold text-gray-900">{facebookPaid.orders}</div>
+                  </div>
+                </div>
+                <p className="text-center text-[11px] text-gray-500">
+                  Sales Google Analytics credits to paid Facebook and Instagram clicks this month ({facebookPaid.sessions.toLocaleString('en-AU')} visits). It is not the store's own order count.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Revenue by Channel ── */}
         {channelRevenue?.connected && channelRevenue.items.length > 0 && (
@@ -3355,6 +3396,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             liveGoogleAdsConnected={googleAdsSpend?.pp.connected}
             websiteConversion={siteConversion?.pp ?? null}
             channelRevenue={channelRevenue?.pp ?? null}
+            facebookPaid={ga4Revenue?.facebook?.pp ?? null}
           />
           <BrandPanel
             brand="Excel Test Zone"
@@ -3371,6 +3413,7 @@ export default function FinanceDashboard({ records, syncing, lastSynced, onSyncG
             liveGoogleAdsConnected={googleAdsSpend?.etz.connected}
             websiteConversion={siteConversion?.etz ?? null}
             channelRevenue={channelRevenue?.etz ?? null}
+            facebookPaid={ga4Revenue?.facebook?.etz ?? null}
           />
         </div>
 

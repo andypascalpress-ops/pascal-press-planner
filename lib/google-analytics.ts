@@ -1708,3 +1708,55 @@ export async function fetchBingPaidTraffic(startDate: string, endDate: string): 
     return empty;
   }
 }
+
+
+// ---------------------------------------------------------------------------
+// Facebook / Instagram (Meta) paid revenue: sales Google Analytics credits to paid Meta clicks
+// ---------------------------------------------------------------------------
+
+export interface FacebookPaidRevenue {
+  connected: boolean;
+  revenue: number; orders: number; sessions: number;
+  /** Every Meta-sourced row (source facebook / instagram / fb / ig / meta), paid or not, so tagging gaps are visible. */
+  breakdown: { source: string; medium: string; channel: string; paid: boolean; sessions: number; orders: number; revenue: number }[];
+}
+
+const META_SOURCES = ['facebook', 'instagram', 'fb', 'ig', 'meta'];
+const FB_PAID_MEDIUMS = new Set(['cpc', 'ppc', 'paid', 'paid_social', 'paidsocial', 'paid-social', 'social_paid', 'fb_ad', 'cpm', 'display']);
+
+export async function fetchFacebookPaidRevenue(startDate: string, endDate: string, property: 'pp' | 'etz' = 'pp'): Promise<FacebookPaidRevenue> {
+  const empty: FacebookPaidRevenue = { connected: false, revenue: 0, orders: 0, sessions: 0, breakdown: [] };
+  if (property === 'pp' && !isConnected()) return empty;
+  if (property === 'etz' && !isETZConnected()) return empty;
+  try {
+    const accessToken = await getAccessToken();
+    const base = property === 'etz' ? GA4_ETZ_BASE : GA4_BASE;
+    const contains = (value: string) => ({ filter: { fieldName: 'sessionSource', stringFilter: { matchType: 'CONTAINS', value } } });
+    const data = await runReportOnProperty(accessToken, base, {
+      dateRanges: [{ startDate, endDate }],
+      dimensions: [{ name: 'sessionSource' }, { name: 'sessionMedium' }, { name: 'sessionDefaultChannelGroup' }],
+      metrics: [{ name: 'sessions' }, { name: 'transactions' }, { name: 'totalRevenue' }],
+      dimensionFilter: { orGroup: { expressions: META_SOURCES.map(contains) } },
+      orderBys: [{ metric: { metricName: 'totalRevenue' }, desc: true }],
+      limit: 50,
+    });
+    type Row = { source: string; medium: string; channel: string; paid: boolean; sessions: number; orders: number; revenue: number };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows: Row[] = (data.rows ?? []).map((r: any) => {
+      const source = r.dimensionValues?.[0]?.value ?? '', medium = r.dimensionValues?.[1]?.value ?? '', channel = r.dimensionValues?.[2]?.value ?? '';
+      return {
+        source, medium, channel,
+        paid: channel === 'Paid Social' || FB_PAID_MEDIUMS.has(medium.toLowerCase()),
+        sessions: parseInt(r.metricValues?.[0]?.value ?? '0', 10) || 0,
+        orders: parseInt(r.metricValues?.[1]?.value ?? '0', 10) || 0,
+        revenue: Math.round((parseFloat(r.metricValues?.[2]?.value ?? '0') || 0) * 100) / 100,
+      };
+    });
+    const paid = rows.filter(r => r.paid);
+    const sum = (k: 'sessions' | 'orders' | 'revenue') => paid.reduce((a, r) => a + r[k], 0);
+    return { connected: true, revenue: Math.round(sum('revenue') * 100) / 100, orders: sum('orders'), sessions: sum('sessions'), breakdown: rows.slice(0, 10) };
+  } catch (err) {
+    console.error(`[google-analytics fetchFacebookPaidRevenue ${property}]`, err);
+    return empty;
+  }
+}
