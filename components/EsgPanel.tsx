@@ -44,6 +44,7 @@ function rangeDates(key: RangeKey): { start: string; end: string } {
 function Delta({ cur, prev }: { cur: number; prev: number | null | undefined }) {
   if (prev == null || prev <= 0) return null;
   const p = Math.round(((cur - prev) / prev) * 100);
+  if (p > 500) return <span className="ml-2 text-xs font-medium text-gray-400">no comparison (store was barely trading)</span>;
   return <span className={`ml-2 text-xs font-semibold ${p >= 0 ? 'text-green-600' : 'text-red-500'}`}>{p >= 0 ? '▲' : '▼'} {Math.abs(p)}%</span>;
 }
 
