@@ -14,6 +14,8 @@ import { fetchEmailCampaigns } from '@/lib/hubspot-email';
 import { fetchPPWebsiteConversion, fetchETZWebsiteConversion } from '@/lib/google-analytics';
 import { MONTHLY_GOOGLE_BUDGETS, PP_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_REVENUE_TARGETS, BLAKE_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_MARKETING_BUDGET, ETZ_MONTHLY_MARKETING_BUDGET, PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
 import { fetchMetaSpend, fetchEtzMetaSpend, META_PP_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
+import { fetchBingSpendTotal } from '@/lib/bing-ads';
+import { fetchBingPaidTraffic } from '@/lib/google-analytics';
 import { OverviewAlert } from '@/lib/types';
 
 // Previous-month PP revenue never changes once the month closes — cache it for 24 h.
@@ -108,6 +110,9 @@ function deriveRange(range: RangeParam): {
   }
 }
 
+// Bing reports can take a while on a cold start; allow the page up to a minute (same as the Business Units route)
+export const maxDuration = 60;
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const rangeParam = (searchParams.get('range') ?? 'mtd') as RangeParam;
@@ -136,7 +141,7 @@ export async function GET(request: Request) {
   const prevStart    = `${prevMonth}-01`;
   const prevEnd      = `${prevMonth}-${String(prevDays).padStart(2, '0')}`;
 
-  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult, ppConvResult, etzConvResult, ppPrevRevResult, ppMetaResult, etzMetaResult] =
+  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult, ppConvResult, etzConvResult, ppPrevRevResult, ppMetaResult, etzMetaResult, ppBingResult, ppBingGaResult] =
     await Promise.allSettled([
       ppCfg
         ? fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' })
@@ -164,6 +169,9 @@ export async function GET(request: Request) {
       // plus any ETZ-named campaigns left in the shared account.
       fetchMetaSpend(META_PP_ACCOUNT_ID,  startDate, endDate, { excludes: 'ETZ' } satisfies MetaCampaignFilter),
       fetchEtzMetaSpend(startDate, endDate),
+      // Pascal Press Bing Ads spend (Microsoft Advertising) and the revenue Google Analytics credits to Bing traffic
+      fetchBingSpendTotal(startDate, endDate),
+      fetchBingPaidTraffic(startDate, endDate),
     ]);
 
   const ppSpend  = ppAdsResult.status  === 'fulfilled'
@@ -181,12 +189,18 @@ export async function GET(request: Request) {
   if (ppMetaError)  console.error('[overview] PP Meta Ads error:',  ppMetaError);
   if (etzMetaError) console.error('[overview] ETZ Meta Ads error:', etzMetaError);
 
+  // Bing Ads spend (null = not connected)
+  const ppBingSpend = ppBingResult.status === 'fulfilled' ? (ppBingResult.value ?? 0) : 0;
+  const ppBingError = ppBingResult.status === 'rejected' ? String(ppBingResult.reason).slice(0, 200) : null;
+  if (ppBingError) console.error('[overview] PP Bing Ads error:', ppBingError);
+  const ppBingRevenue = ppBingGaResult.status === 'fulfilled' ? ppBingGaResult.value.revenue : 0;
+
   // ChatGPT Ads spend (manual — updated in lib/constants.ts each month)
   const ppChatgptSpend  = PP_CHATGPT_SPEND[month]  ?? 0;
   const etzChatgptSpend = ETZ_CHATGPT_SPEND[month] ?? 0;
 
   // Combined spend per brand (all tracked channels)
-  const ppTotalSpend  = ppSpend  + ppMetaSpend  + ppChatgptSpend;
+  const ppTotalSpend  = ppSpend  + ppMetaSpend  + ppBingSpend + ppChatgptSpend;
   const etzTotalSpend = etzSpend + etzMetaSpend + etzChatgptSpend;
 
   const ppPrevRev = ppPrevRevResult.status === 'fulfilled' ? ppPrevRevResult.value : null;
@@ -344,6 +358,9 @@ export async function GET(request: Request) {
       spend:         Math.round(ppSpend      * 100) / 100,
       metaSpend:     Math.round(ppMetaSpend  * 100) / 100,
       chatgptSpend:  Math.round(ppChatgptSpend * 100) / 100,
+      bingSpend:     Math.round(ppBingSpend   * 100) / 100,
+      bingRevenue:   Math.round(ppBingRevenue * 100) / 100,
+      bingError:     ppBingError,
       totalSpend:    Math.round(ppTotalSpend  * 100) / 100,
       budget:        ppBudget,
       revenue:       Math.round(ppRevenue  * 100) / 100,

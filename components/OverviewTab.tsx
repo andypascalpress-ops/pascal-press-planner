@@ -20,6 +20,9 @@ interface BrandData {
   spend:               number;   // Google Ads only
   metaSpend?:          number;   // Meta / Facebook Ads
   chatgptSpend?:       number;   // ChatGPT Ads (manual)
+  bingSpend?:          number;   // Bing Ads (Microsoft Advertising), Pascal Press only
+  bingRevenue?:        number;   // revenue Google Analytics credits to Bing traffic (includes organic Bing)
+  bingError?:          string | null;
   totalSpend?:         number;   // sum of all tracked channels
   budget:              number;
   revenue:             number;
@@ -707,7 +710,7 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers }: {
       )}
 
       {/* Ad spend channel breakdown — shown whenever any non-Google spend exists */}
-      {((data.metaSpend ?? 0) > 0 || (data.chatgptSpend ?? 0) > 0) && (
+      {((data.metaSpend ?? 0) > 0 || (data.chatgptSpend ?? 0) > 0 || (data.bingSpend ?? 0) > 0) && (
         <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2.5 space-y-1.5">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Ad Spend</p>
           {data.spend > 0 && (
@@ -722,11 +725,20 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers }: {
               <span className="font-medium text-gray-700">{AUD.format(data.metaSpend!)}</span>
             </div>
           )}
+          {(data.bingSpend ?? 0) > 0 && (
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-500">Bing Ads</span>
+              <span className="font-medium text-gray-700">{AUD.format(data.bingSpend!)}</span>
+            </div>
+          )}
           {(data.chatgptSpend ?? 0) > 0 && (
             <div className="flex justify-between text-xs">
               <span className="text-gray-500">ChatGPT</span>
               <span className="font-medium text-gray-700">{AUD.format(data.chatgptSpend!)}</span>
             </div>
+          )}
+          {(data.bingRevenue ?? 0) > 0 && (
+            <p className="text-[11px] text-gray-400">Bing revenue (Google Analytics, incl. organic Bing): {AUD.format(data.bingRevenue!)}</p>
           )}
           <div className="flex justify-between text-xs border-t border-gray-200 pt-1.5 mt-1">
             <span className="font-semibold text-gray-700">Total spend</span>
