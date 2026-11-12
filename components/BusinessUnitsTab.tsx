@@ -6,6 +6,7 @@ import BlakeDownloadsPanel from './BlakeDownloadsPanel';
 import MonthRangePicker, { recentQuarters, monthRangeToDates, type MonthRange } from './MonthRangePicker';
 import DailyRevenueTrend from './DailyRevenueTrend';
 import TrialsTrend from './TrialsTrend';
+import EsgPanel from './EsgPanel';
 import RevenueStreamsPanel from './RevenueStreamsPanel';
 import EhcHubspotOverview from './EhcHubspotOverview';
 import {
@@ -13,7 +14,7 @@ import {
   ComposedChart, Bar, LineChart, Line, Legend,
 } from 'recharts';
 
-type BrandKey = 'pp' | 'etz' | 'ehc' | 'blake';
+type BrandKey = 'pp' | 'etz' | 'ehc' | 'blake' | 'esg';
 type RangeKey = 'today' | 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth' | 'custom';
 
 interface BUMetrics {
@@ -66,6 +67,7 @@ const BRANDS: { key: BrandKey; label: string }[] = [
   { key: 'etz',   label: 'Excel Test Zone' },
   { key: 'ehc',   label: 'EHC'             },
   { key: 'blake', label: 'Blake Education' },
+  { key: 'esg',   label: 'Excel Study Guides' },
 ];
 
 const RANGES: { key: RangeKey; label: string }[] = [
@@ -83,6 +85,7 @@ const BRAND_COLOR: Record<BrandKey, string> = {
   etz:   '#7c3aed',
   ehc:   '#059669',
   blake: '#d97706',
+  esg:   '#0891b2',
 };
 
 const BRAND_ACTIVE: Record<BrandKey, string> = {
@@ -90,6 +93,7 @@ const BRAND_ACTIVE: Record<BrandKey, string> = {
   etz:   'bg-violet-600 text-white border-violet-600',
   ehc:   'bg-emerald-600 text-white border-emerald-600',
   blake: 'bg-amber-600 text-white border-amber-600',
+  esg:   'bg-cyan-600 text-white border-cyan-600',
 };
 
 const BRAND_IDLE: Record<BrandKey, string> = {
@@ -97,6 +101,7 @@ const BRAND_IDLE: Record<BrandKey, string> = {
   etz:   'text-gray-600 border-gray-200 hover:border-violet-300 hover:text-violet-700',
   ehc:   'text-gray-600 border-gray-200 hover:border-emerald-300 hover:text-emerald-700',
   blake: 'text-gray-600 border-gray-200 hover:border-amber-300 hover:text-amber-700',
+  esg:   'text-gray-600 border-gray-200 hover:border-cyan-300 hover:text-cyan-700',
 };
 
 const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
@@ -292,6 +297,7 @@ export default function BusinessUnitsTab() {
 
   const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    if (brand === 'esg') return;     // Excel Study Guides has its own panel and data feed
     const seq = ++loadSeq.current;   // only the latest request may update the screen
     setLoading(true);
     setError('');
@@ -312,6 +318,7 @@ export default function BusinessUnitsTab() {
 
   // same 12 months a year earlier for the Year over year chart: slower, so it loads on its own
   useEffect(() => {
+    if (brand === 'esg') return;
     let cancelled = false;
     setTrendLastYear(null);
     fetch(`/api/business-unit-trend?brand=${brand}&part=lastyear`)
@@ -322,6 +329,7 @@ export default function BusinessUnitsTab() {
   }, [brand]);
 
   const loadTrend = useCallback(async () => {
+    if (brand === 'esg') return;
     setTrendLoading(true);
     setTrend(null);
     setTrendLastYear(null);
@@ -418,6 +426,29 @@ export default function BusinessUnitsTab() {
   useEffect(() => { loadContactsGrowth(); }, [loadContactsGrowth]);
 
   const color = BRAND_COLOR[brand];
+
+  if (brand === 'esg') {
+    return (
+      <div className="flex-1 overflow-y-auto bg-gray-50">
+        <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 space-y-4">
+          <div className="flex gap-2 flex-wrap">
+            {BRANDS.map(b => (
+              <button
+                key={b.key}
+                onClick={() => setBrand(b.key)}
+                className={`px-4 py-2 text-sm font-semibold rounded-lg border transition-colors ${
+                  brand === b.key ? BRAND_ACTIVE[b.key] : BRAND_IDLE[b.key]
+                }`}
+              >
+                {b.label}
+              </button>
+            ))}
+          </div>
+          <EsgPanel color={color} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 overflow-y-auto bg-gray-50">
