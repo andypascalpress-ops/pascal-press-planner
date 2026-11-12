@@ -236,7 +236,7 @@ ${campaignId ? `          <Campaigns>
             <Month>${parseInt(em, 10)}</Month>
             <Year>${ey}</Year>
           </CustomDateRangeEnd>
-          <ReportTimeZone>AustraliaSydney</ReportTimeZone>
+          <ReportTimeZone>Hobart</ReportTimeZone>
         </Time>
       </ReportRequest>
     </SubmitGenerateReportRequest>`;
