@@ -254,18 +254,22 @@ ${campaignId ? `          <Campaigns>
     </PollGenerateReportRequest>`;
 
   let downloadUrl = '';
+  let reportReady = false;
   for (let attempt = 0; attempt < 7; attempt++) {
     await new Promise(r => setTimeout(r, 5000));
     const pollXml = await soapCall('PollGenerateReport', pollBody, token);
     const status  = extractTag(pollXml, 'Status');
     if (status === 'Success') {
       downloadUrl = extractTag(pollXml, 'ReportDownloadUrl');
+      reportReady = true;
       break;
     }
     if (status === 'Error') throw new Error('Bing Ads report generation failed');
     // 'Pending' or 'Running' — keep polling
   }
 
+  // A finished report with no download link means there was no spend in that period.
+  if (!downloadUrl && reportReady) return [];
   if (!downloadUrl) throw new Error('Bing Ads report timed out after 35s');
 
   const dlRes = await fetch(downloadUrl, { cache: 'no-store' });
