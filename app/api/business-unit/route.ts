@@ -432,29 +432,32 @@ export async function GET(request: Request) {
   const compTrialsRangeMs = ymdToMsRangeAEST(comp.start, comp.end);
 
   const umsOn = brand === 'etz' && umsConfigured();
+  const T: Record<string, number> = {};
+  const tm = <X,>(k: string, f: () => Promise<X>): Promise<X> => { const t0 = Date.now(); return f().finally(() => { T[k] = Date.now() - t0; }); };
   const [curRevR, compRevR, curSpendR, compSpendR, curProductsR, compProductsR, subsR, curTrialsR, compTrialsR, curUmsR, compUmsR, curBingR, compBingR, ...sparkR] =
     await Promise.allSettled([
-      fetchRev(cur.start, cur.end),
-      fetchRev(comp.start, comp.end),
-      fetchSpend(cur.start, cur.end, curMonth),
-      fetchSpend(comp.start, comp.end, compMonth),
-      fetchProductMap(cur.start, cur.end),
-      fetchProductMap(comp.start, comp.end),
+      tm('revCur', () => fetchRev(cur.start, cur.end)),
+      tm('revComp', () => fetchRev(comp.start, comp.end)),
+      tm('spendCur', () => fetchSpend(cur.start, cur.end, curMonth)),
+      tm('spendComp', () => fetchSpend(comp.start, comp.end, compMonth)),
+      tm('productsCur', () => fetchProductMap(cur.start, cur.end)),
+      tm('productsComp', () => fetchProductMap(comp.start, comp.end)),
       (brand === 'etz' || brand === 'ehc')
-        ? fetchStripeSubscriptionMetrics(brand === 'etz' ? STRIPE_ETZ : STRIPE_HSC, brand)
+        ? tm('subscriptions', () => fetchStripeSubscriptionMetrics(brand === 'etz' ? STRIPE_ETZ : STRIPE_HSC, brand))
         : Promise.resolve(null),
       hasTrials
-        ? fetchTrialConversion(trialsPipelineLabel, curTrialsRangeMs.startMs, curTrialsRangeMs.endMs)
+        ? tm('hubspotTrialsCur', () => fetchTrialConversion(trialsPipelineLabel, curTrialsRangeMs.startMs, curTrialsRangeMs.endMs))
         : Promise.resolve(null),
       hasTrials
-        ? fetchTrialConversion(trialsPipelineLabel, compTrialsRangeMs.startMs, compTrialsRangeMs.endMs)
+        ? tm('hubspotTrialsComp', () => fetchTrialConversion(trialsPipelineLabel, compTrialsRangeMs.startMs, compTrialsRangeMs.endMs))
         : Promise.resolve(null),
-      umsOn ? fetchUmsTrials(cur.start, cur.end) : Promise.resolve(null),
-      umsOn ? fetchUmsTrials(comp.start, comp.end) : Promise.resolve(null),
+      umsOn ? tm('umsCur', () => fetchUmsTrials(cur.start, cur.end)) : Promise.resolve(null),
+      umsOn ? tm('umsComp', () => fetchUmsTrials(comp.start, comp.end)) : Promise.resolve(null),
       brand === 'pp' ? fetchBingBlock(cur.start, cur.end) : Promise.resolve(null),
       brand === 'pp' ? fetchBingBlock(comp.start, comp.end) : Promise.resolve(null),
-      ...sparkDays.map(d => fetchRev(d, d)),
+      ...sparkDays.map((d, i) => tm(`spark${i}`, () => fetchRev(d, d))),
     ]);
+  if (searchParams.get('debug') === 'timing') return NextResponse.json({ brand, range, timingsMs: T });
 
   const curRev     = curRevR.status     === 'fulfilled' ? curRevR.value     : null;
   const compRev     = compRevR.status    === 'fulfilled' ? compRevR.value   : null;
