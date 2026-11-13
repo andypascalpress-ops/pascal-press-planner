@@ -509,8 +509,8 @@ export async function GET(request: Request) {
     subscriptions: subs,
     sparkline,
     connected: true,
-  }, warnings.length === 0 && (range === 'custom' || range === 'lastmonth')
-    // finished or chosen periods barely change and are slow to build, so repeat views are served from the cache
-    ? { headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' } }
+  }, warnings.length === 0
+    // a recent copy is served straight away while a fresh one is built in the background; today's figures refresh sooner
+    ? { headers: { 'Cache-Control': range === 'today' ? 'public, s-maxage=60, stale-while-revalidate=300' : 'public, s-maxage=120, stale-while-revalidate=900' } }
     : undefined);
 }

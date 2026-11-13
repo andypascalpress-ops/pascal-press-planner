@@ -113,6 +113,21 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Per-customer lookups never change once made (when a customer was created, whether they paid before a given date),
+// so they are kept in memory for an hour. Repeat views skip hundreds of Stripe calls.
+const LOOKUP_TTL_MS = 60 * 60 * 1000;
+const lookupCache = new Map<string, { v: boolean | number; exp: number }>();
+function cacheGet<T extends boolean | number>(key: string): T | undefined {
+  const hit = lookupCache.get(key);
+  if (!hit) return undefined;
+  if (hit.exp < Date.now()) { lookupCache.delete(key); return undefined; }
+  return hit.v as T;
+}
+function cacheSet(key: string, v: boolean | number) {
+  if (lookupCache.size > 20000) lookupCache.clear();
+  lookupCache.set(key, { v, exp: Date.now() + LOOKUP_TTL_MS });
+}
+
 /**
  * True if the customer had a real prior purchase (net > $1) before `beforeUnix`.
  * Returns null if Stripe errors after retries — caller must not treat that as "new"
@@ -123,6 +138,9 @@ async function hasPriorPaidCharge(
   beforeUnix: number,
   secretKey: string,
 ): Promise<boolean | null> {
+  const cacheKey = `prior:${customerId}:${beforeUnix}`;
+  const cached = cacheGet<boolean>(cacheKey);
+  if (cached !== undefined) return cached;
   const params = new URLSearchParams({
     customer: customerId,
     'created[lt]': String(beforeUnix),
@@ -145,11 +163,13 @@ async function hasPriorPaidCharge(
       }
       const data: StripeList<{ paid: boolean; status: string; amount: number; amount_refunded: number }> =
         await res.json();
-      return data.data.some((c) => {
+      const result = data.data.some((c) => {
         if (!c.paid || c.status !== 'succeeded') return false;
         const net = (c.amount ?? 0) - (c.amount_refunded ?? 0);
         return net > 100; // > $1.00 AUD — ignore $0 auths / fully refunded noise
       });
+      cacheSet(cacheKey, result);
+      return result;
     } catch (err) {
       console.error('[stripe-revenue] prior charge lookup error', customerId, err);
       await sleep(250 * (attempt + 1));
@@ -163,6 +183,9 @@ async function fetchCustomerCreated(
   customerId: string,
   secretKey: string,
 ): Promise<number | null> {
+  const cacheKey = `created:${customerId}`;
+  const cached = cacheGet<number>(cacheKey);
+  if (cached !== undefined) return cached;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const res = await fetch(`${STRIPE_BASE}/customers/${customerId}`, {
@@ -175,7 +198,8 @@ async function fetchCustomerCreated(
       }
       if (!res.ok) return null;
       const data = await res.json() as { created?: number };
-      return typeof data.created === 'number' ? data.created : null;
+      if (typeof data.created === 'number') { cacheSet(cacheKey, data.created); return data.created; }
+      return null;
     } catch {
       await sleep(250 * (attempt + 1));
     }
