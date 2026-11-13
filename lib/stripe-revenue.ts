@@ -394,33 +394,46 @@ export async function fetchStripeCustomerTrend(
     while (lbM < 1) { lbM += 12; lbY--; }
     const lookbackMonth = `${lbY}-${String(lbM).padStart(2, '0')}`;
 
-    const { gte } = monthUnixRange(lookbackMonth);
-    const { lte } = monthUnixRange(sorted[sorted.length - 1]!);
+    // every month in the window (lookback included), fetched in parallel: each month's charges are paged one after
+    // another, but the months run side by side, so the whole window takes about as long as its busiest month
+    const lastMonthKey = sorted[sorted.length - 1]!;
+    const windowMonths: string[] = [];
+    for (let y = lbY, mo = lbM; windowMonths.length < 40; ) {
+      const key = `${y}-${String(mo).padStart(2, '0')}`;
+      windowMonths.push(key);
+      if (key >= lastMonthKey) break;
+      mo++; if (mo > 12) { mo = 1; y++; }
+    }
 
-    let startingAfter: string | null = null;
-    let pages = 0;
+    type TrendCharge = StripeCharge & { created: number };
+    const fetchMonthCharges = async (m: string): Promise<TrendCharge[]> => {
+      const { gte, lte } = monthUnixRange(m);
+      const out: TrendCharge[] = [];
+      let after: string | null = null;
+      for (let page = 0; page < 60; page++) {
+        const params = new URLSearchParams({ 'created[gte]': String(gte), 'created[lte]': String(lte), limit: '100' });
+        if (after) params.set('starting_after', after);
+        let res: Response | null = null;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          res = await fetch(`${STRIPE_BASE}/charges?${params}`, { headers: stripeHeaders(secretKey), cache: 'no-store' });
+          if (res.ok || (res.status !== 429 && res.status < 500)) break;
+          await sleep(400 * Math.pow(2, attempt));
+        }
+        if (!res || !res.ok) break;
+        const data: StripeList<TrendCharge> = await res.json();
+        for (const c of data.data) out.push({ id: c.id, paid: c.paid, status: c.status, amount: c.amount, amount_refunded: c.amount_refunded, customer: c.customer, created: c.created } as TrendCharge);
+        if (!data.has_more || data.data.length === 0) break;
+        after = data.data[data.data.length - 1]!.id;
+      }
+      return out;
+    };
+    const chargesByMonth = await Promise.all(windowMonths.map(m => fetchMonthCharges(m)));
+
     const firstSeenMonth = new Map<string, string>();                     // customerId -> earliest month seen (incl. lookback)
     const perMonthCustomerNet = new Map<string, Map<string, number>>();   // month -> customerId -> net cents (reported months only)
 
-    while (true) {
-      pages++;
-      if (pages > 150) break; // hard safety cap (~15,000 charges across window + lookback)
-
-      const params = new URLSearchParams({
-        'created[gte]': String(gte),
-        'created[lte]': String(lte),
-        limit: '100',
-      });
-      if (startingAfter) params.set('starting_after', startingAfter);
-
-      const res = await fetch(`${STRIPE_BASE}/charges?${params}`, {
-        headers: stripeHeaders(secretKey),
-        cache: 'no-store',
-      });
-      if (!res.ok) break;
-      const data: StripeList<StripeCharge & { created: number }> = await res.json();
-
-      for (const charge of data.data) {
+    for (const charges of chargesByMonth) {
+      for (const charge of charges) {
         if (!charge.paid || charge.status !== 'succeeded') continue;
         const net = (charge.amount ?? 0) - (charge.amount_refunded ?? 0);
         if (net <= 100) continue; // > $1.00 AUD — matches the "qualifying" rule elsewhere
@@ -439,9 +452,6 @@ export async function fetchStripeCustomerTrend(
           perMonthCustomerNet.set(month, monthMap);
         }
       }
-
-      if (!data.has_more || data.data.length === 0) break;
-      startingAfter = data.data[data.data.length - 1]!.id;
     }
 
     for (const month of months) {

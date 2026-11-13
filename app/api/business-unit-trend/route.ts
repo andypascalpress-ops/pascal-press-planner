@@ -204,5 +204,6 @@ export async function GET(request: Request) {
     };
   });
 
-  return NextResponse.json({ brand, months: data });
+  // history months barely change, and building this is the slowest call on the tab: serve a recent copy while refreshing
+  return NextResponse.json({ brand, months: data }, { headers: { 'Cache-Control': 'public, s-maxage=600, stale-while-revalidate=3600' } });
 }
