@@ -264,7 +264,7 @@ async function fetchStripeRevenueWithKey(
       // "customers who made their first payment during this period".
       // Low concurrency + retries avoid rate-limit false "new" counts.
       const ids = qualifying.map(([id]) => id);
-      const chunkSize = 4;
+      const chunkSize = 8;
       const pending: string[] = [];
 
       for (let i = 0; i < ids.length; i += chunkSize) {

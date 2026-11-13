@@ -10,7 +10,7 @@
  */
 import { NextResponse } from 'next/server';
 import { fetchPPRevenue, fetchBlakeRevenue } from '@/lib/bigcommerce-revenue';
-import { fetchETZStripeRevenue, fetchHSCStripeRevenue, fetchStripeProductMap, fetchStripeSubscriptionSummary } from '@/lib/stripe-revenue';
+import { fetchETZDailyRevenue, fetchHSCDailyRevenue, fetchETZStripeRevenue, fetchHSCStripeRevenue, fetchStripeProductMap, fetchStripeSubscriptionSummary } from '@/lib/stripe-revenue';
 import { fetchMonthlySpend, buildConfig } from '@/lib/google-ads';
 import { fetchBingSpendTotal } from '@/lib/bing-ads';
 import { fetchBingPaidTraffic } from '@/lib/google-analytics';
@@ -431,6 +431,19 @@ export async function GET(request: Request) {
   const curTrialsRangeMs  = ymdToMsRangeAEST(cur.start,  cur.end);
   const compTrialsRangeMs = ymdToMsRangeAEST(comp.start, comp.end);
 
+  // Last 7 days of revenue for the sparkline. Stripe brands read the whole week in one pass (the same paid, succeeded,
+  // net-of-refunds charges and Sydney days as the headline figure); the others look up each day.
+  async function fetchSparkline(): Promise<number[]> {
+    if (brand === 'etz' || brand === 'ehc') {
+      try {
+        const daily = await (brand === 'etz' ? fetchETZDailyRevenue : fetchHSCDailyRevenue)(sparkDays[0]!, sparkDays[6]!);
+        return sparkDays.map(d => daily[d]?.revenue ?? 0);
+      } catch { return sparkDays.map(() => 0); }
+    }
+    const days = await Promise.all(sparkDays.map(d => fetchRev(d, d)));
+    return days.map(r => r?.totalRevenue ?? 0);
+  }
+
   const umsOn = brand === 'etz' && umsConfigured();
   const T: Record<string, number> = {};
   const tm = <X,>(k: string, f: () => Promise<X>): Promise<X> => { const t0 = Date.now(); return f().finally(() => { T[k] = Date.now() - t0; }); };
@@ -455,7 +468,7 @@ export async function GET(request: Request) {
       umsOn ? tm('umsComp', () => fetchUmsTrials(comp.start, comp.end)) : Promise.resolve(null),
       brand === 'pp' ? fetchBingBlock(cur.start, cur.end) : Promise.resolve(null),
       brand === 'pp' ? fetchBingBlock(comp.start, comp.end) : Promise.resolve(null),
-      ...sparkDays.map((d, i) => tm(`spark${i}`, () => fetchRev(d, d))),
+      tm('spark', fetchSparkline),
     ]);
   if (searchParams.get('debug') === 'timing') return NextResponse.json({ brand, range, timingsMs: T });
 
@@ -482,12 +495,8 @@ export async function GET(request: Request) {
   if (!curRev) warnings.push('Revenue for the selected period could not be read (the sales system was busy). Please try again in a minute.');
   if (!compRev) warnings.push('Revenue for the comparison period could not be read (the sales system was busy). Please try again in a minute.');
 
-  const sparkline = sparkDays.map((date, i) => ({
-    date,
-    revenue: sparkR[i]?.status === 'fulfilled'
-      ? ((sparkR[i] as PromiseFulfilledResult<RevData>).value?.totalRevenue ?? 0)
-      : 0,
-  }));
+  const sparkValues = sparkR[0]?.status === 'fulfilled' ? (sparkR[0] as PromiseFulfilledResult<number[]>).value : [];
+  const sparkline = sparkDays.map((date, i) => ({ date, revenue: sparkValues[i] ?? 0 }));
 
   return NextResponse.json({
     brand, range, yoy, warnings,
