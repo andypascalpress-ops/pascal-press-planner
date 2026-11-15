@@ -23,6 +23,8 @@ export interface UmsTransactionSummary {
   trialsByDay: Record<string, number>;
   /** Orders report (id, purchase_date, status, total, payment_method, returning_customer, items): counts only. */
   orders: OrdersAgg;
+  /** Per payment method: rows, distinct ids, and distinct (time, total, items) signatures. A gap means repeated rows. Counts only. */
+  dupCheck: Record<string, { rows: number; distinctIds: number; distinctSignatures: number }>;
 }
 
 export interface OrdersAgg {
@@ -185,6 +187,7 @@ export async function fetchUmsTransactionSummary(start: string, end: string): Pr
   let rows = 0, trialRows = 0, repeat = 0;
   const orders: OrdersAgg = { count: 0, byStatus: {}, byPaymentMethod: {}, byReturning: {}, perDay: {}, perMethodDay: {}, itemFieldNames: [], byItemType: {}, topItems: [] };
   const itemQty = new Map<string, number>();
+  const dup: Record<string, { rows: number; ids: Set<string>; sigs: Set<string> }> = {};
   const sydneyDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit' });
   let fieldNames: string[] = [], topLevelKeys: string[] = [], sampleDateFormat: string | null = null;
 
@@ -210,6 +213,7 @@ export async function fetchUmsTransactionSummary(start: string, end: string): Pr
         const d = new Date(String(r.purchase_date));
         if (!isNaN(d.getTime())) { const day = sydneyDay.format(d); const pd = (orders.perDay[day] ??= { orders: 0, total: 0 }); pd.orders += 1; pd.total = Math.round((pd.total + total) * 100) / 100; }
         const items = Array.isArray(r.items) ? (r.items as Record<string, unknown>[]) : [];
+        { const dd = (dup[pm] ??= { rows: 0, ids: new Set(), sigs: new Set() }); dd.rows += 1; dd.ids.add(String(r.id ?? '')); dd.sigs.add(`${String(r.purchase_date)}|${String(r.total)}|${items.map(it => `${String(it.name)}x${String(it.quantity)}`).join(',')}`); }
         if (!isNaN(d.getTime())) { const md = ((orders.perMethodDay[pm] ??= {})[sydneyDay.format(d)] ??= { rows: 0, items: 0, returning: 0 }); md.rows += 1; md.items += items.reduce((n, it) => n + (Number(it.quantity) || 1), 0); if (String(r.returning_customer) === 'true') md.returning += 1; }
         for (const it of items) {
           if (orders.itemFieldNames.length === 0) orders.itemFieldNames = Object.keys(it);
@@ -230,5 +234,6 @@ export async function fetchUmsTransactionSummary(start: string, end: string): Pr
       if (day) trialsByDay[day] = (trialsByDay[day] ?? 0) + 1;
     }
   }
-  return { rows, fieldNames, topLevelKeys, sampleDateFormat, byType, trialRows, trialFamilies: familySet.size, repeatTrialRows: repeat, trialsByDay, orders: { ...orders, topItems: [...itemQty.entries()].map(([name, quantity]) => ({ name, quantity })).sort((a, b) => b.quantity - a.quantity).slice(0, 12) } };
+  const dupCheck = Object.fromEntries(Object.entries(dup).map(([k, v]) => [k, { rows: v.rows, distinctIds: v.ids.size, distinctSignatures: v.sigs.size }]));
+  return { rows, fieldNames, topLevelKeys, sampleDateFormat, byType, trialRows, trialFamilies: familySet.size, repeatTrialRows: repeat, trialsByDay, dupCheck, orders: { ...orders, topItems: [...itemQty.entries()].map(([name, quantity]) => ({ name, quantity })).sort((a, b) => b.quantity - a.quantity).slice(0, 12) } };
 }
