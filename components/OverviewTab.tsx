@@ -712,8 +712,8 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers, lin
         />
       )}
 
-      {/* Ad spend channel breakdown — shown whenever any non-Google spend exists */}
-      {((data.metaSpend ?? 0) > 0 || (data.chatgptSpend ?? 0) > 0 || (data.bingSpend ?? 0) > 0) && (
+      {/* Ad spend channel breakdown — shown whenever the brand has more than Google Ads (Meta is listed even at $0, e.g. a quiet day) and there is spend */}
+      {((data.totalSpend ?? data.spend) > 0 && (data.metaSpend !== undefined || (data.chatgptSpend ?? 0) > 0 || (data.bingSpend ?? 0) > 0)) && (
         <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2.5 space-y-1.5">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Ad Spend</p>
           {data.spend > 0 && (
@@ -722,7 +722,7 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers, lin
               <span className="font-medium text-gray-700">{AUD.format(data.spend)}</span>
             </div>
           )}
-          {(data.metaSpend ?? 0) > 0 && (
+          {data.metaSpend !== undefined && (
             <div className="flex justify-between text-xs">
               <span className="text-gray-500">Meta (Facebook)</span>
               <span className="font-medium text-gray-700">{AUD.format(data.metaSpend!)}</span>
