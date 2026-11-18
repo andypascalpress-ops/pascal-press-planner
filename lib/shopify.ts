@@ -123,7 +123,7 @@ function platformName(raw: string): string {
   return raw.length > 24 ? raw.slice(0, 24) + '...' : raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 /** Channel such as "Google - paid" or "Google - organic search", from the visit's tracking tags and click IDs. */
-function classifyVisit(lv: NonNullable<OrderNode['customerJourneySummary']>['lastVisit'], sourceName: string | null): { channel: string; campaign: string } {
+export function classifyVisit(lv: NonNullable<OrderNode['customerJourneySummary']>['lastVisit'], sourceName: string | null): { channel: string; campaign: string } {
   const utm = lv?.utmParameters;
   const rawSource = (utm?.source || lv?.source || lv?.sourceType || (sourceName === 'web' ? 'direct' : sourceName) || 'Unknown').toString();
   const platform = platformName(rawSource);
@@ -246,4 +246,124 @@ export async function fetchShopifyProductSales(start: string, end: string): Prom
     } catch (e) { lastErr = e instanceof Error ? e.message : 'failed'; }
   }
   throw new Error(`Shopify product report failed: ${lastErr.slice(0, 250)}`);
+}
+
+
+// ---------------------------------------------------------------------------
+// Channel deep-dive: exact source / medium / campaign / ad content for each order, what each channel sold, and how first
+// click compares with last click. Orders only (no customer details). Order list limits apply (about the last 60 days).
+// ---------------------------------------------------------------------------
+
+interface VisitFull {
+  source: string | null; sourceType: string | null; referrerUrl: string | null; landingPage: string | null;
+  utmParameters: { source: string | null; medium: string | null; campaign: string | null; content: string | null; term: string | null } | null;
+}
+interface ChannelOrderNode {
+  createdAt: string; cancelledAt: string | null; test: boolean; sourceName: string | null;
+  totalPriceSet: { shopMoney: { amount: string } }; totalRefundedSet: { shopMoney: { amount: string } };
+  discountCodes: string[];
+  customerJourneySummary: { lastVisit: VisitFull | null; firstVisit: VisitFull | null } | null;
+  lineItems: { nodes: { title: string; quantity: number; discountedTotalSet: { shopMoney: { amount: string } } }[] };
+}
+
+const VISIT = 'source sourceType referrerUrl landingPage utmParameters { source medium campaign content term }';
+const CHANNEL_ORDERS_QUERY = `query($q: String!, $cursor: String) {
+  orders(first: 50, after: $cursor, query: $q, sortKey: CREATED_AT) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      createdAt cancelledAt test sourceName discountCodes
+      totalPriceSet { shopMoney { amount } }
+      totalRefundedSet { shopMoney { amount } }
+      customerJourneySummary { lastVisit { ${VISIT} } firstVisit { ${VISIT} } }
+      lineItems(first: 10) { nodes { title quantity discountedTotalSet { shopMoney { amount } } } }
+    }
+  }
+}`;
+
+export interface ChannelDeepDive {
+  window: { start: string; end: string };
+  totals: { orders: number; revenue: number };
+  channels: { channel: string; orders: number; revenue: number; sharePct: number }[];
+  detail: { channel: string; source: string; medium: string; campaign: string; content: string; term: string; orders: number; revenue: number }[];
+  landingPages: { path: string; orders: number; revenue: number }[];
+  byDay: Record<string, Record<string, number>>;
+  topItemsByChannel: Record<string, { title: string; units: number }[]>;
+  discountByChannel: { channel: string; code: string; orders: number }[];
+  firstVsLast: { channel: string; lastClick: number; firstClick: number }[];
+  clickIds: { googleClickId: number; facebookClickId: number; bingClickId: number };
+}
+
+export async function fetchShopifyChannelDeepDive(start: string, end: string): Promise<ChannelDeepDive> {
+  const q = `created_at:>='${start}T00:00:00${sydneyOffset(start)}' AND created_at:<='${end}T23:59:59${sydneyOffset(end)}'`;
+  const nodes: ChannelOrderNode[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 40; page++) {
+    const data: { orders: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: ChannelOrderNode[] } } = await shopifyGraphql(CHANNEL_ORDERS_QUERY, { q, cursor });
+    nodes.push(...data.orders.nodes);
+    if (!data.orders.pageInfo.hasNextPage) break;
+    cursor = data.orders.pageInfo.endCursor;
+  }
+  const num = (v: string | undefined) => parseFloat(v ?? '0') || 0;
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const chan = new Map<string, { orders: number; revenue: number }>();
+  const det = new Map<string, { channel: string; source: string; medium: string; campaign: string; content: string; term: string; orders: number; revenue: number }>();
+  const lands = new Map<string, { orders: number; revenue: number }>();
+  const byDay: Record<string, Record<string, number>> = {};
+  const items = new Map<string, Map<string, number>>();
+  const disc = new Map<string, number>();
+  const firstCount = new Map<string, number>();
+  const ids = { googleClickId: 0, facebookClickId: 0, bingClickId: 0 };
+  let orders = 0, revenue = 0;
+
+  for (const o of nodes) {
+    if (o.test || o.cancelledAt) continue;
+    const net = num(o.totalPriceSet.shopMoney.amount) - num(o.totalRefundedSet.shopMoney.amount);
+    orders += 1; revenue += net;
+    const lv = o.customerJourneySummary?.lastVisit ?? null, fv = o.customerJourneySummary?.firstVisit ?? null;
+    const { channel } = classifyVisit(lv, o.sourceName);
+    const c = chan.get(channel) ?? { orders: 0, revenue: 0 }; c.orders += 1; c.revenue += net; chan.set(channel, c);
+
+    const u = lv?.utmParameters;
+    const source = (u?.source || lv?.source || lv?.sourceType || 'direct').toString();
+    const medium = (u?.medium || '').toString(), campaign = (u?.campaign || '').toString(), content = (u?.content || '').toString(), term = (u?.term || '').toString();
+    const dk = [channel, source.toLowerCase(), medium.toLowerCase(), campaign, content, term].join('||');
+    const d = det.get(dk) ?? { channel, source, medium, campaign, content, term, orders: 0, revenue: 0 }; d.orders += 1; d.revenue += net; det.set(dk, d);
+
+    try {
+      const lp = new URL(lv?.landingPage ?? '', 'https://x.invalid');
+      if (lv?.landingPage) { const path = lp.pathname || '/'; const l = lands.get(path) ?? { orders: 0, revenue: 0 }; l.orders += 1; l.revenue += net; lands.set(path, l); }
+      if (lp.searchParams.get('gclid') || lp.searchParams.get('gbraid') || lp.searchParams.get('wbraid')) ids.googleClickId += 1;
+      if (lp.searchParams.get('fbclid')) ids.facebookClickId += 1;
+      if (lp.searchParams.get('msclkid')) ids.bingClickId += 1;
+    } catch { /* no landing page */ }
+
+    const day = sydneyDay.format(new Date(o.createdAt));
+    const dd = (byDay[day] ??= {}); dd[channel] = r2((dd[channel] ?? 0) + net);
+
+    const im = items.get(channel) ?? new Map<string, number>();
+    for (const li of o.lineItems.nodes) im.set(li.title, (im.get(li.title) ?? 0) + (li.quantity || 1));
+    items.set(channel, im);
+    for (const code of o.discountCodes ?? []) { const k = `${channel}||${code}`; disc.set(k, (disc.get(k) ?? 0) + 1); }
+
+    if (fv) { const fch = classifyVisit(fv, o.sourceName).channel; firstCount.set(fch, (firstCount.get(fch) ?? 0) + 1); }
+  }
+
+  const channels = [...chan.entries()].map(([channel, v]) => ({ channel, orders: v.orders, revenue: r2(v.revenue), sharePct: revenue > 0 ? Math.round((v.revenue / revenue) * 1000) / 10 : 0 })).sort((a, b) => b.revenue - a.revenue);
+  const topChannels = channels.slice(0, 6).map(c => c.channel);
+  const topItemsByChannel: Record<string, { title: string; units: number }[]> = {};
+  for (const ch of topChannels) topItemsByChannel[ch] = [...(items.get(ch) ?? new Map()).entries()].map(([title, units]) => ({ title, units })).sort((a, b) => b.units - a.units).slice(0, 6);
+  const lastCount = new Map(channels.map(c => [c.channel, c.orders]));
+  const allCh = new Set([...lastCount.keys(), ...firstCount.keys()]);
+  return {
+    window: { start, end },
+    totals: { orders, revenue: r2(revenue) },
+    channels,
+    detail: [...det.values()].map(d => ({ ...d, revenue: r2(d.revenue) })).sort((a, b) => b.revenue - a.revenue).slice(0, 40),
+    landingPages: [...lands.entries()].map(([path, v]) => ({ path, orders: v.orders, revenue: r2(v.revenue) })).sort((a, b) => b.revenue - a.revenue).slice(0, 12),
+    byDay: Object.fromEntries(Object.entries(byDay).map(([day, m]) => [day, Object.fromEntries(Object.entries(m).filter(([k]) => topChannels.includes(k)))])),
+    topItemsByChannel,
+    discountByChannel: [...disc.entries()].map(([k, n]) => { const [channel, code] = k.split('||'); return { channel: channel!, code: code!, orders: n }; }).sort((a, b) => b.orders - a.orders).slice(0, 12),
+    firstVsLast: [...allCh].map(channel => ({ channel, lastClick: lastCount.get(channel) ?? 0, firstClick: firstCount.get(channel) ?? 0 })).sort((a, b) => b.lastClick - a.lastClick).slice(0, 12),
+    clickIds: ids,
+  };
 }
