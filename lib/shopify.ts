@@ -137,13 +137,18 @@ export function classifyVisit(lv: NonNullable<OrderNode['customerJourneySummary'
     else if (u.searchParams.get('msclkid')) clickId = 'bing';
     if (!medium) medium = (u.searchParams.get('utm_medium') ?? '').toLowerCase();
   } catch { /* no landing page */ }
-  const paid = PAID_MEDIUMS.has(medium) || Boolean(clickId);
+  // Shopify's Google & YouTube channel tags Shopping product-feed clicks as medium "product_sync"; campaign "sag_organic" is the free listings
+  const campaignLc = (utm?.campaign ?? '').toLowerCase();
+  const feedClick = medium === 'product_sync';
+  if (feedClick && campaignLc === 'sag_organic') shoppingListing = true;
+  const paidFeed = feedClick && campaignLc !== 'sag_organic';
+  const paid = PAID_MEDIUMS.has(medium) || Boolean(clickId) || paidFeed;
   let channel = platform;
   if (platform === 'Direct') channel = 'Direct';
   else if (paid) {
     const name = platform === 'Unknown' ? (clickId === 'bing' ? 'Bing' : 'Google') : platform;
     // a campaign name that says Shopping / Performance Max marks paid Shopping traffic
-    const shopping = name === 'Google' && /shopping|\bpmax\b|performance.?max|merchant/i.test(utm?.campaign ?? '');
+    const shopping = name === 'Google' && (paidFeed || /shopping|\bpmax\b|performance.?max|merchant/i.test(utm?.campaign ?? ''));
     channel = `${name} \u2013 paid${shopping ? ' Shopping' : ''}`;
   }
   else if (shoppingListing && (platform === 'Google' || platform === 'Unknown')) channel = 'Google \u2013 Shopping listings (free)';
