@@ -110,7 +110,7 @@ function BarRow({ rank, label, tag, tagTone, value, share, color, extra, extra2 
 
 const channelTone = (ch: string) =>
   ch.includes('paid') ? 'bg-emerald-50 text-emerald-700'
-  : ch.includes('organic search') ? 'bg-sky-50 text-sky-700'
+  : ch.includes('organic search') || ch.includes('Shopping listings') ? 'bg-sky-50 text-sky-700'
   : ch.includes('no ad tag') ? 'bg-amber-50 text-amber-700'
   : ch === 'Direct' ? 'bg-slate-100 text-slate-600'
   : 'bg-gray-100 text-gray-500';
@@ -241,7 +241,7 @@ export default function EsgPanel({ color }: { color: string }) {
                 <ul className="divide-y divide-gray-50">
                   {sources.map((s, i) => (
                     <BarRow key={s.source} rank={i + 1} label={s.source} value={AUD.format(s.revenue)} extra={`${s.orders} orders`} share={s.revenue / srcMax} color={color}
-                      tag={s.source.includes('paid') ? 'paid' : s.source.includes('organic') ? 'organic' : s.source.includes('no ad tag') ? 'check tags' : undefined} tagTone={channelTone(s.source)} />
+                      tag={s.source.includes('paid') ? 'paid' : s.source.includes('Shopping listings') ? 'free listing' : s.source.includes('organic') ? 'organic' : s.source.includes('no ad tag') ? 'check tags' : undefined} tagTone={channelTone(s.source)} />
                   ))}
                 </ul>
               )}

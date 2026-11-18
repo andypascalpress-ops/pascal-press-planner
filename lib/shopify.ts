@@ -129,8 +129,10 @@ export function classifyVisit(lv: NonNullable<OrderNode['customerJourneySummary'
   const platform = platformName(rawSource);
   let medium = (utm?.medium ?? '').toLowerCase();
   let clickId = '';
+  let shoppingListing = false;
   try {
     const u = new URL(lv?.landingPage ?? '', 'https://x.invalid');
+    shoppingListing = Boolean(u.searchParams.get('srsltid'));   // Google adds this to clicks on Merchant Center (Shopping) listings
     if (u.searchParams.get('gclid') || u.searchParams.get('gbraid') || u.searchParams.get('wbraid')) clickId = 'google';
     else if (u.searchParams.get('msclkid')) clickId = 'bing';
     if (!medium) medium = (u.searchParams.get('utm_medium') ?? '').toLowerCase();
@@ -138,7 +140,13 @@ export function classifyVisit(lv: NonNullable<OrderNode['customerJourneySummary'
   const paid = PAID_MEDIUMS.has(medium) || Boolean(clickId);
   let channel = platform;
   if (platform === 'Direct') channel = 'Direct';
-  else if (paid) channel = `${platform === 'Unknown' ? (clickId === 'bing' ? 'Bing' : 'Google') : platform} \u2013 paid`;
+  else if (paid) {
+    const name = platform === 'Unknown' ? (clickId === 'bing' ? 'Bing' : 'Google') : platform;
+    // a campaign name that says Shopping / Performance Max marks paid Shopping traffic
+    const shopping = name === 'Google' && /shopping|\bpmax\b|performance.?max|merchant/i.test(utm?.campaign ?? '');
+    channel = `${name} \u2013 paid${shopping ? ' Shopping' : ''}`;
+  }
+  else if (shoppingListing && (platform === 'Google' || platform === 'Unknown')) channel = 'Google \u2013 Shopping listings (free)';
   else if (platform === 'Google' || platform === 'Bing' || platform === 'DuckDuckGo' || platform === 'Brave') channel = `${platform} \u2013 organic search`;
   else if (platform === 'Facebook & Instagram') channel = `${platform} \u2013 no ad tag (organic or untagged ad)`;
   else if (medium === 'email') channel = `${platform} \u2013 email`;
