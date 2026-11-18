@@ -140,7 +140,8 @@ export function classifyVisit(lv: NonNullable<OrderNode['customerJourneySummary'
   // Shopify's Google & YouTube channel tags Shopping product-feed clicks as medium "product_sync"; campaign "sag_organic" is the free listings
   const campaignLc = (utm?.campaign ?? '').toLowerCase();
   const feedClick = medium === 'product_sync';
-  if (feedClick && campaignLc === 'sag_organic') shoppingListing = true;
+  // the feed tag sits on every Shopping link, so it covers free listings AND Shopping ads: Shopify alone cannot tell them apart
+  const feedShopping = feedClick && campaignLc === 'sag_organic';
   const paidFeed = feedClick && campaignLc !== 'sag_organic';
   const paid = PAID_MEDIUMS.has(medium) || Boolean(clickId) || paidFeed;
   let channel = platform;
@@ -151,6 +152,7 @@ export function classifyVisit(lv: NonNullable<OrderNode['customerJourneySummary'
     const shopping = name === 'Google' && (paidFeed || /shopping|\bpmax\b|performance.?max|merchant/i.test(utm?.campaign ?? ''));
     channel = `${name} \u2013 paid${shopping ? ' Shopping' : ''}`;
   }
+  else if (feedShopping && (platform === 'Google' || platform === 'Unknown')) channel = 'Google \u2013 Shopping (free listings + Shopping ads)';
   else if (shoppingListing && (platform === 'Google' || platform === 'Unknown')) channel = 'Google \u2013 Shopping listings (free)';
   else if (platform === 'Google' || platform === 'Bing' || platform === 'DuckDuckGo' || platform === 'Brave') channel = `${platform} \u2013 organic search`;
   else if (platform === 'Facebook & Instagram') channel = `${platform} \u2013 no ad tag (organic or untagged ad)`;
