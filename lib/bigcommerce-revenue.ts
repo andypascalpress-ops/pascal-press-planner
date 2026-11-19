@@ -447,3 +447,95 @@ export async function fetchPPDailyRevenue(start: string, end: string) {
 export async function fetchBlakeDailyRevenue(start: string, end: string) {
   return fetchBCDailyRevenue(BLAKE_STORE_HASH, BLAKE_ACCESS_TOKEN, start, end);
 }
+
+
+// ---------------------------------------------------------------------------
+// Product sales for a date range, from each order's product lines (system of record for Pascal Press).
+// Same order rules as the revenue figures: excluded statuses, BigCommerce's UTC+10 day. Units come from the line
+// quantity (not the number of lines), grouped by product ID so renamed or re-listed names do not split a product.
+// ---------------------------------------------------------------------------
+
+export interface BCProductSales {
+  start: string; end: string;
+  orders: number;                 // valid orders in the window
+  ordersTotalIncTax: number;      // sum of those orders' totals (includes shipping and order-level discounts)
+  lineRevenueIncTax: number;      // sum of product lines (before order-level discounts, no shipping)
+  failedOrders: number;           // orders whose product lines could not be read after retries (must be 0 for a complete answer)
+  products: { id: number; name: string; sku: string; units: number; orders: number; revenueIncTax: number; revenueExTax: number; refundedUnits: number; refundedAmount: number }[];
+}
+
+export async function fetchPPProductSales(start: string, end: string): Promise<BCProductSales> {
+  const storeHash = PP_STORE_HASH, token = PP_ACCESS_TOKEN;
+  const out: BCProductSales = { start, end, orders: 0, ordersTotalIncTax: 0, lineRevenueIncTax: 0, failedOrders: 0, products: [] };
+  if (!storeHash || !token) throw new Error('Pascal Press BigCommerce is not configured');
+  const excluded = new Set(['Cancelled', 'Refunded', 'Incomplete', 'Awaiting Payment', 'Manual Verification Required']);
+  const base = `https://api.bigcommerce.com/stores/${storeHash}/v2`;
+
+  // every month the window touches (the orders list is fetched by calendar month, as the revenue code does), then trimmed to the exact days
+  const orders: BCOrder[] = [];
+  let cur = start.slice(0, 7);
+  const endMonth = end.slice(0, 7);
+  while (cur <= endMonth) {
+    const monthOrders = await fetchAllPages<BCOrder>(storeHash, token, '/orders', {
+      min_date_created: toRFC2822(`${cur}-01`),
+      max_date_created: toRFC2822(lastDayOfMonth(cur), true),
+    });
+    orders.push(...monthOrders);
+    const [y, m] = cur.split('-').map(Number);
+    cur = m! === 12 ? `${y! + 1}-01` : `${y}-${String(m! + 1).padStart(2, '0')}`;
+  }
+  const valid = orders.filter(o => {
+    if (excluded.has(o.status)) return false;
+    const day = orderDateSydney(o.date_created);
+    return day >= start && day <= end;
+  });
+  out.orders = valid.length;
+  out.ordersTotalIncTax = Math.round(valid.reduce((s, o) => s + (parseFloat(o.total_inc_tax || '0') || 0), 0) * 100) / 100;
+
+  type Line = { product_id?: number; name?: string; sku?: string; quantity?: number; total_ex_tax?: string; total_inc_tax?: string; quantity_refunded?: number; refund_amount?: string };
+  const agg = new Map<string, { id: number; name: string; sku: string; units: number; orderIds: Set<number>; inc: number; ex: number; refundedUnits: number; refundedAmount: number; lastSeen: string }>();
+  const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+  async function linesFor(orderId: number): Promise<Line[] | null> {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      try {
+        const res = await fetch(`${base}/orders/${orderId}/products?limit=250`, { headers: bcHeaders(token), cache: 'no-store' });
+        if (res.status === 204) return [];
+        if (res.ok) { const j = await res.json(); return Array.isArray(j) ? j as Line[] : []; }
+        if (res.status === 429) { await sleep(1500 * (attempt + 1)); continue; }
+        if (res.status >= 500) { await sleep(500 * (attempt + 1)); continue; }
+        return null;
+      } catch { await sleep(500 * (attempt + 1)); }
+    }
+    return null;
+  }
+
+  const BATCH = 20;
+  for (let i = 0; i < valid.length; i += BATCH) {
+    const batch = valid.slice(i, i + BATCH);
+    const results = await Promise.all(batch.map(async o => ({ o, lines: await linesFor(o.id) })));
+    for (const { o, lines } of results) {
+      if (lines === null) { out.failedOrders += 1; continue; }
+      for (const l of lines) {
+        const id = Number(l.product_id) || 0;
+        const key = id ? `id:${id}` : `name:${l.name ?? ''}`;
+        const e = agg.get(key) ?? { id, name: l.name ?? '', sku: l.sku ?? '', units: 0, orderIds: new Set<number>(), inc: 0, ex: 0, refundedUnits: 0, refundedAmount: 0, lastSeen: '' };
+        const qty = Number(l.quantity) || 0;
+        e.units += qty; e.orderIds.add(o.id);
+        e.inc += parseFloat(l.total_inc_tax ?? '0') || 0;
+        e.ex += parseFloat(l.total_ex_tax ?? '0') || 0;
+        e.refundedUnits += Number(l.quantity_refunded) || 0;
+        e.refundedAmount += parseFloat(l.refund_amount ?? '0') || 0;
+        if (o.date_created > e.lastSeen || e.lastSeen === '') { e.lastSeen = o.date_created; if (l.name) e.name = l.name; if (l.sku) e.sku = l.sku; }
+        agg.set(key, e);
+      }
+    }
+  }
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  out.products = [...agg.values()].map(e => ({
+    id: e.id, name: e.name, sku: e.sku, units: e.units, orders: e.orderIds.size,
+    revenueIncTax: r2(e.inc), revenueExTax: r2(e.ex), refundedUnits: e.refundedUnits, refundedAmount: r2(e.refundedAmount),
+  })).sort((a, b) => b.revenueIncTax - a.revenueIncTax);
+  out.lineRevenueIncTax = r2(out.products.reduce((s, p) => s + p.revenueIncTax, 0));
+  return out;
+}
