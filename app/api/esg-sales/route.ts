@@ -9,11 +9,47 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchShopifySales, fetchShopifySalesReport, fetchShopifyProductSales, shopifyConfigured } from '@/lib/shopify';
+import { META_ESG_ACCOUNT_ID, fetchEsgMetaCampaigns, fetchEsgMetaSpend } from '@/lib/meta-ads';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const ymd = /^\d{4}-\d{2}-\d{2}$/;
+
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Facebook & Instagram ads for Excel Study Guides: Meta spend per campaign set against the sales Shopify credits to paid Facebook visits. */
+async function buildAds(start: string, end: string, cs: string, ce: string, hasComp: boolean, current: Awaited<ReturnType<typeof fetchShopifySales>>) {
+  if (!META_ESG_ACCOUNT_ID) return { configured: false };
+  let campaigns: Awaited<ReturnType<typeof fetchEsgMetaCampaigns>> = [];
+  let priorSpend: number | null = null, error = '';
+  try { campaigns = await fetchEsgMetaCampaigns(start, end); } catch (e) { error = e instanceof Error ? e.message.slice(0, 300) : 'failed'; }
+  if (hasComp && !error) { try { priorSpend = await fetchEsgMetaSpend(cs, ce); } catch { priorSpend = null; } }
+  const spend = r2(campaigns.reduce((s, c) => s + c.spend, 0));
+  const FB = 'Facebook & Instagram \u2013 paid';
+  const fbPaid = current.bySource.find(s => s.source === FB);
+  const fbRows = (current.byCampaign ?? []).filter(c => c.channel === FB);
+  const rows = campaigns.filter(c => c.spend > 0).map(c => ({ id: c.id, name: c.name, spend: r2(c.spend), clicks: c.clicks, impressions: c.impressions, revenue: 0, orders: 0 }));
+  const unmatched: { campaign: string; orders: number; revenue: number }[] = [];
+  for (const f of fbRows) {
+    const k = norm(f.campaign);
+    const row = k ? rows.find(r => norm(r.id) === k || norm(r.name) === k) : undefined;
+    if (row) { row.revenue = r2(row.revenue + f.revenue); row.orders += f.orders; }
+    else unmatched.push({ campaign: f.campaign, orders: f.orders, revenue: f.revenue });
+  }
+  const matchedRevenue = r2(rows.reduce((s, r) => s + r.revenue, 0));
+  const fbRevenue = fbPaid?.revenue ?? 0;
+  return {
+    configured: true, error: error || null,
+    spend, priorSpend,
+    paidRevenue: fbRevenue, paidOrders: fbPaid?.orders ?? 0,
+    roas: spend > 0 && fbRevenue > 0 ? Math.round((fbRevenue / spend) * 10) / 10 : null,
+    campaigns: rows.sort((a, b) => b.spend - a.spend).map(r => ({ ...r, roas: r.spend > 0 && r.revenue > 0 ? Math.round((r.revenue / r.spend) * 10) / 10 : null })),
+    unmatched: unmatched.slice(0, 10),
+    unattributedRevenue: r2(Math.max(0, fbRevenue - matchedRevenue - unmatched.reduce((s, u) => s + u.revenue, 0))),
+  };
+}
 
 export async function GET(req: NextRequest) {
   const sitePassword = process.env.SITE_PASSWORD;
@@ -42,8 +78,9 @@ export async function GET(req: NextRequest) {
       fetchShopifyProductSales(start, end).catch(noteErr),
       hasComp ? fetchShopifyProductSales(cs, ce).catch(() => null) : Promise.resolve(null),
     ]);
+    const ads = await buildAds(start, end, cs, ce, hasComp, current).catch((e: unknown) => ({ configured: true, error: e instanceof Error ? e.message.slice(0, 200) : 'failed' }));
     return NextResponse.json({
-      configured: true, period: { start, end }, comparison: prior ? { start: cs, end: ce } : null, current, prior, products, priorProducts, productsError: productsError || null,
+      configured: true, ads, period: { start, end }, comparison: prior ? { start: cs, end: ce } : null, current, prior, products, priorProducts, productsError: productsError || null,
       priorSource: prior ? (useReport ? 'report' : 'orders') : null, priorError: priorError || null,
     }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (e) {

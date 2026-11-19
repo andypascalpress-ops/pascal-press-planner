@@ -13,7 +13,7 @@ import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-reven
 import { fetchEmailCampaigns } from '@/lib/hubspot-email';
 import { fetchPPWebsiteConversion, fetchETZWebsiteConversion } from '@/lib/google-analytics';
 import { MONTHLY_GOOGLE_BUDGETS, PP_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_REVENUE_TARGETS, BLAKE_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_MARKETING_BUDGET, ETZ_MONTHLY_MARKETING_BUDGET, PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
-import { fetchMetaSpend, fetchEtzMetaSpend, META_PP_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
+import { fetchMetaSpend, fetchEtzMetaSpend, fetchEsgMetaSpend, META_PP_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
 import { fetchBingSpendTotal } from '@/lib/bing-ads';
 import { fetchBingPaidTraffic } from '@/lib/google-analytics';
 import { fetchShopifySales, shopifyConfigured } from '@/lib/shopify';
@@ -150,7 +150,7 @@ export async function GET(request: Request) {
   const prevStart    = `${prevMonth}-01`;
   const prevEnd      = `${prevMonth}-${String(prevDays).padStart(2, '0')}`;
 
-  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult, ppConvResult, etzConvResult, ppPrevRevResult, ppMetaResult, etzMetaResult, ppBingResult, ppBingGaResult, esgResult] =
+  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult, ppConvResult, etzConvResult, ppPrevRevResult, ppMetaResult, etzMetaResult, ppBingResult, ppBingGaResult, esgResult, esgMetaResult] =
     await Promise.allSettled([
       ppCfg
         ? fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' })
@@ -184,7 +184,11 @@ export async function GET(request: Request) {
       // Excel Study Guides (Shopify). The /api routes sit outside the site password, so this store's sales are only included
       // when the request carries the planner's own login cookie.
       shopifyConfigured() && signedIn ? fetchShopifySales(startDate, endDate) : Promise.resolve(null),
+      // Excel Study Guides Meta spend (own ad account), only read for signed-in requests like the sales above
+      signedIn ? fetchEsgMetaSpend(startDate, endDate) : Promise.resolve(0),
     ]);
+  const esgMetaSpend = esgMetaResult.status === 'fulfilled' ? esgMetaResult.value : 0;
+  if (esgMetaResult.status === 'rejected') console.error('[overview] ESG Meta Ads error:', String(esgMetaResult.reason));
 
   const ppSpend  = ppAdsResult.status  === 'fulfilled'
     ? ppAdsResult.value.reduce( (s, r) => s + r.actualSpend, 0) : 0;
@@ -445,14 +449,16 @@ export async function GET(request: Request) {
     },
     esg: esgResult.status === 'fulfilled' && esgResult.value ? {
       spend:         0,
+      metaSpend:     Math.round(esgMetaSpend * 100) / 100,
+      totalSpend:    Math.round(esgMetaSpend * 100) / 100,
       budget:        0,
       revenue:       esgResult.value.revenue,
-      roas:          0,
+      roas:          esgMetaSpend > 0 ? Math.round((esgResult.value.revenue / esgMetaSpend) * 10) / 10 : 0,
       orders:        esgResult.value.orders,
       aov:           esgResult.value.orders > 0 ? Math.round(esgResult.value.revenue / esgResult.value.orders) : null,
       revConnected:  true,
-      adsConnected:  false,
-      adsError:      null,
+      adsConnected:  esgMetaSpend > 0,
+      adsError:      esgMetaResult.status === 'rejected' ? String(esgMetaResult.reason).slice(0, 200) : null,
       conversion:    null,
     } : null,
     combined: {

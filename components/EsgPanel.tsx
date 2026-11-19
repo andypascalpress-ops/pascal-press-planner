@@ -10,8 +10,13 @@ interface Sales {
   byDiscountCode: { code: string; orders: number; revenue: number }[];
   byCampaign?: { campaign: string; channel: string; orders: number; revenue: number }[];
 }
+interface AdsBlock {
+  configured?: boolean; error?: string | null; spend?: number; priorSpend?: number | null; paidRevenue?: number; paidOrders?: number; roas?: number | null; unattributedRevenue?: number;
+  campaigns?: { id: string; name: string; spend: number; clicks: number; impressions: number; revenue: number; orders: number; roas: number | null }[];
+  unmatched?: { campaign: string; orders: number; revenue: number }[];
+}
 interface Item { title: string; units: number | null; revenue: number }
-interface Resp { configured?: boolean; error?: string; priorSource?: 'orders' | 'report' | null; priorError?: string | null; period?: { start: string; end: string }; comparison?: { start: string; end: string } | null; current?: Sales; prior?: Sales | null; products?: Item[] | null; priorProducts?: Item[] | null; productsError?: string | null }
+interface Resp { ads?: AdsBlock; configured?: boolean; error?: string; priorSource?: 'orders' | 'report' | null; priorError?: string | null; period?: { start: string; end: string }; comparison?: { start: string; end: string } | null; current?: Sales; prior?: Sales | null; products?: Item[] | null; priorProducts?: Item[] | null; productsError?: string | null }
 
 type RangeKey = 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth';
 const RANGES: { key: RangeKey; label: string }[] = [
@@ -235,6 +240,44 @@ export default function EsgPanel({ color }: { color: string }) {
             <Stat label="Discounts given" value={AUD.format(c.discounts)} icon="tag" color={color}
               sub={`${c.discountedOrders} of ${c.orders} orders used a code${c.refunds > 0 ? ` · ${AUD.format(c.refunds)} refunded` : ''}`} />
           </div>
+
+          {data?.ads?.configured && (
+            <Section title="Facebook & Instagram ads" note="Meta spend by campaign against the sales Shopify credits to paid Facebook visits (last click)">
+              {data.ads.error ? <p className="text-sm text-red-600">Could not read the Meta ad account: {data.ads.error}</p> : (
+                <>
+                  <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Ad spend</p><p className="text-xl font-bold tabular-nums text-gray-900">{AUD.format(data.ads.spend ?? 0)}</p>{data.ads.priorSpend != null && <p className="text-xs text-gray-400">Previous: {AUD.format(data.ads.priorSpend)}</p>}</div>
+                    <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Paid Facebook revenue</p><p className="text-xl font-bold tabular-nums text-gray-900">{AUD.format(data.ads.paidRevenue ?? 0)}</p><p className="text-xs text-gray-400">{data.ads.paidOrders ?? 0} orders</p></div>
+                    <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">ROAS</p><p className="text-xl font-bold tabular-nums text-gray-900">{data.ads.roas != null ? `${data.ads.roas}x` : '–'}</p><p className="text-xs text-gray-400">revenue inc GST / spend</p></div>
+                    <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">After ad spend</p><p className="text-xl font-bold tabular-nums text-gray-900">{AUD.format((data.ads.paidRevenue ?? 0) - (data.ads.spend ?? 0))}</p><p className="text-xs text-gray-400">paid revenue less spend</p></div>
+                  </div>
+                  {(data.ads.campaigns ?? []).length === 0 ? <p className="text-sm text-gray-400">No Meta spend in this period.</p> : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm tabular-nums">
+                        <thead><tr className="text-left text-[11px] text-gray-400"><th className="py-1 font-medium">Campaign</th><th className="py-1 text-right font-medium">Spend</th><th className="py-1 text-right font-medium">Clicks</th><th className="py-1 text-right font-medium">Orders</th><th className="py-1 text-right font-medium">Revenue</th><th className="py-1 text-right font-medium">ROAS</th></tr></thead>
+                        <tbody>{(data.ads.campaigns ?? []).map(r => (
+                          <tr key={r.id} className="border-t border-gray-50">
+                            <td className="py-1.5 pr-3 text-gray-800">{r.name}</td>
+                            <td className="py-1.5 text-right text-gray-600">{AUD.format(r.spend)}</td>
+                            <td className="py-1.5 text-right text-gray-500">{r.clicks.toLocaleString()}</td>
+                            <td className="py-1.5 text-right text-gray-600">{r.orders}</td>
+                            <td className="py-1.5 text-right font-medium text-gray-900">{AUD.format(r.revenue)}</td>
+                            <td className="py-1.5 text-right text-gray-700">{r.roas != null ? `${r.roas}x` : '–'}</td>
+                          </tr>
+                        ))}</tbody>
+                      </table>
+                    </div>
+                  )}
+                  {((data.ads.unmatched ?? []).length > 0 || (data.ads.unattributedRevenue ?? 0) > 0) && (
+                    <p className="mt-3 text-[11px] text-gray-400">
+                      {(data.ads.unmatched ?? []).length > 0 && <>Paid Facebook sales under campaign tags that match no Meta campaign: {(data.ads.unmatched ?? []).map(u => `${u.campaign} (${AUD.format(u.revenue)})`).join(', ')}. </>}
+                      {(data.ads.unattributedRevenue ?? 0) > 0 && <>Paid Facebook revenue with no campaign tag: {AUD.format(data.ads.unattributedRevenue ?? 0)}.</>}
+                    </p>
+                  )}
+                </>
+              )}
+            </Section>
+          )}
 
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
             <Section title="Where sales came from" note="Paid, organic and direct, from the visit that led to each order">

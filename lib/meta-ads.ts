@@ -32,6 +32,24 @@ export const META_ETZ_ACCOUNT_ID = process.env.META_ETZ_AD_ACCOUNT_ID ?? '';
 const OWN_RAW = (process.env.META_ETZ_OWN_AD_ACCOUNT_ID ?? '').trim();
 export const META_ETZ_OWN_ACCOUNT_ID = OWN_RAW ? (OWN_RAW.startsWith('act_') ? OWN_RAW : `act_${OWN_RAW}`) : '';
 
+/**
+ * Excel Study Guides' own ad account (shared with this business as a partner, view performance only).
+ *   META_ESG_AD_ACCOUNT_ID  - optional override, the number or "act_" + number. The account ID is an identifier, not a secret,
+ *                             so it is also the default here; the same system-user token as the other brands reads it.
+ */
+const ESG_RAW = (process.env.META_ESG_AD_ACCOUNT_ID ?? '1589613922024148').trim();
+export const META_ESG_ACCOUNT_ID = ESG_RAW ? (ESG_RAW.startsWith('act_') ? ESG_RAW : `act_${ESG_RAW}`) : '';
+
+/** Excel Study Guides Meta spend for a range (everything in its own account is ESG, so no campaign filter). */
+export async function fetchEsgMetaSpend(startDate: string, endDate: string): Promise<number> {
+  return META_ESG_ACCOUNT_ID ? fetchMetaSpend(META_ESG_ACCOUNT_ID, startDate, endDate) : 0;
+}
+
+/** Excel Study Guides campaigns for a range. */
+export async function fetchEsgMetaCampaigns(startDate: string, endDate: string): Promise<MetaCampaign[]> {
+  return META_ESG_ACCOUNT_ID ? fetchMetaCampaigns(META_ESG_ACCOUNT_ID, startDate, endDate) : [];
+}
+
 /** The shared account's ETZ campaigns are only read when it is a different account from the new ETZ one. */
 const readLegacyEtz = () => META_ETZ_ACCOUNT_ID !== '' && META_ETZ_ACCOUNT_ID !== META_ETZ_OWN_ACCOUNT_ID;
 

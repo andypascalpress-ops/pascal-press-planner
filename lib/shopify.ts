@@ -191,7 +191,7 @@ export async function fetchShopifySales(start: string, end: string): Promise<Sho
   const r2 = (n: number) => Math.round(n * 100) / 100;
   out.revenue = r2(out.revenue); out.refunds = r2(out.refunds); out.discounts = r2(out.discounts);
   for (const d of Object.values(out.byDay)) d.revenue = r2(d.revenue);
-  out.byCampaign = [...camps.entries()].map(([k, v]) => ({ campaign: k.split('||')[1]!, channel: v.channel, orders: v.orders, revenue: r2(v.revenue) })).sort((a, b) => b.revenue - a.revenue).slice(0, 15);
+  out.byCampaign = [...camps.entries()].map(([k, v]) => ({ campaign: k.split('||')[1]!, channel: v.channel, orders: v.orders, revenue: r2(v.revenue) })).sort((a, b) => b.revenue - a.revenue).slice(0, 40);
   out.bySource = [...src.entries()].map(([source, v]) => ({ source, orders: v.orders, revenue: r2(v.revenue) })).sort((a, b) => b.revenue - a.revenue).slice(0, 12);
   out.byDiscountCode = [...codes.entries()].map(([code, v]) => ({ code, orders: v.orders, revenue: r2(v.revenue) })).sort((a, b) => b.revenue - a.revenue).slice(0, 12);
   return out;
