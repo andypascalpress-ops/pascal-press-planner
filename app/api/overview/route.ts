@@ -458,7 +458,8 @@ export async function GET(request: Request) {
       aov:           esgResult.value.orders > 0 ? Math.round(esgResult.value.revenue / esgResult.value.orders) : null,
       revConnected:  true,
       adsConnected:  esgMetaSpend > 0,
-      adsError:      esgMetaResult.status === 'rejected' ? String(esgMetaResult.reason).slice(0, 200) : null,
+      adsError:      null,
+      metaError:     esgMetaResult.status === 'rejected' ? String(esgMetaResult.reason).replace(/^Error:\s*/, '').slice(0, 240) : null,
       conversion:    null,
     } : null,
     combined: {

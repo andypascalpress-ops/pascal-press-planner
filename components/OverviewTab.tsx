@@ -19,6 +19,7 @@ interface ConversionSnapshot {
 interface BrandData {
   spend:               number;   // Google Ads only
   metaSpend?:          number;   // Meta / Facebook Ads
+  metaError?:          string | null;   // set when the Meta ad account could not be read
   chatgptSpend?:       number;   // ChatGPT Ads (manual)
   bingSpend?:          number;   // Bing Ads (Microsoft Advertising), Pascal Press only
   bingRevenue?:        number;   // revenue Google Analytics credits to Bing traffic (includes organic Bing)
@@ -792,6 +793,14 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers, lin
           <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wide shrink-0">HubSpot</span>
           <span className="text-[11px] font-semibold text-emerald-600">+{subscribers.toLocaleString()}</span>
           <span className="text-[11px] text-gray-400">new subscribers</span>
+        </div>
+      )}
+
+      {/* Meta ad account could not be read */}
+      {data.metaError && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+          <p className="text-xs font-semibold text-amber-700">Meta ads not connected</p>
+          <p className="text-xs text-amber-600 mt-0.5 leading-relaxed">{data.metaError}</p>
         </div>
       )}
 
