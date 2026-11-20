@@ -385,6 +385,8 @@ export async function GET(request: Request) {
       started: cur.trials, prevStarted: prev ? prev.trials : null, startedChangePct: pct(cur.trials, prev?.trials),
       families: fam, prevFamilies: famPrev, familiesChangePct: fam != null && famPrev != null ? pct(fam, famPrev) : null,
       prevRange: { start: shiftYear(startDate), end: shiftYear(endDate) },
+      // share of trial rows that carry a customer id (families are only shown at 100%)
+      idCoverage: { current: cur.trialRows > 0 ? Math.round((cur.rowsWithUserId / cur.trialRows) * 1000) / 1000 : null, prev: prev && prev.trialRows > 0 ? Math.round((prev.rowsWithUserId / prev.trialRows) * 1000) / 1000 : null },
     };
   }
 
