@@ -15,6 +15,8 @@ import { fetchPPWebsiteConversion, fetchETZWebsiteConversion } from '@/lib/googl
 import { MONTHLY_GOOGLE_BUDGETS, PP_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_REVENUE_TARGETS, BLAKE_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_MARKETING_BUDGET, ETZ_MONTHLY_MARKETING_BUDGET, PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
 import { fetchMetaSpend, fetchEtzMetaSpend, fetchEsgMetaSpend, META_PP_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
 import { fetchBingSpendTotal } from '@/lib/bing-ads';
+import { fetchUmsTrialPacks } from '@/lib/ums-transactions';
+import { umsConfigured } from '@/lib/ums-trials';
 import { fetchBingPaidTraffic } from '@/lib/google-analytics';
 import { fetchShopifySales, shopifyConfigured } from '@/lib/shopify';
 import { OverviewAlert } from '@/lib/types';
@@ -121,6 +123,8 @@ function isSignedIn(request: Request): boolean {
   return !!m && decodeURIComponent(m[1] ?? '') === pw;
 }
 
+const shiftYear = (ymd: string) => `${parseInt(ymd.slice(0, 4), 10) - 1}${ymd.slice(4)}`;
+
 export async function GET(request: Request) {
   const signedIn = isSignedIn(request);
   const { searchParams } = new URL(request.url);
@@ -150,7 +154,7 @@ export async function GET(request: Request) {
   const prevStart    = `${prevMonth}-01`;
   const prevEnd      = `${prevMonth}-${String(prevDays).padStart(2, '0')}`;
 
-  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult, ppConvResult, etzConvResult, ppPrevRevResult, ppMetaResult, etzMetaResult, ppBingResult, ppBingGaResult, esgResult, esgMetaResult] =
+  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult, ppConvResult, etzConvResult, ppPrevRevResult, ppMetaResult, etzMetaResult, ppBingResult, ppBingGaResult, esgResult, esgMetaResult, etzTrialsCurResult, etzTrialsPrevResult] =
     await Promise.allSettled([
       ppCfg
         ? fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' })
@@ -186,6 +190,9 @@ export async function GET(request: Request) {
       shopifyConfigured() && signedIn ? fetchShopifySales(startDate, endDate) : Promise.resolve(null),
       // Excel Study Guides Meta spend (own ad account), only read for signed-in requests like the sales above
       signedIn ? fetchEsgMetaSpend(startDate, endDate) : Promise.resolve(0),
+      // Excel Test Zone free trials (UMS transaction report): this range and the same dates a year earlier
+      umsConfigured() ? fetchUmsTrialPacks(startDate, endDate) : Promise.resolve(null),
+      umsConfigured() ? fetchUmsTrialPacks(shiftYear(startDate), shiftYear(endDate)) : Promise.resolve(null),
     ]);
   const esgMetaSpend = esgMetaResult.status === 'fulfilled' ? esgMetaResult.value : 0;
   if (esgMetaResult.status === 'rejected') console.error('[overview] ESG Meta Ads error:', String(esgMetaResult.reason));
@@ -364,6 +371,23 @@ export async function GET(request: Request) {
     console.error('[overview] Blake BigCommerce error:', String(blakeRevResult.reason));
   }
 
+  // Excel Test Zone trials: packs started (one per pack) and families (distinct anonymous customer ids) for this range and the same dates a year earlier.
+  // Families are only given when every trial row carries a customer id, otherwise the figure would undercount.
+  function buildEtzTrials() {
+    const cur = etzTrialsCurResult.status === 'fulfilled' ? etzTrialsCurResult.value : null;
+    const prev = etzTrialsPrevResult.status === 'fulfilled' ? etzTrialsPrevResult.value : null;
+    if (!cur) return null;
+    const complete = (t: typeof cur | null) => !!t && t.trialRows > 0 && t.rowsWithUserId === t.trialRows;
+    const pct = (a: number, b: number | null | undefined) => (b && b > 0 ? Math.round(((a - b) / b) * 1000) / 10 : null);
+    const fam = complete(cur) ? cur.families : null;
+    const famPrev = complete(prev) ? prev!.families : null;
+    return {
+      started: cur.trials, prevStarted: prev ? prev.trials : null, startedChangePct: pct(cur.trials, prev?.trials),
+      families: fam, prevFamilies: famPrev, familiesChangePct: fam != null && famPrev != null ? pct(fam, famPrev) : null,
+      prevRange: { start: shiftYear(startDate), end: shiftYear(endDate) },
+    };
+  }
+
   return NextResponse.json({
     month,
     daysInMonth,
@@ -412,6 +436,7 @@ export async function GET(request: Request) {
       revConnected:  etzRev?.connected   ?? false,
       adsConnected:  etzAdsResult.status === 'fulfilled',
       adsError:      etzAdsError,
+      trials:       buildEtzTrials(),
       conversion:   etzConv?.connected ? {
         rate:      etzConv.current?.conversionRate ?? null,
         deltaPp:   etzConv.deltaPp,

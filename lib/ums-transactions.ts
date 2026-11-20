@@ -97,17 +97,21 @@ async function fetchTransactionsChunk(token: string, chunk: { start: string; end
  * item), the same way the UMS transactions export lists them. Checked against the export for 1-3 Nov 2026: identical
  * per day. The report has no customer id, so families cannot be counted from it.
  */
-export async function fetchUmsTrialPacks(start: string, end: string): Promise<{ trials: number; byProduct: { name: string; trials: number }[] }> {
+export async function fetchUmsTrialPacks(start: string, end: string): Promise<{ trials: number; byProduct: { name: string; trials: number }[]; families: number; rowsWithUserId: number; trialRows: number }> {
   const token = (process.env.UMS_API_TOKEN ?? '').trim();
   if (!token) throw new Error('UMS_API_TOKEN is not set');
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const byProduct = new Map<string, number>();
-  let trials = 0;
+  let trials = 0, trialRows = 0, rowsWithUserId = 0;
+  const familyIds = new Set<string>();   // anonymous customer ids (user_id): counted, never returned
   for (const chunk of monthChunks(start, end)) {
     const finished = chunk.end < today.slice(0, 8) + '01';
     const { rows } = findRows(await fetchTransactionsChunk(token, chunk, { next: { revalidate: finished ? 86_400 : 900 } }));
     for (const r of rows) {
       if (String(r.payment_method ?? '').toUpperCase() !== 'FREE_TRIAL') continue;
+      trialRows += 1;
+      const uid = r.user_id == null ? '' : String(r.user_id).trim();
+      if (uid) { rowsWithUserId += 1; familyIds.add(uid); }
       const items = Array.isArray(r.items) ? (r.items as Record<string, unknown>[]) : [];
       if (items.length === 0) { trials += 1; continue; }
       for (const it of items) {
@@ -118,7 +122,7 @@ export async function fetchUmsTrialPacks(start: string, end: string): Promise<{ 
       }
     }
   }
-  return { trials, byProduct: [...byProduct.entries()].map(([name, n]) => ({ name, trials: n })).sort((x, y) => y.trials - x.trials) };
+  return { trials, families: familyIds.size, rowsWithUserId, trialRows, byProduct: [...byProduct.entries()].map(([name, n]) => ({ name, trials: n })).sort((x, y) => y.trials - x.trials) };
 }
 
 /** Free trials started per Sydney day (one per pack), for a line chart. Days with no trials are 0. */

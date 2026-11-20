@@ -37,6 +37,13 @@ interface BrandData {
   adsConnected:        boolean;
   adsError?:           string | null;
   conversion?:         ConversionSnapshot | null;
+  trials?:             TrialsBlock | null;   // Excel Test Zone free trials
+}
+
+interface TrialsBlock {
+  started: number; prevStarted: number | null; startedChangePct: number | null;
+  families: number | null; prevFamilies: number | null; familiesChangePct: number | null;
+  prevRange: { start: string; end: string };
 }
 
 interface OverviewData {
@@ -747,6 +754,32 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers, lin
           <div className="flex justify-between text-xs border-t border-gray-200 pt-1.5 mt-1">
             <span className="font-semibold text-gray-700">Total spend</span>
             <span className="font-bold text-gray-900">{AUD.format(data.totalSpend ?? data.spend)}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Free trials (Excel Test Zone): packs and families, with the same dates last year */}
+      {data.trials && (
+        <div className="rounded-lg border border-emerald-100 bg-emerald-50/50 px-3 py-2.5">
+          <p className="text-xs text-emerald-700 font-medium mb-1.5">Free trials · vs same dates last year</p>
+          <div className="grid grid-cols-2 gap-3">
+            {([
+              { label: 'Trials started', note: 'one per pack', v: data.trials.started, p: data.trials.prevStarted, d: data.trials.startedChangePct },
+              { label: 'Families trialling', note: 'distinct customers', v: data.trials.families, p: data.trials.prevFamilies, d: data.trials.familiesChangePct },
+            ]).map(t => (
+              <div key={t.label}>
+                <p className="text-[11px] text-gray-500">{t.label}</p>
+                <div className="flex flex-wrap items-baseline gap-1.5">
+                  <span className="text-lg font-bold text-gray-900">{t.v != null ? t.v.toLocaleString() : '–'}</span>
+                  {t.d != null && (
+                    <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-full ${t.d >= 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                      {t.d >= 0 ? '↑ +' : '↓ '}{t.d}%
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-gray-400">{t.p != null ? `Last year: ${t.p.toLocaleString()}` : t.v == null ? 'not available' : t.note}</p>
+              </div>
+            ))}
           </div>
         </div>
       )}
