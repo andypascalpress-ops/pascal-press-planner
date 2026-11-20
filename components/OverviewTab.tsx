@@ -765,7 +765,7 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers, lin
           <div className="grid grid-cols-2 gap-3">
             {([
               { label: 'Trials started', note: 'one per pack', v: data.trials.started, p: data.trials.prevStarted, d: data.trials.startedChangePct },
-              { label: 'Families trialling', note: 'distinct customers', v: data.trials.families, p: data.trials.prevFamilies, d: data.trials.familiesChangePct },
+              { label: 'Families trialling', note: 'parent accounts', v: data.trials.families, p: data.trials.prevFamilies, d: data.trials.familiesChangePct },
             ]).map(t => (
               <div key={t.label}>
                 <p className="text-[11px] text-gray-500">{t.label}</p>
