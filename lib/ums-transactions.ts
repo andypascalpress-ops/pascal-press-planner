@@ -82,7 +82,8 @@ async function fetchTransactionsChunk(token: string, chunk: { start: string; end
   let res: Response | null = null;
   for (const path of ['reporting/transactions', 'reporting/transaction']) {
     res = await fetch(`${origin()}/${path}?start_date=${chunk.start}&end_date=${chunk.end}`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      // X-Planner-Cache is ignored by the API; changing it starts a fresh cache entry (v2: rows now carry user_id)
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-Planner-Cache': 'v2' },
       ...cacheInit,
       signal: AbortSignal.timeout(50_000),
     });
