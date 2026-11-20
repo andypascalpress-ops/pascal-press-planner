@@ -44,6 +44,7 @@ interface TrialsBlock {
   started: number; prevStarted: number | null; startedChangePct: number | null;
   families: number | null; prevFamilies: number | null; familiesChangePct: number | null;
   prevRange: { start: string; end: string };
+  window?: { start: string; end: string };   // the complete days the figures cover
 }
 
 interface OverviewData {
@@ -761,7 +762,9 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers, lin
       {/* Free trials (Excel Test Zone): packs and families, with the same dates last year */}
       {data.trials && (
         <div className="rounded-lg border border-emerald-100 bg-emerald-50/50 px-3 py-2.5">
-          <p className="text-xs text-emerald-700 font-medium mb-1.5">Free trials · vs same dates last year</p>
+          <p className="text-xs text-emerald-700 font-medium mb-1.5">
+            Free trials · {data.trials.window ? (() => { const f = (ymd: string) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'UTC' }); const w = data.trials!.window!; return w.start === w.end ? `${f(w.start)} (complete day)` : `${f(w.start)} – ${f(w.end)} (complete days)`; })() : ''} · vs same dates last year
+          </p>
           <div className="grid grid-cols-2 gap-3">
             {([
               { label: 'Trials started', note: 'one per pack', v: data.trials.started, p: data.trials.prevStarted, d: data.trials.startedChangePct },

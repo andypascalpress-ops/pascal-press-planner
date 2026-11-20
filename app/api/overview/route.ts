@@ -131,6 +131,13 @@ export async function GET(request: Request) {
   const rangeParam = (searchParams.get('range') ?? 'mtd') as RangeParam;
   const { startDate, endDate, month, daysInMonth, currentDay, rangeLabel, isMonthly } = deriveRange(rangeParam);
 
+  // Trials are compared on complete days only: a day still in progress is left out of both years, so a half-finished
+  // today is never set against a full day last year. (A range that is only today falls back to yesterday.)
+  const todayYmd = toYMD(new Date());
+  const yesterdayYmd = (() => { const d = new Date(`${todayYmd}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); })();
+  const trialEnd = endDate >= todayYmd ? yesterdayYmd : endDate;
+  const trialStart = startDate > trialEnd ? trialEnd : startDate;
+
   let ppCfg, etzCfg, hscCfg;
   try { ppCfg  = buildConfig('pp');  } catch (e) { console.error('[overview] buildConfig(pp) failed:', e);  }
   try { etzCfg = buildConfig('etz'); } catch (e) { console.error('[overview] buildConfig(etz) failed:', e); }
@@ -191,8 +198,8 @@ export async function GET(request: Request) {
       // Excel Study Guides Meta spend (own ad account), only read for signed-in requests like the sales above
       signedIn ? fetchEsgMetaSpend(startDate, endDate) : Promise.resolve(0),
       // Excel Test Zone free trials (UMS transaction report): this range and the same dates a year earlier
-      umsConfigured() ? fetchUmsTrialPacks(startDate, endDate) : Promise.resolve(null),
-      umsConfigured() ? fetchUmsTrialPacks(shiftYear(startDate), shiftYear(endDate)) : Promise.resolve(null),
+      umsConfigured() ? fetchUmsTrialPacks(trialStart, trialEnd) : Promise.resolve(null),
+      umsConfigured() ? fetchUmsTrialPacks(shiftYear(trialStart), shiftYear(trialEnd)) : Promise.resolve(null),
     ]);
   const esgMetaSpend = esgMetaResult.status === 'fulfilled' ? esgMetaResult.value : 0;
   if (esgMetaResult.status === 'rejected') console.error('[overview] ESG Meta Ads error:', String(esgMetaResult.reason));
@@ -384,7 +391,8 @@ export async function GET(request: Request) {
     return {
       started: cur.trials, prevStarted: prev ? prev.trials : null, startedChangePct: pct(cur.trials, prev?.trials),
       families: fam, prevFamilies: famPrev, familiesChangePct: fam != null && famPrev != null ? pct(fam, famPrev) : null,
-      prevRange: { start: shiftYear(startDate), end: shiftYear(endDate) },
+      window: { start: trialStart, end: trialEnd },
+      prevRange: { start: shiftYear(trialStart), end: shiftYear(trialEnd) },
       // share of trial rows that carry a customer id (families are only shown at 100%)
       idCoverage: { current: cur.trialRows > 0 ? Math.round((cur.rowsWithUserId / cur.trialRows) * 1000) / 1000 : null, prev: prev && prev.trialRows > 0 ? Math.round((prev.rowsWithUserId / prev.trialRows) * 1000) / 1000 : null },
     };
