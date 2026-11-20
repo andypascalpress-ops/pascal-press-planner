@@ -61,16 +61,17 @@ function Delta({ cur, prev }: { cur: number; prev: number | null | undefined }) 
   );
 }
 
-function Icon({ name }: { name: 'orders' | 'basket' | 'tag' }) {
+function Icon({ name }: { name: 'orders' | 'basket' | 'tag' | 'net' }) {
   const paths = {
     orders: 'M3 6h18M3 12h18M3 18h12',
     basket: 'M5 9h14l-1.2 9.1a2 2 0 0 1-2 1.9H8.2a2 2 0 0 1-2-1.9L5 9Zm4-4 3-3 3 3',
     tag: 'M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9-9-9Zm5-5.5h.01',
+    net: 'M12 2v20M17 7H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6',
   } as const;
   return <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name]} /></svg>;
 }
 
-function Stat({ label, value, sub, icon, color, delta }: { label: string; value: string; sub?: string; icon: 'orders' | 'basket' | 'tag'; color: string; delta?: React.ReactNode }) {
+function Stat({ label, value, sub, icon, color, delta }: { label: string; value: string; sub?: string; icon: 'orders' | 'basket' | 'tag' | 'net'; color: string; delta?: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
       <div className="flex items-center gap-2">
@@ -164,6 +165,11 @@ export default function EsgPanel({ color }: { color: string }) {
   const prevItems = new Map((data?.priorProducts ?? []).map(x => [x.title, x]));
   const showUnits = items.some(i => i.units != null);
   const gradId = 'esgFill';
+  // revenue after ad spend: all Shopify revenue less Meta spend (Google Ads for this store is not connected yet)
+  const adSpend = data?.ads?.configured && !data.ads.error ? (data.ads.spend ?? 0) : 0;
+  const showNet = Boolean(c && data?.ads?.configured && !data.ads.error && adSpend > 0);
+  const netNow = (c?.revenue ?? 0) - adSpend;
+  const netPrev = p && data?.ads?.priorSpend != null ? p.revenue - data.ads.priorSpend : null;
 
   return (
     <div className="space-y-5">
@@ -234,11 +240,16 @@ export default function EsgPanel({ color }: { color: string }) {
           {yoy && !p && <p className="text-xs text-amber-700">Last year&rsquo;s figures could not be loaded{data?.priorError ? `: ${data.priorError}` : '.'}</p>}
           {p && data?.priorSource === 'report' && <p className="text-xs text-gray-400">Last year&rsquo;s revenue, orders and discounts come from Shopify&rsquo;s sales report (no source or discount-code detail for last year).</p>}
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${showNet ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
             <Stat label="Orders" value={String(c.orders)} icon="orders" color={color} delta={<Delta cur={c.orders} prev={p?.orders} />} sub={p ? `Previous: ${p.orders}` : undefined} />
             <Stat label="Average order" value={AUD.format(aov)} icon="basket" color={color} delta={<Delta cur={aov} prev={aovPrev} />} sub={aovPrev != null ? `Previous: ${AUD.format(aovPrev)}` : undefined} />
             <Stat label="Discounts given" value={AUD.format(c.discounts)} icon="tag" color={color}
               sub={`${c.discountedOrders} of ${c.orders} orders used a code${c.refunds > 0 ? ` · ${AUD.format(c.refunds)} refunded` : ''}`} />
+            {showNet && (
+              <Stat label="Revenue after ad spend" value={AUD.format(netNow)} icon="net" color={color}
+                delta={<Delta cur={netNow} prev={netPrev} />}
+                sub={`${AUD.format(c.revenue)} revenue less ${AUD.format(adSpend)} Facebook & Instagram spend${netPrev != null ? ` · Previous: ${AUD.format(netPrev)}` : ''}`} />
+            )}
           </div>
 
           {data?.ads?.configured && (
