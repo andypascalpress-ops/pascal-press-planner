@@ -14,6 +14,8 @@ import { zonedDateTimeToUnix } from '@/lib/stripe-revenue';
 export interface CouponRow {
   code: string;
   orders: number;
+  /** Different customers behind those orders (Excel Test Zone: distinct Stripe customer ids; null when not counted). */
+  people: number | null;
   /** Revenue from the orders that used this code (after the discount). */
   revenue: number;
   /** Dollars of discount given by this code (Blake only; null for Excel Test Zone). */
@@ -51,13 +53,14 @@ export async function fetchEtzCouponUsage(start: string, end: string): Promise<C
   const lte = zonedDateTimeToUnix(end, '23:59:59');
 
   const map = new Map<string, CouponRow>();
+  const customersByCode = new Map<string, Set<string>>();   // customer ids are only counted, never returned
   let totalOrders = 0, totalRevenue = 0, couponOrders = 0, couponRevenue = 0;
   let startingAfter: string | undefined;
 
   for (let page = 0; page < 60; page++) {
     const params = new URLSearchParams({ limit: '100', 'created[gte]': String(gte), 'created[lte]': String(lte) });
     if (startingAfter) params.set('starting_after', startingAfter);
-    let json: { data: { id: string; amount: number; amount_refunded: number; paid: boolean; status: string; metadata?: Record<string, string> }[]; has_more: boolean } | null = null;
+    let json: { data: { id: string; customer?: string | null; amount: number; amount_refunded: number; paid: boolean; status: string; metadata?: Record<string, string> }[]; has_more: boolean } | null = null;
     for (let attempt = 0; attempt < 5; attempt++) {
       const res = await fetch(`https://api.stripe.com/v1/charges?${params}`, { headers: { Authorization: `Bearer ${key}` }, cache: 'no-store' });
       if (res.ok) { json = await res.json(); break; }
@@ -73,13 +76,17 @@ export async function fetchEtzCouponUsage(start: string, end: string): Promise<C
       const code = (c.metadata?.coupon_code ?? '').trim().toUpperCase();
       if (!code) continue;
       couponOrders += 1; couponRevenue += net;
-      const row = map.get(code) ?? { code, orders: 0, revenue: 0, discount: null };
+      const row = map.get(code) ?? { code, orders: 0, people: 0, revenue: 0, discount: null };
       row.orders += 1; row.revenue += net;
       map.set(code, row);
+      const who = customersByCode.get(code) ?? new Set<string>();
+      who.add(c.customer ? String(c.customer) : `charge:${c.id}`);   // a payment with no customer counts as its own person
+      customersByCode.set(code, who);
     }
     if (!json.has_more || json.data.length === 0) break;
     startingAfter = json.data[json.data.length - 1]!.id;
   }
+  for (const [code, who] of customersByCode) { const r = map.get(code); if (r) r.people = who.size; }
   return finish('etz', start, end, map, totalOrders, totalRevenue, couponOrders, couponRevenue,
     'Codes come from the coupon recorded on each Stripe payment. Revenue is after the discount and net of refunds.');
 }
@@ -146,7 +153,7 @@ export async function fetchBlakeCouponUsage(start: string, end: string): Promise
       for (const c of coupons) {
         const code = (c.code ?? '').trim().toUpperCase();
         if (!code) continue;
-        const row = map.get(code) ?? { code, orders: 0, revenue: 0, discount: 0 };
+        const row = map.get(code) ?? { code, orders: 0, people: null, revenue: 0, discount: 0 };
         row.orders += 1; row.revenue += revenue; row.discount = (row.discount ?? 0) + (parseFloat(String(c.discount ?? '0')) || 0);
         map.set(code, row);
       }
