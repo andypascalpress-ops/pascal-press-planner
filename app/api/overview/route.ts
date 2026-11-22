@@ -13,12 +13,11 @@ import { fetchETZStripeRevenue, fetchHSCStripeRevenue } from '@/lib/stripe-reven
 import { fetchEmailCampaigns } from '@/lib/hubspot-email';
 import { fetchPPWebsiteConversion, fetchETZWebsiteConversion } from '@/lib/google-analytics';
 import { MONTHLY_GOOGLE_BUDGETS, PP_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_REVENUE_TARGETS, BLAKE_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_REVENUE_TARGETS, HSC_MONTHLY_MARKETING_BUDGET, ETZ_MONTHLY_MARKETING_BUDGET, PP_CHATGPT_SPEND, ETZ_CHATGPT_SPEND } from '@/lib/constants';
-import { fetchMetaSpend, fetchEtzMetaSpend, fetchEsgMetaSpend, META_PP_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
+import { fetchMetaSpend, fetchEtzMetaSpend, META_PP_ACCOUNT_ID, type MetaCampaignFilter } from '@/lib/meta-ads';
 import { fetchBingSpendTotal } from '@/lib/bing-ads';
 import { fetchUmsTrialPacks } from '@/lib/ums-transactions';
 import { umsConfigured } from '@/lib/ums-trials';
 import { fetchBingPaidTraffic } from '@/lib/google-analytics';
-import { fetchShopifySales, shopifyConfigured } from '@/lib/shopify';
 import { OverviewAlert } from '@/lib/types';
 
 // Previous-month PP revenue never changes once the month closes — cache it for 24 h.
@@ -116,17 +115,9 @@ function deriveRange(range: RangeParam): {
 // Bing reports can take a while on a cold start; allow the page up to a minute (same as the Business Units route)
 export const maxDuration = 60;
 
-function isSignedIn(request: Request): boolean {
-  const pw = process.env.SITE_PASSWORD;
-  if (!pw) return true;                                           // no site password configured: same as the rest of the site
-  const m = /(?:^|;\s*)pp_auth=([^;]*)/.exec(request.headers.get('cookie') ?? '');
-  return !!m && decodeURIComponent(m[1] ?? '') === pw;
-}
-
 const shiftYear = (ymd: string) => `${parseInt(ymd.slice(0, 4), 10) - 1}${ymd.slice(4)}`;
 
 export async function GET(request: Request) {
-  const signedIn = isSignedIn(request);
   const { searchParams } = new URL(request.url);
   const rangeParam = (searchParams.get('range') ?? 'mtd') as RangeParam;
   const { startDate, endDate, month, daysInMonth, currentDay, rangeLabel, isMonthly } = deriveRange(rangeParam);
@@ -161,7 +152,7 @@ export async function GET(request: Request) {
   const prevStart    = `${prevMonth}-01`;
   const prevEnd      = `${prevMonth}-${String(prevDays).padStart(2, '0')}`;
 
-  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult, ppConvResult, etzConvResult, ppPrevRevResult, ppMetaResult, etzMetaResult, ppBingResult, ppBingGaResult, esgResult, esgMetaResult, etzTrialsCurResult, etzTrialsPrevResult] =
+  const [ppAdsResult, etzAdsResult, hscAdsResult, ppRevResult, etzRevResult, hscRevResult, blakeRevResult, emailResult, ppConvResult, etzConvResult, ppPrevRevResult, ppMetaResult, etzMetaResult, ppBingResult, ppBingGaResult, etzTrialsCurResult, etzTrialsPrevResult] =
     await Promise.allSettled([
       ppCfg
         ? fetchMonthlySpend(ppCfg, startDate, endDate, { excludes: 'ETZ' })
@@ -192,17 +183,10 @@ export async function GET(request: Request) {
       // Pascal Press Bing Ads spend (Microsoft Advertising) and the revenue Google Analytics credits to Bing traffic
       fetchBingSpendTotal(startDate, endDate),
       fetchBingPaidTraffic(startDate, endDate),
-      // Excel Study Guides (Shopify). The /api routes sit outside the site password, so this store's sales are only included
-      // when the request carries the planner's own login cookie.
-      shopifyConfigured() && signedIn ? fetchShopifySales(startDate, endDate) : Promise.resolve(null),
-      // Excel Study Guides Meta spend (own ad account), only read for signed-in requests like the sales above
-      signedIn ? fetchEsgMetaSpend(startDate, endDate) : Promise.resolve(0),
       // Excel Test Zone free trials (UMS transaction report): this range and the same dates a year earlier
       umsConfigured() ? fetchUmsTrialPacks(trialStart, trialEnd) : Promise.resolve(null),
       umsConfigured() ? fetchUmsTrialPacks(shiftYear(trialStart), shiftYear(trialEnd)) : Promise.resolve(null),
     ]);
-  const esgMetaSpend = esgMetaResult.status === 'fulfilled' ? esgMetaResult.value : 0;
-  if (esgMetaResult.status === 'rejected') console.error('[overview] ESG Meta Ads error:', String(esgMetaResult.reason));
 
   const ppSpend  = ppAdsResult.status  === 'fulfilled'
     ? ppAdsResult.value.reduce( (s, r) => s + r.actualSpend, 0) : 0;
@@ -400,6 +384,8 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     month,
+    startDate,
+    endDate,
     daysInMonth,
     currentDay,
     rangeLabel,
@@ -482,21 +468,6 @@ export async function GET(request: Request) {
       adsError:      null,
       conversion:    null,
     },
-    esg: esgResult.status === 'fulfilled' && esgResult.value ? {
-      spend:         0,
-      metaSpend:     Math.round(esgMetaSpend * 100) / 100,
-      totalSpend:    Math.round(esgMetaSpend * 100) / 100,
-      budget:        0,
-      revenue:       esgResult.value.revenue,
-      roas:          esgMetaSpend > 0 ? Math.round((esgResult.value.revenue / esgMetaSpend) * 10) / 10 : 0,
-      orders:        esgResult.value.orders,
-      aov:           esgResult.value.orders > 0 ? Math.round(esgResult.value.revenue / esgResult.value.orders) : null,
-      revConnected:  true,
-      adsConnected:  esgMetaSpend > 0,
-      adsError:      null,
-      metaError:     esgMetaResult.status === 'rejected' ? String(esgMetaResult.reason).replace(/^Error:\s*/, '').slice(0, 240) : null,
-      conversion:    null,
-    } : null,
     combined: {
       spend:         Math.round(totalSpend   * 100) / 100,
       revenue:       Math.round(totalRevenue * 100) / 100,

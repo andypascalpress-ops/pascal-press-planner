@@ -48,6 +48,8 @@ interface TrialsBlock {
 }
 
 interface OverviewData {
+  startDate?:   string;
+  endDate?:     string;
   month:        string;
   daysInMonth:  number;
   currentDay:   number;
@@ -55,7 +57,6 @@ interface OverviewData {
   etz:          BrandData;
   hsc:          BrandData;
   blake:        BrandData;
-  esg?:         BrandData | null;   // Excel Study Guides (Shopify); only present when signed in and connected
   combined: {
     spend:          number;
     revenue:        number;
@@ -99,126 +100,6 @@ function monthLabel(ym: string): string {
   return d.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
 }
 
-// ─── Band 6 Tracker types ────────────────────────────────────────────────────
-
-interface Band6Product { id: number; name: string; sku: string; }
-interface Band6ProductRow {
-  productId: number;
-  name: string;
-  shortName: string;
-  units: number;
-  orders: number;
-  revenue: number;
-}
-interface Band6WeekPoint { date: string; revenue: number; }
-
-interface Band6Data {
-  connected:      boolean;
-  error?:         string;
-  products:       Band6Product[];
-  productBreakdown?: Band6ProductRow[];
-  dailySeries?:   Band6WeekPoint[];
-  revenue:        number;   // full campaign window
-  orders:         number;
-  units:          number;
-  periodRevenue?: number;   // filtered by range
-  periodOrders?:  number;
-  periodUnits?:   number;
-  rangeLabel?:    string;
-  range?:         string;
-  target:         number;
-  startDate:      string;
-  endDate:        string;
-  daysRemaining:  number;
-}
-
-function Band6Chart({ series }: { series: Band6WeekPoint[] }) {
-  if (series.length < 1) return null;
-
-  const W = 600; const H = 140; const PAD = { t: 12, r: 16, b: 28, l: 52 };
-  const chartW = W - PAD.l - PAD.r;
-  const chartH = H - PAD.t - PAD.b;
-
-  const maxRev = Math.max(...series.map(p => p.revenue), 1);
-  // Round up to a nice Y ceiling
-  const rawStep = maxRev / 3;
-  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
-  const niceStep = Math.ceil(rawStep / mag) * mag;
-  const yMax = niceStep * 3;
-
-  const barW = Math.max(4, (chartW / series.length) * 0.6);
-  const gap  = chartW / series.length;
-
-  const xOf  = (i: number) => i * gap + gap / 2;
-  const yOf  = (v: number) => chartH - (v / yMax) * chartH;
-  const hOf  = (v: number) => (v / yMax) * chartH;
-
-  const yTicks = [0, niceStep, niceStep * 2, yMax];
-
-  // Determine trend colour: compare last half avg vs first half avg
-  const half = Math.max(1, Math.floor(series.length / 2));
-  const firstAvg = series.slice(0, half).reduce((s, p) => s + p.revenue, 0) / half;
-  const lastAvg  = series.slice(-half).reduce((s, p) => s + p.revenue, 0) / half;
-  const barColor = lastAvg >= firstAvg * 1.1 ? '#10b981' : lastAvg <= firstAvg * 0.85 ? '#ef4444' : '#8b5cf6';
-
-  // Smooth trend line through bar midpoints
-  const trendPts = series.map((p, i) => `${xOf(i).toFixed(1)},${yOf(p.revenue).toFixed(1)}`).join(' ');
-
-  const fmt = (v: number) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`;
-
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ overflow: 'visible' }}>
-      <g transform={`translate(${PAD.l},${PAD.t})`}>
-        {/* Grid + Y labels */}
-        {yTicks.map(v => (
-          <g key={v}>
-            <line x1={0} y1={yOf(v)} x2={chartW} y2={yOf(v)} stroke="#e5e7eb" strokeWidth={1} />
-            <text x={-6} y={yOf(v) + 4} textAnchor="end" fontSize={10} fill="#9ca3af">{fmt(v)}</text>
-          </g>
-        ))}
-
-        {/* Weekly revenue bars */}
-        {series.map((p, i) => (
-          <rect
-            key={p.date}
-            x={xOf(i) - barW / 2}
-            y={yOf(p.revenue)}
-            width={barW}
-            height={hOf(p.revenue)}
-            rx={2}
-            fill={barColor}
-            opacity={0.75}
-          />
-        ))}
-
-        {/* Trend polyline */}
-        {series.length >= 3 && (
-          <polyline
-            points={trendPts}
-            fill="none"
-            stroke={barColor}
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            opacity={0.9}
-          />
-        )}
-
-        {/* X axis: week labels (show Mon day for each bar) */}
-        {series.map((p, i) => {
-          if (series.length > 8 && i % 2 !== 0) return null;
-          const d = new Date(p.date + 'T12:00:00Z');
-          const label = `${d.getUTCDate()}/${d.getUTCMonth() + 1}`;
-          return (
-            <text key={p.date} x={xOf(i)} y={chartH + 18} textAnchor="middle" fontSize={9} fill="#9ca3af">
-              {label}
-            </text>
-          );
-        })}
-      </g>
-    </svg>
-  );
-}
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -874,176 +755,6 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers, lin
   );
 }
 
-type Band6Range = 'all' | 'mtd' | 'last7' | 'yesterday' | 'today';
-const BAND6_RANGES: { key: Band6Range; label: string }[] = [
-  { key: 'all',       label: 'All time'   },
-  { key: 'mtd',       label: 'This month' },
-  { key: 'last7',     label: 'Last 7 days'},
-  { key: 'yesterday', label: 'Yesterday'  },
-  { key: 'today',     label: 'Today'      },
-];
-
-function Band6TrackerCard() {
-  const [range,   setRange]   = useState<Band6Range>('all');
-  const [data,    setData]    = useState<Band6Data | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    fetch(`/api/band6-tracker?range=${range}`)
-      .then(r => r.json())
-      .then((d: Band6Data) => setData(d))
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
-  }, [range]);
-
-  if (loading) {
-    return (
-      <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
-        <div className="w-4 h-4 rounded-full border-2 border-purple-600 border-t-transparent animate-spin" />
-        <p className="text-sm text-gray-400">Loading Band 6 tracker…</p>
-      </div>
-    );
-  }
-  if (!data || !data.connected) return null;
-
-  const pct         = data.target > 0 ? Math.min(data.revenue / data.target, 1) : 0;
-  const remaining   = Math.max(0, data.target - data.revenue);
-  const dailyNeeded = data.daysRemaining > 0 ? remaining / data.daysRemaining : null;
-  const barColor    = pct >= 1 ? 'bg-emerald-500' : pct >= 0.7 ? 'bg-blue-500' : pct >= 0.4 ? 'bg-amber-500' : 'bg-orange-400';
-  const needColor   = !dailyNeeded ? 'text-gray-400' : dailyNeeded < 300 ? 'text-emerald-600' : dailyNeeded < 700 ? 'text-amber-600' : 'text-red-600';
-  const rows        = data.productBreakdown ?? [];
-  const productCount = rows.length > 0 ? rows.length : data.products.length;
-
-  const isFiltered  = range !== 'all';
-  const dispRevenue = isFiltered ? (data.periodRevenue ?? 0) : data.revenue;
-  const dispOrders  = isFiltered ? (data.periodOrders  ?? 0) : data.orders;
-  const dispUnits   = isFiltered ? (data.periodUnits   ?? 0) : data.units;
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5">
-      {/* Header */}
-      <div className="flex items-start justify-between mb-3 gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-gray-800">60 Days to Band 6</h3>
-            <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full font-medium">Series Tracker</span>
-          </div>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {productCount > 0 ? `${productCount} titles selling` : 'No sales yet'} · target by Nov 2026
-          </p>
-        </div>
-        <div className="text-right shrink-0">
-          <p className="text-xl font-bold text-gray-900">{AUD.format(data.revenue)}</p>
-          <p className="text-xs text-gray-400">of {AUD.format(data.target)} goal</p>
-        </div>
-      </div>
-
-      {/* Progress bar — always full-period */}
-      <div className="space-y-1 mb-4">
-        <div className="relative h-3 bg-gray-100 rounded-full overflow-hidden">
-          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(pct * 100, 100)}%` }} />
-        </div>
-        <div className="flex justify-between text-xs text-gray-500">
-          <span className="font-medium text-gray-700">{Math.round(pct * 100)}% to goal</span>
-          <span>{data.daysRemaining} days left</span>
-        </div>
-      </div>
-
-      {/* Date filter */}
-      <div className="flex flex-wrap gap-1 mb-4">
-        {BAND6_RANGES.map(r => (
-          <button
-            key={r.key}
-            onClick={() => setRange(r.key)}
-            className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-              range === r.key
-                ? 'bg-purple-600 text-white border-purple-600'
-                : 'bg-white text-gray-500 border-gray-200 hover:border-purple-300 hover:text-purple-600'
-            }`}
-          >
-            {r.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Stats — filtered when a range is active */}
-      <div className="grid grid-cols-3 gap-2">
-        <div className="bg-gray-50 rounded-lg p-3 text-center">
-          <p className="text-base font-bold text-gray-900">{dispOrders}</p>
-          <p className="text-xs text-gray-500">Orders</p>
-        </div>
-        <div className="bg-gray-50 rounded-lg p-3 text-center">
-          <p className="text-base font-bold text-gray-900">{dispUnits}</p>
-          <p className="text-xs text-gray-500">Units sold</p>
-        </div>
-        <div className="bg-gray-50 rounded-lg p-3 text-center">
-          {isFiltered ? (
-            <>
-              <p className="text-base font-bold text-purple-700">{AUD.format(dispRevenue)}</p>
-              <p className="text-xs text-gray-500">Revenue</p>
-            </>
-          ) : (
-            <>
-              <p className={`text-base font-bold ${needColor}`}>
-                {dailyNeeded != null ? AUD.format(Math.ceil(dailyNeeded)) : '—'}
-              </p>
-              <p className="text-xs text-gray-500">Needed/day</p>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Weekly sales trend chart */}
-      {data.dailySeries && data.dailySeries.length >= 1 && (
-        <div className="mt-4 border-t border-gray-100 pt-3">
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-              Weekly sales — {data.rangeLabel ?? 'All time'}
-            </p>
-            <p className="text-xs text-gray-400">Each bar = one week</p>
-          </div>
-          <Band6Chart series={data.dailySeries} />
-        </div>
-      )}
-
-      {/* Product revenue breakdown */}
-      {rows.length > 0 && (
-        <div className="mt-4 border-t border-gray-100 pt-3">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">By product (all time)</p>
-          <div className="space-y-2">
-            {rows.map((row) => {
-              const share = data.revenue > 0 ? row.revenue / data.revenue : 0;
-              return (
-                <div key={row.productId || row.name}>
-                  <div className="flex items-center justify-between gap-2 text-xs mb-0.5">
-                    <span className="text-gray-700 font-medium truncate" title={row.name}>
-                      {row.shortName || row.name}
-                    </span>
-                    <span className="text-gray-900 font-semibold tabular-nums shrink-0">
-                      {AUD.format(row.revenue)}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-purple-400"
-                        style={{ width: `${Math.max(share * 100, share > 0 ? 2 : 0)}%` }}
-                      />
-                    </div>
-                    <span className="text-[11px] text-gray-400 tabular-nums shrink-0 w-16 text-right">
-                      {row.units}u · {row.orders}o
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -1067,6 +778,23 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
     { key: 'lastmonth', label: 'Last month'    },
   ];
   const [dateRange, setDateRange] = useState<DateRange>('mtd');
+  // Excel Study Guides is loaded separately (it needs the planner login and is never cached)
+  const [esg, setEsg] = useState<BrandData | null>(null);
+  const [esgState, setEsgState] = useState<'loading' | 'ok' | 'error' | 'hidden'>('loading');
+  const [esgNote, setEsgNote] = useState('');
+
+  const loadEsg = useCallback((start?: string, end?: string) => {
+    if (!start || !end) { setEsgState('hidden'); return; }
+    setEsgState('loading'); setEsgNote('');
+    fetch(`/api/overview-esg?start=${start}&end=${end}`, { cache: 'no-store' })
+      .then(async r => {
+        if (r.status === 401) { setEsg(null); setEsgState('hidden'); return; }
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.esg) { setEsg(null); setEsgNote(j.error ?? `HTTP ${r.status}`); setEsgState('error'); return; }
+        setEsg(j.esg as BrandData); setEsgState('ok');
+      })
+      .catch(e => { setEsg(null); setEsgNote(e instanceof Error ? e.message : 'failed'); setEsgState('error'); });
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1076,6 +804,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const overview = await res.json();
       setData(overview);
+      loadEsg(overview.startDate, overview.endDate);
 
       // Fetch HubSpot subscriber data for the same month (fire-and-forget, non-blocking)
       const subMonth = overview?.month ?? new Date().toISOString().slice(0, 7);
@@ -1088,7 +817,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
     } finally {
       setLoading(false);
     }
-  }, [dateRange]);
+  }, [dateRange, loadEsg]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -1115,7 +844,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
     );
   }
 
-  const { month, daysInMonth, currentDay, pp, etz, hsc, blake, esg, combined, email, rangeLabel, isMonthly } = data;
+  const { month, daysInMonth, currentDay, pp, etz, hsc, blake, combined, email, rangeLabel, isMonthly } = data;
   const dayPct = currentDay / daysInMonth;
 
   return (
@@ -1191,7 +920,21 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
           <BrandCard name="Pascal Press"      data={pp}    dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.pp    ?? null} />
           <BrandCard name="Excel Test Zone"   data={etz}   dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.etz   ?? null} />
           <BrandCard name="Excel HSC Copilot" data={hsc}   dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.hsc   ?? null} />
-          {esg && (
+          {esgState === 'loading' && (
+            <div className="bg-white rounded-xl border border-gray-200 p-5 animate-pulse">
+              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700">Excel Study Guides</span>
+              <div className="mt-4 h-6 w-28 rounded bg-gray-100" /><div className="mt-2 h-4 w-20 rounded bg-gray-100" />
+            </div>
+          )}
+          {esgState === 'error' && (
+            <div className="bg-white rounded-xl border border-amber-200 p-5">
+              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700">Excel Study Guides</span>
+              <p className="mt-3 text-sm font-semibold text-amber-700">Could not load this card</p>
+              <p className="mt-1 text-xs text-amber-600 leading-relaxed">{esgNote}</p>
+              <button onClick={() => loadEsg(data.startDate, data.endDate)} className="mt-3 px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200">Retry</button>
+            </div>
+          )}
+          {esgState === 'ok' && esg && (
             <BrandCard name="Excel Study Guides" data={esg} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('business-units')} linkLabel="View Business Units →" />
           )}
           {blake && (
@@ -1205,9 +948,6 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
 
         {/* ── Pascal Press — Abandoned Cart Rate ── */}
         <PPAbandonedCartCard />
-
-        {/* ── Band 6 Tracker ── */}
-        <Band6TrackerCard />
 
         {/* ── Email snapshot ── */}
         {email && (
