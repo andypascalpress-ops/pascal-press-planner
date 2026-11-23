@@ -177,6 +177,38 @@ function parseReportCsv(csv: string): { monthKey: string; spend: number }[] {
   return results;
 }
 
+/** Daily rows: TimePeriod is a date such as 2026-11-23 (or 11/23/2026), Spend is in the account currency. */
+function parseReportDaily(csv: string): { date: string; spend: number }[] {
+  const content = csv.startsWith('\uFEFF') ? csv.slice(1) : csv;
+  const lines = content.split(/\r?\n/);
+  let headerIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].toLowerCase().includes('timeperiod')) { headerIdx = i; break; }
+  }
+  if (headerIdx === -1) return [];
+  const parseCols = (line: string) => line.split(',').map(c => c.replace(/^"|"$/g, '').trim());
+  const headers = parseCols(lines[headerIdx]).map(h => h.toLowerCase().replace(/\s/g, ''));
+  const tpIdx = headers.findIndex(h => h === 'timeperiod' || h === 'gregoriandate');
+  const spendIdx = headers.findIndex(h => h === 'spend');
+  if (tpIdx === -1 || spendIdx === -1) return [];
+  const out: { date: string; spend: number }[] = [];
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || line.startsWith('©') || line.toLowerCase().startsWith('total') || line.startsWith('"©')) continue;
+    const cols = parseCols(line);
+    if (cols.length <= Math.max(tpIdx, spendIdx)) continue;
+    const raw = cols[tpIdx];
+    let date = '';
+    const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+    const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(raw);
+    if (iso) date = `${iso[1]}-${iso[2]}-${iso[3]}`;
+    else if (us) date = `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`;
+    if (!date) continue;
+    out.push({ date, spend: parseFloat(cols[spendIdx].replace(/,/g, '')) || 0 });
+  }
+  return out;
+}
+
 export interface BingMonthlySpend {
   month:       string; // "January", "November", …
   actualSpend: number; // AUD, 2 dp
@@ -189,11 +221,12 @@ export interface BingMonthlySpend {
  * @param endDate    'YYYY-MM-DD'
  * @param campaignId Microsoft Ads campaign ID (defaults to PP Excel Shopping campaign)
  */
-export async function fetchBingMonthlySpend(
-  startDate:  string,
-  endDate:    string,
-  campaignId: string | null = '490633545',   // null = every campaign in the account
-): Promise<BingMonthlySpend[]> {
+async function fetchBingReportCsv(
+  startDate:   string,
+  endDate:     string,
+  campaignId:  string | null,                // null = every campaign in the account
+  aggregation: 'Monthly' | 'Daily',
+): Promise<string | null> {
   const accountId = cleanEnv(process.env.BING_ADS_ACCOUNT_ID);
   if (!accountId) throw new Error('BING_ADS_ACCOUNT_ID is not set');
 
@@ -209,7 +242,7 @@ export async function fetchBingMonthlySpend(
         <Language>English</Language>
         <ReportName>BingMonthlySpend</ReportName>
         <ReturnOnlyCompleteData>false</ReturnOnlyCompleteData>
-        <Aggregation>Monthly</Aggregation>
+        <Aggregation>${aggregation}</Aggregation>
         <Columns>
           <CampaignPerformanceReportColumn>TimePeriod</CampaignPerformanceReportColumn>
           <CampaignPerformanceReportColumn>Spend</CampaignPerformanceReportColumn>
@@ -269,13 +302,25 @@ ${campaignId ? `          <Campaigns>
   }
 
   // A finished report with no download link means there was no spend in that period.
-  if (!downloadUrl && reportReady) return [];
+  if (!downloadUrl && reportReady) return null;
   if (!downloadUrl) throw new Error('Bing Ads report timed out after 35s');
 
   const dlRes = await fetch(downloadUrl, { cache: 'no-store' });
   if (!dlRes.ok) throw new Error(`Report download failed (HTTP ${dlRes.status})`);
   const buffer = Buffer.from(await dlRes.arrayBuffer());
   const csv    = extractFirstFileFromZip(buffer);
+
+  return csv;
+}
+
+/** Monthly totals (kept for the sync route). Note Bing may return a whole month for a partial range; use fetchBingDailySpend for exact ranges. */
+export async function fetchBingMonthlySpend(
+  startDate:  string,
+  endDate:    string,
+  campaignId: string | null = '490633545',   // null = every campaign in the account
+): Promise<BingMonthlySpend[]> {
+  const csv = await fetchBingReportCsv(startDate, endDate, campaignId, 'Monthly');
+  if (csv === null) return [];
 
   // Aggregate by month
   const byMonth: Record<string, number> = {};
@@ -287,6 +332,17 @@ ${campaignId ? `          <Campaigns>
     month:       MONTH_NAMES[k],
     actualSpend: Math.round(spend * 100) / 100,
   }));
+}
+
+/** Spend per day (YYYY-MM-DD, on the report's clock) so any date range can be added up exactly. */
+export async function fetchBingDailySpend(
+  startDate:  string,
+  endDate:    string,
+  campaignId: string | null = null,
+): Promise<{ date: string; spend: number }[]> {
+  const csv = await fetchBingReportCsv(startDate, endDate, campaignId, 'Daily');
+  if (csv === null) return [];
+  return parseReportDaily(csv);
 }
 
 
@@ -306,9 +362,10 @@ export async function fetchBingSpendTotal(startDate: string, endDate: string): P
   if (hit && Date.now() - hit.at < 30 * 60 * 1000) return hit.value;
   let job = _inflight.get(key);
   if (!job) {
-    job = fetchBingMonthlySpend(startDate, endDate, null)
+    job = fetchBingDailySpend(startDate, endDate, null)
       .then(rows => {
-        const value = Math.round(rows.reduce((a, r) => a + r.actualSpend, 0) * 100) / 100;
+        // only the days inside the range count, whatever else the report returned
+        const value = Math.round(rows.filter(r => r.date >= startDate && r.date <= endDate).reduce((a, r) => a + r.spend, 0) * 100) / 100;
         _spendCache.set(key, { at: Date.now(), value });
         return value;
       })
