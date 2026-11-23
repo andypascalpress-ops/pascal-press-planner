@@ -786,7 +786,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
   const loadEsg = useCallback((start?: string, end?: string) => {
     if (!start || !end) { setEsgState('hidden'); return; }
     setEsgState('loading'); setEsgNote('');
-    fetch(`/api/overview-esg?start=${start}&end=${end}`, { cache: 'no-store' })
+    fetch(`/api/overview-esg?start=${start}&end=${end}`)
       .then(async r => {
         if (r.status === 401) { setEsg(null); setEsgState('hidden'); return; }
         const j = await r.json().catch(() => ({}));

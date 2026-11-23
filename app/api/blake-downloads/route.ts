@@ -7,7 +7,7 @@ export async function GET() {
   const data = await fetchBlakeDownloads();
   return NextResponse.json(data, {
     headers: {
-      'Cache-Control': 'public, s-maxage=600, stale-while-revalidate=60',
+      'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600',
     },
   });
 }

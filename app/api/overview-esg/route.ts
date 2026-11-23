@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
         metaError: meta.status === 'rejected' ? String(meta.reason).replace(/^Error:\s*/, '').slice(0, 240) : null,
         conversion: null,
       },
-    }, { headers: NO_STORE });
+    }, { headers: { 'Cache-Control': 'private, max-age=120' } });   // private: only this browser keeps it, never a shared cache
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message.slice(0, 240) : 'failed' }, { status: 502, headers: NO_STORE });
   }

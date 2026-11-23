@@ -486,7 +486,8 @@ export async function GET(request: Request) {
     headers: {
       // Vercel edge caches each range value separately (URL includes ?range=…).
       // 2-min fresh + 1-min stale-while-revalidate avoids hitting 11 external APIs on every load.
-      'Cache-Control': 'public, s-maxage=120, stale-while-revalidate=60',
+      // today's figures refresh every couple of minutes; other ranges barely move, so they are kept longer (fewer function runs)
+      'Cache-Control': rangeParam === 'today' ? 'public, s-maxage=120, stale-while-revalidate=60' : 'public, s-maxage=600, stale-while-revalidate=300',
     },
   });
 }

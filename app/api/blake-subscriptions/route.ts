@@ -6,7 +6,7 @@ export async function GET() {
   return NextResponse.json(data, {
     headers: {
       // Subscription counts per month — 5 min edge cache
-      'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60',
+      'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600',
     },
   });
 }
