@@ -511,6 +511,6 @@ export async function GET(request: Request) {
     connected: true,
   }, warnings.length === 0
     // a recent copy is served straight away while a fresh one is built in the background; today's figures refresh sooner
-    ? { headers: { 'Cache-Control': range === 'today' ? 'public, s-maxage=60, stale-while-revalidate=300' : 'public, s-maxage=120, stale-while-revalidate=900' } }
+    ? { headers: { 'Cache-Control': range === 'today' ? 'public, s-maxage=120, stale-while-revalidate=300' : 'public, s-maxage=600, stale-while-revalidate=900' } }
     : undefined);
 }
