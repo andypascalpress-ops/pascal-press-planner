@@ -103,98 +103,120 @@ function monthLabel(ym: string): string {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function KpiCard({ label, value, sub, valueClass = '', target }: {
-  label: string; value: string; sub?: string; valueClass?: string; target?: number;
-}) {
-  const numericValue = parseFloat(value.replace(/[^0-9.]/g, ''));
-  const pct   = target && target > 0 ? Math.min(numericValue / target, 1) : 0;
-  const over  = target ? numericValue > target : false;
-  const color = pct >= 1 ? 'bg-emerald-500' : pct >= 0.7 ? 'bg-blue-500' : pct >= 0.4 ? 'bg-amber-500' : 'bg-orange-400';
+/** Short money for pace lines: $53.3k, $8,422 below $10k. */
+const fmtK = (n: number) => (Math.abs(n) >= 10_000 ? `$${(n / 1000).toFixed(Math.abs(n) >= 100_000 ? 0 : 1)}k` : AUD.format(n));
 
+const BRAND_COLOR: Record<string, string> = {
+  'Pascal Press': '#2563eb', 'Excel Test Zone': '#059669', 'Excel HSC Copilot': '#0d9488', 'Excel Study Guides': '#0891b2', 'Blake Education': '#7c3aed',
+};
+
+/** A progress bar with an optional tick for where an even pace through the month would be. */
+function PaceBar({ share, color, marker }: { share: number; color: string; marker?: number | null }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col gap-1">
-      <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">{label}</span>
-      <span className={`text-2xl font-bold text-gray-900 ${valueClass}`}>{value}</span>
-      {sub && <span className="text-xs text-gray-500">{sub}</span>}
-      {target && target > 0 && (
-        <div className="mt-1.5 space-y-1">
-          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-            <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${Math.min(pct * 100, 100)}%` }} />
-          </div>
-          <div className="flex justify-between text-[11px] text-gray-400">
-            <span>{over ? '✓ ' : ''}{Math.round(pct * 100)}% of {AUD.format(target)} target</span>
-            {!over && <span>{AUD.format(target - numericValue)} to go</span>}
-          </div>
-        </div>
+    <div className="relative h-2 rounded-full bg-gray-100 overflow-hidden">
+      <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.max(0, Math.min(share, 1)) * 100}%` }} />
+      {marker != null && marker > 0 && marker < 1 && (
+        <div className="absolute -top-0.5 -bottom-0.5 w-0.5 bg-gray-500/70" style={{ left: `${marker * 100}%` }} title="Even pace through the month" />
       )}
     </div>
   );
 }
 
-function BudgetBar({ spend, budget, dayPct, isMonthly = true, spendLabel, budgetLabel }: {
-  spend: number; budget: number; dayPct: number; isMonthly?: boolean;
-  spendLabel?: string; budgetLabel?: string;
-}) {
-  const spendPct = budget > 0 ? Math.min(spend / budget, 1.05) : 0;
-  const barColor = budgetBarColor(spend / (budget || 1));
-
-  // Projected end-of-month spend — only meaningful for monthly views after day 2
-  const projected = isMonthly && dayPct > 0.05 && spend > 0 ? spend / dayPct : null;
-  const projPct   = projected && budget > 0 ? projected / budget : null;
-  const projClass = projPct == null ? ''
-    : projPct > 1.1  ? 'text-red-600 font-medium'
-    : projPct > 1.0  ? 'text-amber-600 font-medium'
-    : projPct >= 0.85 ? 'text-emerald-600'
-    : 'text-amber-600';
-  const projStatus = projPct == null ? ''
-    : projPct > 1.1  ? `${Math.round((projPct - 1) * 100)}% over budget`
-    : projPct > 1.0  ? 'slightly over budget'
-    : projPct >= 0.85 ? 'on track'
-    : `${Math.round((1 - projPct) * 100)}% underpacing`;
-
+/**
+ * Sales target in plain words: how much is left (or by how much it was beaten) and where the month is heading.
+ * Never shows "105% of target": above the target it says by how much.
+ */
+function TargetStatus({ revenue, target, dayPct, isMonthly, compact = false }: { revenue: number; target: number; dayPct: number; isMonthly: boolean; compact?: boolean }) {
+  const reached = revenue >= target;
+  const projected = isMonthly && dayPct > 0.02 && dayPct < 1 ? revenue / dayPct : null;
+  const onPace = projected != null ? projected >= target : null;
+  const bar = reached ? 'bg-emerald-500' : onPace === false ? (revenue / target < dayPct * 0.85 ? 'bg-red-400' : 'bg-amber-400') : 'bg-blue-500';
   return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-xs text-gray-500">
-        <span>{spendLabel ?? `${AUD.format(spend)} spent`}</span>
-        <span>{budgetLabel ?? `${AUD.format(budget)} monthly budget`}</span>
+    <div className="space-y-1.5">
+      {!compact && <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Sales target {isMonthly ? 'this month' : 'for this period'}</p>}
+      <div className="flex items-baseline justify-between gap-2 text-sm">
+        {reached
+          ? <span className="font-semibold text-emerald-700">✓ Target met · {AUD.format(revenue - target)} above</span>
+          : <span className="font-semibold text-gray-800">{AUD.format(target - revenue)} to go</span>}
+        <span className="text-xs text-gray-400 shrink-0">target {AUD.format(target)}</span>
       </div>
-      <div className="relative h-2 bg-gray-100 rounded-full overflow-hidden">
-        {/* Ghost bar — projected month-end spend (monthly view only) */}
-        {projPct != null && (
-          <div
-            className="absolute h-full rounded-full bg-gray-300 opacity-40"
-            style={{ width: `${Math.min(projPct * 100, 100)}%` }}
-          />
-        )}
-        {/* Actual spend bar */}
-        <div
-          className={`h-full rounded-full transition-all ${barColor}`}
-          style={{ width: `${Math.min(spendPct * 100, 100)}%` }}
-        />
-        {/* Day marker — only for monthly view */}
-        {isMonthly && (
-          <div
-            className="absolute top-0 bottom-0 w-0.5 bg-gray-400 opacity-60"
-            style={{ left: `${dayPct * 100}%` }}
-            title={`${Math.round(dayPct * 100)}% through month`}
-          />
-        )}
-      </div>
-      <div className="flex justify-between text-xs">
-        <span className={budget > 0 && spend / budget > 1.0 ? 'text-red-600 font-medium' : 'text-gray-500'}>
-          {budget > 0 ? PCT(spend / budget) : '—'} of monthly budget
-        </span>
-        {isMonthly
-          ? <span className="text-gray-400">{Math.round(dayPct * 100)}% of month elapsed</span>
-          : <span className="text-gray-400">monthly budget {AUD.format(budget)}</span>
-        }
-      </div>
-      {projected != null && (
-        <div className="flex items-center gap-1.5 text-xs pt-0.5">
-          <span className="text-gray-400">Projected month-end:</span>
-          <span className={projClass}>{AUD.format(Math.round(projected))} · {projStatus}</span>
-        </div>
+      <PaceBar share={revenue / target} color={bar} marker={isMonthly && !reached ? dayPct : null} />
+      {projected != null && !reached && (
+        <p className={`text-xs ${onPace ? 'text-emerald-700' : 'text-red-600'}`}>
+          {onPace ? '↗' : '↘'} On pace for {fmtK(projected)} · {onPace ? `about ${fmtK(projected - target)} over target` : `${fmtK(target - projected)} short`}
+        </p>
       )}
+      {reached && projected != null && <p className="text-xs text-gray-500">On pace for {fmtK(projected)} by month end</p>}
+    </div>
+  );
+}
+
+/** Ad budget in plain words: money left (or over), and where spend is heading by month end. */
+function BudgetPace({ spend, budget, dayPct, isMonthly, label = 'Ad budget this month', note }: { spend: number; budget: number; dayPct: number; isMonthly: boolean; label?: string; note?: string }) {
+  if (!budget || budget <= 0) return null;
+  const over = spend > budget;
+  const projected = isMonthly && dayPct > 0.05 && dayPct < 1 && spend > 0 ? spend / dayPct : null;
+  const pace = projected == null ? null : projected > budget * 1.02 ? 'over' : projected < budget * 0.85 ? 'under' : 'on';
+  const bar = over || pace === 'over' ? 'bg-red-400' : pace === 'under' ? 'bg-amber-400' : 'bg-blue-500';
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">{label}</p>
+      <div className="flex items-baseline justify-between gap-2 text-sm">
+        {note
+          ? <span className="text-gray-500">{note}</span>
+          : over
+            ? <span className="font-semibold text-red-600">{AUD.format(spend - budget)} over budget</span>
+            : <span className="font-semibold text-gray-800">{AUD.format(budget - spend)} left</span>}
+        <span className="text-xs text-gray-400 shrink-0">{AUD.format(spend)} of {AUD.format(budget)}</span>
+      </div>
+      <PaceBar share={spend / budget} color={bar} marker={isMonthly ? dayPct : null} />
+      {projected != null && !note && (
+        <p className={`text-xs ${pace === 'over' ? 'text-red-600' : pace === 'under' ? 'text-amber-700' : 'text-emerald-700'}`}>
+          On pace to spend {fmtK(projected)} · {pace === 'over' ? `${fmtK(projected - budget)} over budget` : pace === 'under' ? `${fmtK(budget - projected)} under budget` : 'about on budget'}
+        </p>
+      )}
+      {!isMonthly && <p className="text-xs text-gray-400">Monthly budget shown; this range is not a full month.</p>}
+    </div>
+  );
+}
+
+/** Ad spend split by channel as one stacked bar with a legend. */
+function SpendSplit({ data }: { data: BrandData }) {
+  const total = data.totalSpend ?? data.spend;
+  const parts = [
+    { name: 'Google', value: data.spend, color: '#2563eb' },
+    { name: 'Meta', value: data.metaSpend ?? 0, color: '#8b5cf6' },
+    { name: 'Bing', value: data.bingSpend ?? 0, color: '#0ea5e9' },
+    { name: 'ChatGPT', value: data.chatgptSpend ?? 0, color: '#64748b' },
+  ].filter(p => p.value > 0);
+  if (total <= 0) return <p className="text-xs text-gray-400">No ad spend in this period.</p>;
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Ad spend</p>
+        <span className="text-sm font-semibold text-gray-800">{AUD.format(total)}</span>
+      </div>
+      <div className="flex h-2 rounded-full overflow-hidden bg-gray-100">
+        {parts.map(p => <div key={p.name} style={{ width: `${(p.value / total) * 100}%`, background: p.color }} title={`${p.name} ${AUD.format(p.value)}`} />)}
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-600">
+        {parts.map(p => (
+          <span key={p.name} className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-full inline-block" style={{ background: p.color }} />{p.name} <span className="tabular-nums text-gray-900">{AUD.format(p.value)}</span></span>
+        ))}
+      </div>
+      {(data.bingRevenue ?? 0) > 0 && <p className="text-[11px] text-gray-400">Bing revenue (Google Analytics, incl. organic Bing): {AUD.format(data.bingRevenue!)}</p>}
+    </div>
+  );
+}
+
+/** Top-of-page summary tile. */
+function SummaryTile({ label, value, valueClass = 'text-gray-900', sub, children }: { label: string; value: string; valueClass?: string; sub?: React.ReactNode; children?: React.ReactNode }) {
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 flex flex-col gap-1 min-w-0">
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{label}</span>
+      <span className={`text-[26px] leading-tight font-bold tabular-nums ${valueClass}`}>{value}</span>
+      {sub && <span className="text-xs text-gray-500">{sub}</span>}
+      {children && <div className="mt-2">{children}</div>}
     </div>
   );
 }
@@ -482,7 +504,7 @@ interface HubSpotSubscriberData {
   blake:     number;
 }
 
-function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers, linkLabel = 'View Finance →' }: {
+function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers, linkLabel = 'View Finance →', budgetOverride }: {
   name: string;
   data: BrandData;
   dayPct: number;
@@ -490,267 +512,116 @@ function BrandCard({ name, data, dayPct, isMonthly, onNavigate, subscribers, lin
   onNavigate: () => void;
   subscribers?: number | null;
   linkLabel?: string;
+  budgetOverride?: { budget: number; note: string };
 }) {
-  const tagColor =
-    name === 'Pascal Press' ? 'bg-blue-100 text-blue-700'
-    : name === 'Blake Education' ? 'bg-violet-100 text-violet-700'
-    : name === 'Excel Study Guides' ? 'bg-cyan-100 text-cyan-700'
-    : 'bg-emerald-100 text-emerald-700';
+  const totalSpend = data.totalSpend ?? data.spend;
+  const after = data.revenue - totalSpend;
+  const budget = data.totalMarketingBudget && data.totalMarketingBudget > 0 ? data.totalMarketingBudget : data.budget;
+  const color = BRAND_COLOR[name] ?? '#2563eb';
+  const aovDelta = data.aov != null && data.aovPrev != null && data.aovPrev > 0 ? (data.aov - data.aovPrev) / data.aovPrev : null;
+  const fmtWin = (ymd: string) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5 flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${tagColor}`}>{name}</span>
-        <button onClick={onNavigate} className="text-xs text-blue-600 hover:underline">
-          {linkLabel}
-        </button>
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
+      <div className="h-1" style={{ background: color }} />
+      <div className="flex items-center justify-between px-5 pt-4">
+        <span className="flex items-center gap-2 text-sm font-semibold text-gray-900"><i className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: color }} />{name}</span>
+        <button onClick={onNavigate} className="text-xs font-medium text-blue-600 hover:underline">{linkLabel}</button>
       </div>
 
-      {/* Revenue (+ ROAS only when Google Ads is connected) */}
-      <div className={`grid gap-3 ${data.adsConnected ? 'grid-cols-2' : 'grid-cols-1'}`}>
-        <div>
-          <p className="text-xs text-gray-500 mb-0.5">Revenue</p>
-          <p className="text-lg font-bold text-gray-900">
-            {data.revConnected ? AUD.format(data.revenue) : <span className="text-gray-400 text-sm">Not connected</span>}
+      {/* Headline numbers */}
+      <div className="grid grid-cols-2 gap-4 px-5 pt-3">
+        <div className="min-w-0">
+          <p className="text-xs text-gray-500">Revenue</p>
+          <p className="text-2xl font-bold text-gray-900 tabular-nums">{data.revConnected ? AUD.format(data.revenue) : <span className="text-sm font-medium text-gray-400">Not connected</span>}</p>
+          <p className="text-xs text-gray-500">
+            {data.orders > 0 ? `${data.orders.toLocaleString()} orders` : ''}{data.aov != null ? ` · ${AUD.format(data.aov)} AOV` : ''}
           </p>
-          {data.orders > 0 && <p className="text-xs text-gray-400">{data.orders.toLocaleString()} orders</p>}
-          {/* AOV with MoM comparison */}
-          {data.revConnected && data.aov != null && (
-            <div className="mt-1.5">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-semibold text-gray-800">{AUD.format(data.aov)} AOV</span>
-                {data.aovPrev != null && (() => {
-                  const delta = data.aov! - data.aovPrev!;
-                  const pct   = Math.round(Math.abs(delta) / data.aovPrev! * 100);
-                  const up    = delta >= 0;
-                  return (
-                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${up ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                      {up ? '↑' : '↓'} {up ? '+' : '-'}{AUD.format(Math.abs(delta))} ({pct}%) vs last month
-                    </span>
-                  );
-                })()}
-              </div>
-              {data.aovPrev != null && (
-                <p className="text-xs text-gray-400 mt-0.5">Last month: {AUD.format(data.aovPrev)}</p>
-              )}
-            </div>
+          {aovDelta != null && (
+            <p className={`text-xs mt-0.5 ${aovDelta >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>AOV {aovDelta >= 0 ? '↑' : '↓'} {Math.abs(Math.round(aovDelta * 100))}% vs last month ({AUD.format(data.aovPrev!)})</p>
           )}
-          {/* Sales target bar + projection */}
-          {data.revConnected && data.revenueTarget && data.revenueTarget > 0 && (() => {
-            const pct      = Math.min(data.revenue / data.revenueTarget, 1.05);
-            const over     = data.revenue > data.revenueTarget;
-            const barColor = over ? 'bg-emerald-500' : pct >= 0.75 ? 'bg-blue-500' : pct >= 0.5 ? 'bg-amber-500' : 'bg-red-400';
-            const textColor = over ? 'text-emerald-600 font-medium' : pct >= 0.75 ? 'text-blue-600' : pct >= 0.5 ? 'text-amber-600' : 'text-red-600 font-medium';
-
-            // Projection: extrapolate current run-rate to end of month
-            const projected    = isMonthly && dayPct > 0.02 ? data.revenue / dayPct : null;
-            const onTrack      = projected !== null ? projected >= data.revenueTarget : null;
-            const projDiff     = projected !== null ? Math.abs(projected - data.revenueTarget) : null;
-            const projLabel    = projected !== null
-              ? onTrack
-                ? `On track · ${AUD.format(projected)} projected`
-                : `${AUD.format(projDiff!)} short at this rate`
-              : null;
-            const projColor    = onTrack === true ? 'text-emerald-600' : onTrack === false ? 'text-red-500' : 'text-gray-400';
-            const projIcon     = onTrack === true ? '↗' : onTrack === false ? '↘' : null;
-
-            return (
-              <div className="mt-2 space-y-1">
-                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                  <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(pct * 100, 100)}%` }} />
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className={textColor}>
-                    {over ? '✓ ' : ''}{Math.round(pct * 100)}% of {AUD.format(data.revenueTarget)} target
-                  </span>
-                  {!over && (
-                    <span className="text-gray-400">{AUD.format(data.revenueTarget - data.revenue)} to go</span>
-                  )}
-                </div>
-                {projLabel && !over && (
-                  <div className={`text-xs font-medium ${projColor}`}>
-                    {projIcon} {projLabel}
-                  </div>
-                )}
-              </div>
-            );
-          })()}
         </div>
-        {data.adsConnected && (
-          <div>
-            <p className="text-xs text-gray-500 mb-0.5">Revenue after ad spend</p>
-            <p className={`text-lg font-bold ${data.revenue - (data.totalSpend ?? data.spend) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-              {(data.totalSpend ?? data.spend) > 0 ? AUD.format(data.revenue - (data.totalSpend ?? data.spend)) : <span className="text-gray-400 text-sm">—</span>}
-            </p>
-            {(data.totalSpend ?? data.spend) > 0 && (
-              <p className="text-xs text-gray-400">
-                {AUD.format(data.totalSpend ?? data.spend)} total spend
-              </p>
+        <div className="min-w-0">
+          <p className="text-xs text-gray-500">After ad spend</p>
+          <p className={`text-2xl font-bold tabular-nums ${totalSpend > 0 ? (after >= 0 ? 'text-emerald-600' : 'text-red-600') : 'text-gray-300'}`}>{totalSpend > 0 ? AUD.format(after) : '—'}</p>
+          <p className="text-xs text-gray-500">{totalSpend > 0 ? `${AUD.format(totalSpend)} ad spend${data.revenue > 0 ? ` · ${(data.revenue / totalSpend).toFixed(1)}x return` : ''}` : 'No ad spend tracked'}</p>
+        </div>
+      </div>
+
+      <div className="px-5 pt-4 pb-4 flex flex-col gap-4 flex-1">
+        {data.revConnected && data.revenueTarget != null && data.revenueTarget > 0 && (
+          <TargetStatus revenue={data.revenue} target={data.revenueTarget} dayPct={dayPct} isMonthly={isMonthly} />
+        )}
+
+        {(data.adsConnected || totalSpend > 0) && <SpendSplit data={data} />}
+
+        {budgetOverride
+          ? <BudgetPace spend={totalSpend} budget={budgetOverride.budget} dayPct={dayPct} isMonthly={isMonthly} note={budgetOverride.note} />
+          : (data.adsConnected && budget > 0) && <BudgetPace spend={totalSpend} budget={budget} dayPct={dayPct} isMonthly={isMonthly} />}
+
+        {/* Free trials (Excel Test Zone) */}
+        {data.trials && (
+          <div className="rounded-xl bg-emerald-50/60 border border-emerald-100 px-3 py-2.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-800">Free trials vs same dates last year</p>
+            {data.trials.window && <p className="text-[11px] text-emerald-700/80">{data.trials.window.start === data.trials.window.end ? `${fmtWin(data.trials.window.start)} (complete day)` : `${fmtWin(data.trials.window.start)} – ${fmtWin(data.trials.window.end)} (complete days)`}</p>}
+            <div className="grid grid-cols-2 gap-3 mt-1.5">
+              {([
+                { label: 'Trials started', v: data.trials.started, p: data.trials.prevStarted, d: data.trials.startedChangePct, note: 'one per pack' },
+                { label: 'Families trialling', v: data.trials.families, p: data.trials.prevFamilies, d: data.trials.familiesChangePct, note: 'parent accounts' },
+              ]).map(t => (
+                <div key={t.label}>
+                  <p className="text-xs text-gray-600">{t.label}</p>
+                  <p className="flex items-baseline gap-1.5"><span className="text-lg font-bold text-gray-900 tabular-nums">{t.v != null ? t.v.toLocaleString() : '–'}</span>
+                    {t.d != null && <span className={`text-xs font-semibold ${t.d >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{t.d >= 0 ? '↑' : '↓'} {Math.abs(t.d)}%</span>}</p>
+                  <p className="text-[11px] text-gray-500">{t.p != null ? `Last year ${t.p.toLocaleString()}` : t.note}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Small facts: site conversion and new subscribers */}
+        {(data.conversion?.rate != null || subscribers != null) && (
+          <div className="mt-auto pt-3 border-t border-gray-100 space-y-2">
+            {data.conversion?.rate != null && (
+              <div>
+                <div className="flex items-baseline justify-between text-xs">
+                  <span className="text-gray-500">Site conversion (GA4)</span>
+                  <span className="flex items-baseline gap-1.5">
+                    <span className="font-semibold text-gray-900 tabular-nums">{data.conversion.rate.toFixed(2)}%</span>
+                    {data.conversion.deltaPp != null && data.conversion.direction && (
+                      <span className={data.conversion.direction === 'up' ? 'text-emerald-700' : data.conversion.direction === 'down' ? 'text-red-600' : 'text-gray-500'}>
+                        {data.conversion.direction === 'up' ? '↑' : data.conversion.direction === 'down' ? '↓' : '→'} {data.conversion.deltaPp > 0 ? '+' : ''}{data.conversion.deltaPp.toFixed(2)}pp
+                      </span>
+                    )}
+                  </span>
+                </div>
+                {data.conversion.reason && <p className="text-[11px] text-gray-500 leading-snug mt-0.5">{data.conversion.reason}</p>}
+              </div>
+            )}
+            {subscribers != null && (
+              <div className="flex items-baseline justify-between text-xs"><span className="text-gray-500">New HubSpot subscribers</span><span className="font-semibold text-emerald-700 tabular-nums">+{subscribers.toLocaleString()}</span></div>
             )}
           </div>
         )}
-      </div>
 
-      {/* Blake Education — show budget bar even before Meta connects */}
-      {name === 'Blake Education' && !data.adsConnected && (
-        <BudgetBar
-          spend={0}
-          budget={BLAKE_MONTHLY_MARKETING_BUDGET}
-          dayPct={dayPct}
-          isMonthly={isMonthly}
-          spendLabel="Meta not connected yet"
-          budgetLabel={`${AUD.format(BLAKE_MONTHLY_MARKETING_BUDGET)} monthly budget`}
-        />
-      )}
-
-      {/* Ad spend channel breakdown — shown whenever the brand has more than Google Ads (Meta is listed even at $0, e.g. a quiet day) and there is spend */}
-      {((data.totalSpend ?? data.spend) > 0 && (data.metaSpend !== undefined || (data.chatgptSpend ?? 0) > 0 || (data.bingSpend ?? 0) > 0)) && (
-        <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2.5 space-y-1.5">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Ad Spend</p>
-          {data.spend > 0 && (
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-500">Google Ads</span>
-              <span className="font-medium text-gray-700">{AUD.format(data.spend)}</span>
-            </div>
-          )}
-          {data.metaSpend !== undefined && (
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-500">Meta (Facebook)</span>
-              <span className="font-medium text-gray-700">{AUD.format(data.metaSpend!)}</span>
-            </div>
-          )}
-          {(data.bingSpend ?? 0) > 0 && (
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-500">Bing Ads</span>
-              <span className="font-medium text-gray-700">{AUD.format(data.bingSpend!)}</span>
-            </div>
-          )}
-          {(data.chatgptSpend ?? 0) > 0 && (
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-500">ChatGPT</span>
-              <span className="font-medium text-gray-700">{AUD.format(data.chatgptSpend!)}</span>
-            </div>
-          )}
-          {(data.bingRevenue ?? 0) > 0 && (
-            <p className="text-[11px] text-gray-400">Bing revenue (Google Analytics, incl. organic Bing): {AUD.format(data.bingRevenue!)}</p>
-          )}
-          <div className="flex justify-between text-xs border-t border-gray-200 pt-1.5 mt-1">
-            <span className="font-semibold text-gray-700">Total spend</span>
-            <span className="font-bold text-gray-900">{AUD.format(data.totalSpend ?? data.spend)}</span>
+        {data.metaError && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+            <p className="text-xs font-semibold text-amber-700">Meta ads not connected</p>
+            <p className="text-xs text-amber-600 mt-0.5 leading-relaxed">{data.metaError}</p>
           </div>
-        </div>
-      )}
-
-      {/* Free trials (Excel Test Zone): packs and families, with the same dates last year */}
-      {data.trials && (
-        <div className="rounded-lg border border-emerald-100 bg-emerald-50/50 px-3 py-2.5">
-          <p className="text-xs text-emerald-700 font-medium mb-1.5">
-            Free trials · {data.trials.window ? (() => { const f = (ymd: string) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'UTC' }); const w = data.trials!.window!; return w.start === w.end ? `${f(w.start)} (complete day)` : `${f(w.start)} – ${f(w.end)} (complete days)`; })() : ''} · vs same dates last year
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            {([
-              { label: 'Trials started', note: 'one per pack', v: data.trials.started, p: data.trials.prevStarted, d: data.trials.startedChangePct },
-              { label: 'Families trialling', note: 'parent accounts', v: data.trials.families, p: data.trials.prevFamilies, d: data.trials.familiesChangePct },
-            ]).map(t => (
-              <div key={t.label}>
-                <p className="text-[11px] text-gray-500">{t.label}</p>
-                <div className="flex flex-wrap items-baseline gap-1.5">
-                  <span className="text-lg font-bold text-gray-900">{t.v != null ? t.v.toLocaleString() : '–'}</span>
-                  {t.d != null && (
-                    <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-full ${t.d >= 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                      {t.d >= 0 ? '↑ +' : '↓ '}{t.d}%
-                    </span>
-                  )}
-                </div>
-                <p className="text-[11px] text-gray-400">{t.p != null ? `Last year: ${t.p.toLocaleString()}` : t.v == null ? 'not available' : t.note}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Site conversion — PP: BC orders/visits; ETZ: GA purchases/sessions */}
-      {data.conversion?.rate != null && (
-        <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2.5">
-          <div className="flex items-baseline justify-between gap-2">
-            <div>
-              <p className="text-xs text-indigo-600 font-medium mb-0.5">Site conversion · GA4 · this range</p>
-              <p className="text-lg font-bold text-indigo-900">
-                {data.conversion.rate.toFixed(2)}%
-              </p>
-            </div>
-            {data.conversion.deltaPp != null && data.conversion.direction && (
-              <span className={
-                'text-xs font-semibold px-2 py-0.5 rounded-full ' +
-                (data.conversion.direction === 'up'
-                  ? 'bg-emerald-100 text-emerald-700'
-                  : data.conversion.direction === 'down'
-                    ? 'bg-red-100 text-red-700'
-                    : 'bg-gray-100 text-gray-600')
-              }>
-                {data.conversion.direction === 'up' ? '↑' : data.conversion.direction === 'down' ? '↓' : '→'}{' '}
-                {data.conversion.deltaPp > 0 ? '+' : ''}{data.conversion.deltaPp.toFixed(2)}pp
-              </span>
-            )}
-          </div>
-          {(data.conversion.sessions != null || data.conversion.purchases != null) && (
-            <p className="text-xs text-indigo-500/80 mt-1">
-              {(data.conversion.purchases ?? 0).toLocaleString()} purchases ·{' '}
-              {(data.conversion.sessions ?? 0).toLocaleString()} sessions
+        )}
+        {!data.adsConnected && data.adsError && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+            <p className="text-xs font-semibold text-amber-700">Google Ads disconnected</p>
+            <p className="text-xs text-amber-600 mt-0.5 leading-relaxed">
+              {data.adsError.includes('invalid_grant') || data.adsError.includes('expired') || data.adsError.includes('revoked')
+                ? 'Refresh token expired (Google resets it every 7 days for unpublished apps). Run scripts/get-google-refresh-token.mjs and update GOOGLE_ADS_REFRESH_TOKEN in Vercel — or publish the OAuth app in Google Cloud Console for a permanent token.'
+                : 'Could not connect to Google Ads. Check GOOGLE_ADS_* env vars in Vercel.'}
             </p>
-          )}
-          {data.conversion.reason && (
-            <p className="text-xs text-indigo-800/80 mt-1.5 leading-snug">{data.conversion.reason}</p>
-          )}
-        </div>
-      )}
-
-      {/* HubSpot new contacts this month */}
-      {subscribers != null && (
-        <div className="flex items-center gap-3 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
-          <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wide shrink-0">HubSpot</span>
-          <span className="text-[11px] font-semibold text-emerald-600">+{subscribers.toLocaleString()}</span>
-          <span className="text-[11px] text-gray-400">new subscribers</span>
-        </div>
-      )}
-
-      {/* Meta ad account could not be read */}
-      {data.metaError && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-          <p className="text-xs font-semibold text-amber-700">Meta ads not connected</p>
-          <p className="text-xs text-amber-600 mt-0.5 leading-relaxed">{data.metaError}</p>
-        </div>
-      )}
-
-      {/* Google Ads token expired / disconnected notice */}
-      {!data.adsConnected && data.adsError && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-          <p className="text-xs font-semibold text-amber-700">Google Ads disconnected</p>
-          <p className="text-xs text-amber-600 mt-0.5 leading-relaxed">
-            {data.adsError.includes('invalid_grant') || data.adsError.includes('expired') || data.adsError.includes('revoked')
-              ? 'Refresh token expired (Google resets it every 7 days for unpublished apps). Run scripts/get-google-refresh-token.mjs and update GOOGLE_ADS_REFRESH_TOKEN in Vercel — or publish the OAuth app in Google Cloud Console for a permanent token.'
-              : 'Could not connect to Google Ads. Check GOOGLE_ADS_* env vars in Vercel.'}
-          </p>
-        </div>
-      )}
-
-      {/* Budget bar(s) — only when ads are connected */}
-      {data.adsConnected && (
-        data.totalMarketingBudget && data.totalMarketingBudget > 0 ? (
-          <>
-            {/* Primary bar: total tracked spend vs total marketing budget */}
-            <BudgetBar
-              spend={data.totalSpend ?? data.spend}
-              budget={data.totalMarketingBudget}
-              dayPct={dayPct}
-              isMonthly={isMonthly}
-              spendLabel={`${AUD.format(data.totalSpend ?? data.spend)} spent`}
-              budgetLabel={`${AUD.format(data.totalMarketingBudget)} monthly budget`}
-            />
-          </>
-        ) : (
-          <BudgetBar spend={data.spend} budget={data.budget} dayPct={dayPct} isMonthly={isMonthly} />
-        )
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -847,101 +718,95 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
   const { month, daysInMonth, currentDay, pp, etz, hsc, blake, combined, email, rangeLabel, isMonthly } = data;
   const dayPct = currentDay / daysInMonth;
 
+  const totalBudget = [pp, etz, hsc].reduce((s, b) => s + (b.totalMarketingBudget && b.totalMarketingBudget > 0 ? b.totalMarketingBudget : b.budget), 0) + (blake?.adsConnected ? blake.budget : 0);
+  const afterAds = combined.revenue - combined.spend;
+
   return (
     <div className="flex-1 overflow-y-auto bg-gray-50">
-      <div className="max-w-5xl mx-auto px-4 md:px-6 py-6 space-y-6">
+      <div className="max-w-[1400px] mx-auto px-4 md:px-8 py-6 space-y-6">
 
-        {/* ── Header ── */}
-        <div className="flex items-start justify-between gap-4">
+        {/* ── Header: period, range picker, refresh ── */}
+        <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">Executive Overview</h2>
-            <p className="text-sm text-gray-500">{rangeLabel ?? monthLabel(month)}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">Executive overview</p>
+            <h2 className="text-2xl font-bold text-gray-900">{rangeLabel ?? monthLabel(month)}</h2>
+            {isMonthly && currentDay < daysInMonth && (
+              <p className="text-sm text-gray-500">Day {currentDay} of {daysInMonth} · {Math.round(dayPct * 100)}% of the month gone</p>
+            )}
           </div>
-          <button
-            onClick={load}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors shrink-0"
-          >
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M11 6.5a4.5 4.5 0 1 1-.9-2.7"/>
-              <polyline points="11 2 11 5 8 5"/>
-            </svg>
-            Refresh
-          </button>
-        </div>
-
-        {/* ── Date range selector ── */}
-        <div className="flex flex-wrap gap-1.5">
-          {RANGE_OPTIONS.map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setDateRange(key)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                dateRange === key
-                  ? 'bg-gray-900 text-white border-gray-900'
-                  : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400 hover:text-gray-800'
-              }`}
-            >
-              {label}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap bg-white border border-gray-200 rounded-xl p-1 shadow-sm">
+              {RANGE_OPTIONS.map(({ key, label }) => (
+                <button key={key} onClick={() => setDateRange(key)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${dateRange === key ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <button onClick={load} className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-xl shadow-sm hover:bg-gray-50">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 6.5a4.5 4.5 0 1 1-.9-2.7"/><polyline points="11 2 11 5 8 5"/></svg>
+              Refresh
             </button>
-          ))}
+          </div>
         </div>
 
-
-        {/* ── KPI cards ── */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <KpiCard
-            label="Total Revenue"
-            value={AUD.format(combined.revenue)}
-            sub="PP + ETZ + HSC + Blake"
-            valueClass="text-emerald-700"
-            target={combined.revenueTarget}
-          />
-          <KpiCard
-            label="Total Ad Spend"
-            value={AUD.format(combined.spend)}
-            sub={`of ${AUD.format(pp.budget + etz.budget + hsc.budget + (blake?.adsConnected ? blake.budget : 0))} budget`}
-          />
-          <KpiCard
-            label="Revenue after ad spend"
-            value={combined.spend > 0 ? AUD.format(combined.revenue - combined.spend) : '—'}
-            sub="Revenue less ad spend"
-            valueClass={combined.revenue - combined.spend >= 0 ? 'text-emerald-600' : 'text-red-600'}
-          />
-          <KpiCard
-            label="Email Open Rate"
-            value={email?.connected && email.totalSends > 0 ? PCT(email.avgOpenRate) : '—'}
-            sub={email?.totalSends ? `${email.totalSends.toLocaleString()} sends · ${email.campaignCount} campaigns` : 'No emails this month'}
-            valueClass={email?.avgOpenRate && email.avgOpenRate > 0.20 ? 'text-emerald-700' : email?.avgOpenRate && email.avgOpenRate < 0.15 ? 'text-red-600' : ''}
-          />
+        {/* ── Group summary ── */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          <SummaryTile label="Total revenue" value={AUD.format(combined.revenue)} sub="Pascal Press, Excel Test Zone, Excel HSC Copilot and Blake">
+            {combined.revenueTarget != null && combined.revenueTarget > 0 && <TargetStatus revenue={combined.revenue} target={combined.revenueTarget} dayPct={dayPct} isMonthly={isMonthly} compact />}
+          </SummaryTile>
+          <SummaryTile label="Total ad spend" value={AUD.format(combined.spend)} sub={totalBudget > 0 ? `Budget ${AUD.format(totalBudget)} a month` : undefined}>
+            {totalBudget > 0 && isMonthly && (() => {
+              const projected = dayPct > 0.05 && dayPct < 1 ? combined.spend / dayPct : null;
+              const over = combined.spend > totalBudget;
+              return (
+                <div className="space-y-1.5">
+                  <div className="flex items-baseline justify-between text-sm">{over ? <span className="font-semibold text-red-600">{AUD.format(combined.spend - totalBudget)} over budget</span> : <span className="font-semibold text-gray-800">{AUD.format(totalBudget - combined.spend)} left</span>}</div>
+                  <PaceBar share={combined.spend / totalBudget} color={over || (projected != null && projected > totalBudget * 1.02) ? 'bg-red-400' : 'bg-blue-500'} marker={dayPct} />
+                  {projected != null && <p className={`text-xs ${projected > totalBudget * 1.02 ? 'text-red-600' : 'text-emerald-700'}`}>On pace to spend {fmtK(projected)}{projected > totalBudget * 1.02 ? ` · ${fmtK(projected - totalBudget)} over` : ''}</p>}
+                </div>
+              );
+            })()}
+          </SummaryTile>
+          <SummaryTile label="Revenue after ad spend" value={combined.spend > 0 ? AUD.format(afterAds) : '—'} valueClass={afterAds >= 0 ? 'text-emerald-600' : 'text-red-600'}
+            sub={combined.spend > 0 && combined.revenue > 0 ? <>Ads took <b className="text-gray-700">{Math.round((combined.spend / combined.revenue) * 100)}%</b> of revenue · {(combined.revenue / combined.spend).toFixed(1)}x return on ad spend</> : 'Revenue less ad spend'} />
+          <SummaryTile label="Email open rate" value={email?.connected && email.totalSends > 0 ? PCT(email.avgOpenRate) : '—'}
+            valueClass={email?.avgOpenRate && email.avgOpenRate > 0.20 ? 'text-emerald-600' : email?.avgOpenRate && email.avgOpenRate < 0.15 ? 'text-red-600' : 'text-gray-900'}
+            sub={email?.totalSends ? <>{email.totalSends.toLocaleString()} sends · {email.campaignCount} campaigns · click rate {PCT(email.avgClickRate)}<br /><span className="text-gray-400">Benchmark: opens 15–25%, clicks 2–5%</span></> : 'No emails this period'} />
         </div>
 
-        {/* ── Brand cards ── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <BrandCard name="Pascal Press"      data={pp}    dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.pp    ?? null} />
-          <BrandCard name="Excel Test Zone"   data={etz}   dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.etz   ?? null} />
-          <BrandCard name="Excel HSC Copilot" data={hsc}   dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.hsc   ?? null} />
-          {esgState === 'loading' && (
-            <div className="bg-white rounded-xl border border-gray-200 p-5 animate-pulse">
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700">Excel Study Guides</span>
-              <div className="mt-4 h-6 w-28 rounded bg-gray-100" /><div className="mt-2 h-4 w-20 rounded bg-gray-100" />
-            </div>
-          )}
-          {esgState === 'error' && (
-            <div className="bg-white rounded-xl border border-amber-200 p-5">
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700">Excel Study Guides</span>
-              <p className="mt-3 text-sm font-semibold text-amber-700">Could not load this card</p>
-              <p className="mt-1 text-xs text-amber-600 leading-relaxed">{esgNote}</p>
-              <button onClick={() => loadEsg(data.startDate, data.endDate)} className="mt-3 px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200">Retry</button>
-            </div>
-          )}
-          {esgState === 'ok' && esg && (
-            <BrandCard name="Excel Study Guides" data={esg} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('business-units')} linkLabel="View Business Units →" />
-          )}
-          {blake && (
-            <BrandCard name="Blake Education" data={blake} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.blake ?? null} />
-          )}
-          {blake && <BlakeExtraCard />}
+        {/* ── Brands ── */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">By brand</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-stretch">
+            <BrandCard name="Pascal Press" data={pp} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.pp ?? null} />
+            <BrandCard name="Excel Test Zone" data={etz} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.etz ?? null} />
+            <BrandCard name="Excel HSC Copilot" data={hsc} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.hsc ?? null} />
+            {esgState === 'loading' && (
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 animate-pulse">
+                <span className="flex items-center gap-2 text-sm font-semibold text-gray-900"><i className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: BRAND_COLOR['Excel Study Guides'] }} />Excel Study Guides</span>
+                <div className="mt-4 h-7 w-32 rounded bg-gray-100" /><div className="mt-2 h-4 w-24 rounded bg-gray-100" /><div className="mt-6 h-2 w-full rounded bg-gray-100" />
+              </div>
+            )}
+            {esgState === 'error' && (
+              <div className="bg-white rounded-2xl border border-amber-200 shadow-sm p-5">
+                <span className="flex items-center gap-2 text-sm font-semibold text-gray-900"><i className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: BRAND_COLOR['Excel Study Guides'] }} />Excel Study Guides</span>
+                <p className="mt-3 text-sm font-semibold text-amber-700">Could not load this card</p>
+                <p className="mt-1 text-xs text-amber-600 leading-relaxed">{esgNote}</p>
+                <button onClick={() => loadEsg(data.startDate, data.endDate)} className="mt-3 px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200">Retry</button>
+              </div>
+            )}
+            {esgState === 'ok' && esg && (
+              <BrandCard name="Excel Study Guides" data={esg} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('business-units')} linkLabel="View Business Units →" />
+            )}
+            {blake && (
+              <BrandCard name="Blake Education" data={blake} dayPct={dayPct} isMonthly={isMonthly} onNavigate={() => onNavigate('finance')} subscribers={hsData?.blake ?? null}
+                budgetOverride={!blake.adsConnected ? { budget: BLAKE_MONTHLY_MARKETING_BUDGET, note: 'Meta not connected yet' } : undefined} />
+            )}
+          </div>
         </div>
+
+        {blake && <BlakeExtraCard />}
 
         {/* ── Pascal Press — All-Time Sales Trend ── */}
         <SalesTrendCard />
@@ -949,51 +814,8 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
         {/* ── Pascal Press — Abandoned Cart Rate ── */}
         <PPAbandonedCartCard />
 
-        {/* ── Email snapshot ── */}
-        {email && (
-          <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-gray-700">Email Performance</h3>
-              <button onClick={() => onNavigate('email')} className="text-xs text-blue-600 hover:underline">
-                View Email tab →
-              </button>
-            </div>
-            {email.connected && email.totalSends > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div>
-                  <p className="text-xs text-gray-500 mb-0.5">Open Rate</p>
-                  <p className={`text-xl font-bold ${email.avgOpenRate > 0.20 ? 'text-emerald-600' : email.avgOpenRate < 0.15 ? 'text-red-600' : 'text-amber-600'}`}>
-                    {PCT(email.avgOpenRate)}
-                  </p>
-                  <p className="text-xs text-gray-400">Benchmark: 15–25%</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500 mb-0.5">Click Rate</p>
-                  <p className={`text-xl font-bold ${email.avgClickRate > 0.025 ? 'text-emerald-600' : 'text-amber-600'}`}>
-                    {PCT(email.avgClickRate)}
-                  </p>
-                  <p className="text-xs text-gray-400">Benchmark: 2–5%</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500 mb-0.5">Total Sends</p>
-                  <p className="text-xl font-bold text-gray-900">{email.totalSends.toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500 mb-0.5">Campaigns Sent</p>
-                  <p className="text-xl font-bold text-gray-900">{email.campaignCount}</p>
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-gray-400 italic">
-                {email.connected ? 'No emails sent this month yet.' : 'HubSpot not connected.'}
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* ── Legend ── */}
         <p className="text-xs text-gray-400 text-center pb-2">
-          Data refreshes every 5 minutes · Budget pacing line (|) marks today's position in the month
+          Figures refresh every few minutes. On each bar, the small grey tick marks where an even pace through the month would be.
         </p>
 
       </div>
