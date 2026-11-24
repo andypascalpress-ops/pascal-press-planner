@@ -408,8 +408,3 @@ export async function buildEtzExecData(asOfIn?: string, adLive?: (month: string,
 
 export type EtzExecData = Awaited<ReturnType<typeof buildEtzExecData>>;
 
-/** Temporary check: order ids and exact times of online rows in a range (no customer details), to line up with an export. */
-export async function cardTimes(start: string, end: string) {
-  const raw = await fetchUmsRows(start, end);
-  return raw.filter(r => str(r.payment_method).toUpperCase() === 'CARD').map(r => [str(r.id), str(r.purchase_date), num(r.total)]);
-}
