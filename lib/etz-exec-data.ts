@@ -78,12 +78,12 @@ const str = (v: unknown) => (v == null ? '' : String(v).trim());
 export interface Dataset {
   asOf: string;
   orders: Order[]; trials: Trial[]; schools: SchoolTx[];
-  notes: { duplicateRows: number; duplicateValue: number; duplicateLastSeen: string | null; manualRows: number; unknownRows: number; zeroCardRows: number; excludedOrders: number; rowsWithoutParent: number };
+  notes: { duplicateRows: number; duplicateValue: number; duplicateLastSeen: string | null; manualRows: number; unknownRows: number; zeroCardRows: number; excludedOrders: number; rowsWithoutParent: number; schoolRowsWithoutId: number };
 }
 
 export function normalise(raw: UmsRawRow[], asOf: string): Dataset {
   const orders: Order[] = [], trials: Trial[] = [], schools: SchoolTx[] = [];
-  const notes = { duplicateRows: 0, duplicateValue: 0, duplicateLastSeen: null as string | null, manualRows: 0, unknownRows: 0, zeroCardRows: 0, excludedOrders: 0, rowsWithoutParent: 0 };
+  const notes = { duplicateRows: 0, duplicateValue: 0, duplicateLastSeen: null as string | null, manualRows: 0, unknownRows: 0, zeroCardRows: 0, excludedOrders: 0, rowsWithoutParent: 0, schoolRowsWithoutId: 0 };
   const seen = new Set<string>();
   const excluded = excludedOrders();
   const sorted = [...raw].sort((a, b) => str(a.purchase_date).localeCompare(str(b.purchase_date)));
@@ -98,18 +98,22 @@ export function normalise(raw: UmsRawRow[], asOf: string): Dataset {
     const items = Array.isArray(r.items) ? r.items : [];
     if (method === 'MANUAL') { notes.manualRows += 1; continue; }
     if (method !== 'CARD' && method !== 'INVOICE' && method !== 'FREE_TRIAL') { notes.unknownRows += 1; continue; }
+    // school orders carry no parent id: their revenue still counts; schools can only be counted where an id is present
+    if (method === 'INVOICE') { schools.push({ uid, day, total }); if (!uid) notes.schoolRowsWithoutId += 1; continue; }
     if (!uid) { notes.rowsWithoutParent += 1; continue; }
     if (method === 'FREE_TRIAL') {
       for (const it of items.length ? items : [{ name: 'Unknown' }]) trials.push({ uid, day, at: d.getTime(), pack: str(it.name) || 'Unknown' });
       continue;
     }
-    if (method === 'INVOICE') { schools.push({ uid, day, total }); continue; }
     // CARD (online)
     if (total <= 0) { notes.zeroCardRows += 1; continue; }
     if (excluded.some(x => x.day === day && Math.abs(x.total - total) < 0.01)) { notes.excludedOrders += 1; continue; }
     const names = items.map(it => `${str(it.name)}x${num(it.quantity) || 1}`).sort().join('|');
     const key = `${uid}|${sydMinute.format(d)}|${names}|${total.toFixed(2)}`;
-    if (seen.has(key) && names.toLowerCase().includes('bundle')) {
+    // a duplicate is only dropped at full price on both rows, as in the hand-made report
+    const listPrice = items.reduce((t, it) => t + num(it.unit_price) * (num(it.quantity) || 1), 0);
+    const fullPrice = listPrice > 0 && total >= listPrice - 0.01;
+    if (seen.has(key) && fullPrice && names.toLowerCase().includes('bundle')) {
       notes.duplicateRows += 1; notes.duplicateValue += total;
       if (!notes.duplicateLastSeen || day > notes.duplicateLastSeen) notes.duplicateLastSeen = day;
       continue;
@@ -175,7 +179,7 @@ export function windowTotals(ds: Dataset, ix: Index, start: string, end: string)
   return {
     start, end,
     online, orders: os.length, aov: os.length ? online / os.length : null,
-    schools: schoolRev, payingSchools: new Set(ss.filter(s => s.total > 0).map(s => s.uid)).size, allSchools: new Set(ss.map(s => s.uid)).size,
+    schools: schoolRev, payingSchools: new Set(ss.filter(s => s.total > 0 && s.uid).map(s => s.uid)).size, allSchools: new Set(ss.filter(s => s.uid).map(s => s.uid)).size,
     total: online + schoolRev,
     customers: customers.size, trialCustomers: trialUids.size, trialBought,
     newCustomers: newC, returning: ret, byLine,
