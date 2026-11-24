@@ -85,6 +85,8 @@ export function normalise(raw: UmsRawRow[], asOf: string): Dataset {
   const orders: Order[] = [], trials: Trial[] = [], schools: SchoolTx[] = [];
   const notes = { duplicateRows: 0, duplicateValue: 0, duplicateLastSeen: null as string | null, manualRows: 0, unknownRows: 0, zeroCardRows: 0, excludedOrders: 0, rowsWithoutParent: 0, schoolRowsWithoutId: 0 };
   const seen = new Set<string>();
+  const lastAt = new Map<string, number>();
+  const dupBy = new Map<string, number>();
   const excluded = excludedOrders();
   const sorted = [...raw].sort((a, b) => str(a.purchase_date).localeCompare(str(b.purchase_date)));
   // full price = the highest price each item set has sold for (promotional prices are lower)
@@ -118,10 +120,12 @@ export function normalise(raw: UmsRawRow[], asOf: string): Dataset {
     const fullPrice = total >= (fullPriceOf.get(names) ?? Infinity) - 0.01;
     if (seen.has(key) && fullPrice && names.toLowerCase().includes('bundle')) {
       notes.duplicateRows += 1; notes.duplicateValue += total;
+      { const k = `${names} @ ${total.toFixed(0)} (gap ${Math.round((d.getTime() - (lastAt.get(key) ?? d.getTime())) / 1000)}s)`.replace(/ \(gap \d+s\)/, d.getTime() - (lastAt.get(key) ?? 0) < 5000 ? ' (<5s)' : ' (5-60s)'); dupBy.set(k, (dupBy.get(k) ?? 0) + 1); }
       if (!notes.duplicateLastSeen || day > notes.duplicateLastSeen) notes.duplicateLastSeen = day;
       continue;
     }
     seen.add(key);
+    lastAt.set(key, d.getTime());
     let lines = items.map(it => ({ name: str(it.name) || 'Unknown', amount: num(it.total) || num(it.unit_price) * (num(it.quantity) || 1) }));
     const sum = lines.reduce((s, l) => s + l.amount, 0);
     if (!lines.length) lines = [{ name: 'Unknown', amount: total }];
@@ -130,6 +134,7 @@ export function normalise(raw: UmsRawRow[], asOf: string): Dataset {
     orders.push({ id: str(r.id), uid, day, at: d.getTime(), total, lines: lines.map(l => ({ ...l, line: productLine(l.name) })) });
   }
   notes.duplicateValue = Math.round(notes.duplicateValue);
+  (notes as Record<string, unknown>).duplicateBreakdown = [...dupBy.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25);
   return { asOf, orders, trials, schools, notes };
 }
 
