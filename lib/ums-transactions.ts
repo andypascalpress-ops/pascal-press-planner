@@ -248,3 +248,42 @@ export async function fetchUmsTransactionSummary(start: string, end: string): Pr
   const familyBreakdown = { families: trialFam.size, returning: [...trialFam.values()].filter(f => f.anyReturning).length, newOnly: [...trialFam.values()].filter(f => !f.anyReturning).length, noUserId: trialNoUser };
   return { rows, fieldNames, topLevelKeys, sampleDateFormat, byType, trialRows, trialFamilies: familySet.size, repeatTrialRows: repeat, trialsByDay, dupCheck, familyBreakdown, orders: { ...orders, topItems: [...itemQty.entries()].map(([name, quantity]) => ({ name, quantity })).sort((a, b) => b.quantity - a.quantity).slice(0, 12) } };
 }
+
+// ---------------------------------------------------------------------------
+// Raw transaction rows for a long range (used by the ETZ executive report). Each calendar month is fetched separately,
+// a few at a time; finished months are cached for a day. The rows stay on the server: callers return totals only.
+// ---------------------------------------------------------------------------
+
+export interface UmsRawRow {
+  id?: unknown; user_id?: unknown; purchase_date?: unknown; status?: unknown; total?: unknown;
+  payment_method?: unknown; trial_end_date?: unknown; returning_customer?: unknown;
+  items?: { type?: unknown; id?: unknown; name?: unknown; quantity?: unknown; unit_price?: unknown; total?: unknown }[];
+}
+
+export async function fetchUmsRows(start: string, end: string, parallel = 4): Promise<UmsRawRow[]> {
+  const token = (process.env.UMS_API_TOKEN ?? '').trim();
+  if (!token) throw new Error('UMS_API_TOKEN is not set');
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const chunks = monthChunks(start, end, 120);
+  const out: UmsRawRow[][] = new Array(chunks.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < chunks.length) {
+      const i = next++;
+      const chunk = chunks[i]!;
+      const finished = chunk.end < today.slice(0, 8) + '01';
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const { rows } = findRows(await fetchTransactionsChunk(token, chunk, { next: { revalidate: finished ? 86_400 : 900 } }));
+          out[i] = rows as UmsRawRow[];
+          lastErr = null;
+          break;
+        } catch (e) { lastErr = e; await new Promise(r => setTimeout(r, 800 * (attempt + 1))); }
+      }
+      if (lastErr) throw lastErr;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(parallel, chunks.length) }, worker));
+  return out.flat();
+}
