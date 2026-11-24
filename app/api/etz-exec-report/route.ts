@@ -25,6 +25,9 @@ async function etzAdSpend(month: string, start: string, end: string): Promise<{ 
 }
 
 async function htmlToPdf(html: string): Promise<Uint8Array> {
+  // Vercel runs on Amazon Linux 2023 but does not set the Lambda variable the Chromium package looks for; without it the
+  // package skips unpacking Chrome's system libraries (libnss3 and friends) and Chrome cannot start.
+  if (!process.env.AWS_LAMBDA_JS_RUNTIME && !process.env.AWS_EXECUTION_ENV) process.env.AWS_LAMBDA_JS_RUNTIME = `nodejs${process.versions.node.split('.')[0] === '20' ? '20' : '22'}.x`;
   const chromium = (await import('@sparticuz/chromium')).default;
   const puppeteer = await import('puppeteer-core');
   const browser = await puppeteer.launch({
