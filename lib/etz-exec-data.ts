@@ -118,7 +118,9 @@ export function normalise(raw: UmsRawRow[], asOf: string): Dataset {
     const key = `${uid}|${sydMinute.format(d)}|${names}|${total.toFixed(2)}`;
     // a duplicate is only dropped at full price on both rows, as in the hand-made report
     const fullPrice = total >= (fullPriceOf.get(names) ?? Infinity) - 0.01;
-    if (seen.has(key) && fullPrice && names.toLowerCase().includes('bundle')) {
+    // a logging duplicate lands within a few seconds of the original; rows further apart are real repeat purchases
+    const nearTwin = seen.has(key) && d.getTime() - (lastAt.get(key) ?? -Infinity) < 5000;
+    if (nearTwin && fullPrice && names.toLowerCase().includes('bundle')) {
       notes.duplicateRows += 1; notes.duplicateValue += total;
       { const k = `${names} @ ${total.toFixed(0)} (gap ${Math.round((d.getTime() - (lastAt.get(key) ?? d.getTime())) / 1000)}s)`.replace(/ \(gap \d+s\)/, d.getTime() - (lastAt.get(key) ?? 0) < 5000 ? ' (<5s)' : ' (5-60s)'); dupBy.set(k, (dupBy.get(k) ?? 0) + 1); }
       if (!notes.duplicateLastSeen || day > notes.duplicateLastSeen) notes.duplicateLastSeen = day;
