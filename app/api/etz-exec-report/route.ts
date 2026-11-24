@@ -5,6 +5,7 @@
  * Access: the planner login cookie, or header  Authorization: Bearer <REPORT_TOKEN>  (for Power Automate).
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { unstable_cache } from 'next/cache';
 import { checkReportToken } from '@/lib/report-auth';
 import { buildEtzExecData } from '@/lib/etz-exec-data';
 import { renderEtzExecHtml } from '@/lib/etz-exec-html';
@@ -14,7 +15,7 @@ import { fetchEtzMetaSpend } from '@/lib/meta-ads';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-async function etzAdSpend(month: string, start: string, end: string): Promise<{ google: number; meta: number }> {
+async function etzAdSpendLive(month: string, start: string, end: string): Promise<{ google: number; meta: number }> {
   let google = 0;
   try {
     if (month >= '2026-07') google = (await fetchMonthlySpend(buildConfig('etz'), start, end)).reduce((s, r) => s + r.actualSpend, 0);
@@ -22,6 +23,13 @@ async function etzAdSpend(month: string, start: string, end: string): Promise<{ 
   } catch { google = 0; }
   const meta = await fetchEtzMetaSpend(start, end).catch(() => 0);
   return { google, meta };
+}
+
+// finished months do not change: keep their spend for a day so each run only asks the ad platforms about the current month
+const etzAdSpendCached = unstable_cache(async (month: string, start: string, end: string) => etzAdSpendLive(month, start, end), ['etz-exec-ad-spend-v1'], { revalidate: 86_400 });
+async function etzAdSpend(month: string, start: string, end: string) {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney' }).format(new Date());
+  return end < today.slice(0, 8) + '01' ? etzAdSpendCached(month, start, end) : etzAdSpendLive(month, start, end);
 }
 
 async function htmlToPdf(html: string): Promise<Uint8Array> {

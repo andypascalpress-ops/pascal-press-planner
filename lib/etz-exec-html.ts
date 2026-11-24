@@ -50,7 +50,7 @@ function bars(o: {
   const padL = 46, padR = 8, padT = o.brackets?.length ? 26 : 14, padB = o.sub ? 30 : 18;
   const W = o.w, H = o.h, cw = W - padL - padR, ch = H - padT - padB, n = o.cats.length;
   const totals = o.cats.map((_, i) => o.mode === 'stack' ? o.series.reduce((s, se) => s + Math.max(0, se.values[i] ?? 0), 0) : Math.max(...o.series.map(se => se.values[i] ?? 0)));
-  const max = niceMax(Math.max(...totals, o.dashedLine?.value ?? 0, 1));
+  const max = niceMax(Math.max(...totals, o.dashedLine?.value ?? 0, 1e-9));
   const y = (v: number) => padT + ch - (v / max) * ch;
   const step = cw / n, bw = o.mode === 'stack' ? step * 0.62 : (step * 0.78) / o.series.length;
   const ticks = o.ticks ?? 4;
@@ -94,7 +94,7 @@ function lines(o: {
 }): string {
   const padL = 50, padR = 60, padT = 16, padB = 18, W = o.w, H = o.h, cw = W - padL - padR, ch = H - padT - padB;
   const all = o.series.flatMap(s => s.values.filter((v): v is number => v != null));
-  const max = niceMax(Math.max(...all, 1)), min = o.yMin ?? 0;
+  const max = niceMax(Math.max(...all, 1e-9)), min = o.yMin ?? 0;
   const x = (i: number) => padL + (o.n <= 1 ? 0 : (i / (o.n - 1)) * cw);
   const y = (v: number) => padT + ch - ((v - min) / (max - min)) * ch;
   const ticks = o.ticks ?? 4;
@@ -255,7 +255,7 @@ function page3(d: D) {
   const cust = [row('Trial customers', l.trialCustomers, f.trialCustomers, false), row('Trial customers who bought in the period', l.trialBought, f.trialBought, false), row('Paying online customers', l.customers, f.customers, false)];
   if (d.schoolCountsAvailable) cust.push(row('Schools, total (incl. $0 allocations)', l.allSchools, f.allSchools, false), row('Schools, paying', l.payingSchools, f.payingSchools, false));
   const fb = d.fyMonthlyBars, cats = fb.map(x => monName(x.month));
-  const mini = (key: 'online' | 'schools' | 'trials' | 'paying', fmt: (n: number) => string) => bars({ cats, mode: 'group', w: 300, h: 150, fmt, labelFmt: fmt, series: [{ name: 'LY', color: C.grey, values: fb.map(x => x.ly[key]) }, { name: 'TY', color: C.blue, values: fb.map(x => x.ty[key]) }] });
+  const mini = (key: 'online' | 'schools' | 'trials' | 'paying', fmt: (n: number) => string) => bars({ cats, mode: 'group', w: 300, h: 185, fmt, labelFmt: fmt, series: [{ name: 'LY', color: C.grey, values: fb.map(x => x.ly[key]) }, { name: 'TY', color: C.blue, values: fb.map(x => x.ty[key]) }] });
   const lineDiffs = (['Bundles', 'NAPLAN', 'Selective & Scholarship', 'Opportunity Class', 'Assessment / Skills Check'] as const).map(k => `${k} ${signedPct(change(f.byLine[k], l.byLine[k]))}`).join(', ');
   const read = `Revenue is ${signedPct(change(f.total, l.total))} (${moneyK1(f.total)} vs ${moneyK1(l.total)}); schools ${moneyK1(f.schools)} vs ${moneyK1(l.schools)}, online ${moneyK1(f.online)} vs ${moneyK1(l.online)} (${signedPct(change(f.online, l.online))}). Paying online customers ${int(f.customers)} vs ${int(l.customers)} (${signedPct(change(f.customers, l.customers))}); trials ${int(f.trialCustomers)} vs ${int(l.trialCustomers)} (${signedPct(change(f.trialCustomers, l.trialCustomers))}). By product line: ${lineDiffs}.`;
   return page(d, 3, 'Financial year to date vs last year: revenue streams, trial customers, paying customers and schools', `
@@ -357,11 +357,13 @@ function page6(d: D) {
   ].join('');
   // diverging chart
   const all = [...b.months.map(x => ({ m: x.month, pos: x.newCustomers, neg: x.lapsed, sched: x.month === cm ? b.lapseRestOfMonth : 0 })), ...b.scheduled.map(x => ({ m: x.month, pos: 0, neg: 0, sched: x.lapsing }))];
-  const W = 1040, H = 210, padL = 46, padT = 14, padB = 18, cw = W - padL - 8, ch = H - padT - padB;
+  const W = 1040, H = 255, padL = 46, padT = 14, padB = 18, cw = W - padL - 8, ch = H - padT - padB;
   const maxPos = niceMax(Math.max(...all.map(x => x.pos), 1)), maxNeg = niceMax(Math.max(...all.map(x => x.neg + x.sched), 1));
-  const tot = maxPos + maxNeg, zero = padT + (maxPos / tot) * ch, sc = ch / tot, step = cw / all.length, bw = step * 0.62;
+  const tickStep = niceMax(Math.max(maxPos, maxNeg) / 3); const topT = Math.ceil(Math.max(...all.map(x => x.pos), 1) / tickStep) * tickStep, botT = Math.ceil(Math.max(...all.map(x => x.neg + x.sched), 1) / tickStep) * tickStep;
+  const tot = topT + botT, zero = padT + (topT / tot) * ch, sc = ch / tot, step = cw / all.length, bw = step * 0.62;
   let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" class="chart">`;
-  for (const v of [maxPos, maxPos / 2, 0, -maxNeg / 3, (-2 * maxNeg) / 3, -maxNeg]) svg += `<line x1="${padL}" x2="${W - 8}" y1="${zero - v * sc}" y2="${zero - v * sc}" stroke="${v === 0 ? C.greyDark : C.grid}"/><text x="${padL - 5}" y="${zero - v * sc + 3}" text-anchor="end" class="ax">${v < 0 ? '−' : ''}${int(Math.abs(v))}</text>`;
+  const tickVals: number[] = []; for (let v = topT; v >= -botT - 1e-9; v -= tickStep) tickVals.push(Math.round(v));
+  for (const v of tickVals) svg += `<line x1="${padL}" x2="${W - 8}" y1="${zero - v * sc}" y2="${zero - v * sc}" stroke="${v === 0 ? C.greyDark : C.grid}"/><text x="${padL - 5}" y="${zero - v * sc + 3}" text-anchor="end" class="ax">${v < 0 ? '−' : ''}${int(Math.abs(v))}</text>`;
   all.forEach((x, i) => {
     const cx = padL + i * step + step / 2;
     if (x.pos) svg += `<rect x="${cx - bw / 2}" y="${zero - x.pos * sc}" width="${bw}" height="${x.pos * sc}" fill="${C.blue}"/><text x="${cx}" y="${zero - x.pos * sc - 3}" text-anchor="middle" class="vl">+${int(x.pos)}</text>`;
@@ -386,13 +388,14 @@ function page6(d: D) {
     ${howto(`Counts are customers (parent accounts), not packs: a parent who buys two year levels counts once. A customer is active for 12 months after each paid online purchase; a purchase while still active extends it. New = became active in the month (first purchase, or returning after lapsing). Lapsed = 12 months passed since their last purchase. The data starts in ${monY(d.dataStart.slice(0, 7))}, so lapses are only complete from ${monY(b.months[0]?.month ?? cm)}.`)}`);
 }
 
+const o_h = (_k: string) => 205;
 function curveChart(d: D, key: 'onlineCustomers' | 'online' | 'payingSchools' | 'schools' | 'trials', color: string, fmt: (n: number) => string, label: string) {
   const ty = d.fyCurves.ty, ly = d.fyCurves.ly, n = ly.length;
   const months = ['Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
   const xl = ly.map((p, i) => (p.day.slice(8) === '15' ? { i, text: months[(Number(p.day.slice(5, 7)) + 5) % 12]! } : null)).filter(Boolean) as { i: number; text: string }[];
   const tyVals = ly.map((_, i) => (i < ty.length ? ty[i]![key] : null));
   const last = ty[ty.length - 1]?.[key] ?? 0, lySame = ly[ty.length - 1]?.[key] ?? 0, lyEnd = ly[n - 1]?.[key] ?? 0;
-  return lines({ n, xLabels: xl, w: 520, h: 150, fmt, vline: { i: ty.length - 1 }, note: `This FY to ${dm(d.asOf)}: ${fmt(last)} | LY same day: ${fmt(lySame)} ${signedPct(change(last, lySame))}`,
+  return lines({ n, xLabels: xl, w: 520, h: o_h(key), fmt, vline: { i: ty.length - 1 }, note: `This FY to ${dm(d.asOf)}: ${fmt(last)} | LY same day: ${fmt(lySame)} ${signedPct(change(last, lySame))}`,
     series: [{ name: 'LY', color: C.grey, values: ly.map(p => p[key]), endLabel: `${fmt(lyEnd)} full LY` }, { name: label, color, values: tyVals, width: 2.4, endLabel: '' }] });
 }
 
@@ -447,17 +450,14 @@ function page9(d: D) {
     tile(`Ad cost per new buyer, ${lm}`, money(L?.cpn), `FYTD ${money(F.cpn)} | Dec–Feb ${money(P.cpn)}`),
   ].join('');
   const cats = ads.map(a => `${monY(a.month)}${a.partial ? ' *' : ''}`);
-  const spend = bars({ cats, mode: 'stack', w: 520, h: 150, fmt: v => moneyK1(v), labels: 'none', series: [{ name: 'Google', color: C.blue, values: ads.map(a => a.google) }, { name: 'Meta', color: C.purple, values: ads.map(a => a.meta) }] })
-    .replace('</svg>', '') + ads.map(() => '').join('') + '</svg>';
-  const pctLabels = bars({ cats, mode: 'stack', w: 520, h: 150, fmt: v => moneyK1(v), labelFmt: () => '', series: [{ name: 'Google', color: C.blue, values: ads.map(a => a.google) }, { name: 'Meta', color: C.purple, values: ads.map(a => a.meta) }] });
-  void spend;
+  const pctLabels = bars({ cats, mode: 'stack', w: 520, h: 185, fmt: v => moneyK1(v), labelFmt: () => '', series: [{ name: 'Google', color: C.blue, values: ads.map(a => a.google) }, { name: 'Meta', color: C.purple, values: ads.map(a => a.meta) }] });
   const withPct = pctLabels.replace(/<text([^>]*) class="vl">([^<]*)<\/text>/g, '');
   // add % labels above stacks
   const maxT = niceMax(Math.max(...ads.map(a => a.total ?? 0), 1));
   const step = (520 - 46 - 8) / ads.length;
-  const pctSvg = withPct.replace('</svg>', ads.map((a, i) => `<text x="${46 + i * step + step / 2}" y="${14 + (150 - 14 - 18) * (1 - (a.total ?? 0) / maxT) - 3}" text-anchor="middle" class="vl sm">${pctOf(a.pctOfSales)}</text>`).join('') + '</svg>');
+  const pctSvg = withPct.replace('</svg>', ads.map((a, i) => `<text x="${46 + i * step + step / 2}" y="${14 + (185 - 14 - 18) * (1 - (a.total ?? 0) / maxT) - 3}" text-anchor="middle" class="vl sm">${pctOf(a.pctOfSales)}</text>`).join('') + '</svg>');
   const cpn = complete;
-  const cpnChart = bars({ cats: cpn.map(a => monY(a.month)), mode: 'group', w: 520, h: 150, fmt: v => money(v), labelFmt: v => money(v), series: [{ name: 'cpn', color: C.red, values: cpn.map(a => a.costPerNew) }] });
+  const cpnChart = bars({ cats: cpn.map(a => monY(a.month)), mode: 'group', w: 520, h: 185, fmt: v => money(v), labelFmt: v => money(v), series: [{ name: 'cpn', color: C.red, values: cpn.map(a => a.costPerNew) }] });
   const rows = ads.map(a => [`${monY(a.month)}${a.partial ? ' *' : ''}`, money(a.sales), money(a.google), money(a.meta), `<b>${money(a.total)}</b>`, pctOf(a.pctOfSales), a.salesPerDollar?.toFixed(1) ?? '–', money(a.salesLessAds), int(a.paying), money(a.costPerPaying), int(a.newBuyers), `<b>${money(a.costPerNew)}</b>`, int(a.trialCustomers), money(a.costPerTrial)]);
   const cur = ads[ads.length - 1];
   const what = cur && lastC ? `<b>Seasonality:</b> ETZ is highly seasonal, driven by NAPLAN testing in March, and peak buying is always Dec–Feb. ${fullMonth(cur.month)} spend to date is ${money(cur.total)} (Google ${money(cur.google)}, Meta ${money(cur.meta)}): ${pctOf(cur.pctOfSales)} of online sales and $${cur.salesPerDollar?.toFixed(2) ?? '–'} back per $1, against ${pctOf(L?.pct)} and $${L?.per?.toFixed(2) ?? '–'} in ${fullMonth(lastC.month)}. Blended ad cost per new buyer is ${money(cur.costPerNew)} in ${fullMonth(cur.month)} vs ${money(lastC.costPerNew)} in ${fullMonth(lastC.month)}${P.cpn != null ? `, against ${money(P.cpn)} in last Dec–Feb` : ''}.` : '';
@@ -490,10 +490,10 @@ function page10(d: D) {
     tile('Kept per $1 of sales, FYTD', fyS ? `$${((fyS - fyA) / fyS).toFixed(2)}` : '–', `Dec–Feb ${pS ? `$${((pS - pA) / pS).toFixed(2)}` : '–'}`),
   ].join('');
   const fyIdx = cum.findIndex(c => c.m === fyStart);
-  const cumChart = lines({ n: cum.length, xLabels: cum.map((c, i) => ({ i, text: `${monY(c.m)}${c.partial ? ' *' : ''}` })), w: 1040, h: 190, fmt: v => moneyK(v), vline: fyIdx >= 0 ? { i: fyIdx, label: 'FY starts' } : undefined,
+  const cumChart = lines({ n: cum.length, xLabels: cum.map((c, i) => ({ i, text: `${monY(c.m)}${c.partial ? ' *' : ''}` })), w: 1040, h: 235, fmt: v => moneyK(v), vline: fyIdx >= 0 ? { i: fyIdx, label: 'FY starts' } : undefined,
     area: { upper: cum.map(c => c.s), lower: cum.map(c => c.a), color: '#cfeee2', labels: cum.map((c, i) => ({ i, text: moneyK(c.s - c.a) })) },
     series: [{ name: 'Sales', color: C.blue, values: cum.map(c => c.s), dots: true, endLabel: `${moneyK(end?.s)} sales` }, { name: 'Ads', color: C.red, values: cum.map(c => c.a), dots: true, endLabel: `${moneyK(end?.a)} ads` }] });
-  const monthly = bars({ cats: ads.map(a => `${monY(a.month)}${a.partial ? ' *' : ''}`), mode: 'group', w: 1040, h: 140, fmt: v => moneyK(v), labelFmt: v => moneyK1(v), series: [{ name: 'SLA', color: C.green, values: ads.map(a => a.salesLessAds) }] });
+  const monthly = bars({ cats: ads.map(a => `${monY(a.month)}${a.partial ? ' *' : ''}`), mode: 'group', w: 1040, h: 175, fmt: v => moneyK(v), labelFmt: v => moneyK1(v), series: [{ name: 'SLA', color: C.green, values: ads.map(a => a.salesLessAds) }] });
   const what = end ? `Since ${fullMonth(ads[0]!.month)} ${ads[0]!.month.slice(0, 4)}, ${moneyK(end.s)} of online sales against ${moneyK(end.a)} of ads leaves ${moneyK(end.s - end.a)}: ads have taken ${pctOf(end.a / end.s)} of online sales overall. FYTD each $1 of sales has kept $${fyS ? ((fyS - fyA) / fyS).toFixed(2) : '–'} after ads${pS ? `, against $${((pS - pA) / pS).toFixed(2)} in Dec–Feb` : ''}.` : '';
   return page(d, 10, 'Online sales less ad spend: monthly and progressive', `
     <div class="tiles t5">${t}</div>

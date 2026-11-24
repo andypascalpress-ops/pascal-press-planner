@@ -212,7 +212,7 @@ export interface AdMonth { month: string; google: number | null; meta: number | 
 
 export async function buildEtzExecData(asOfIn?: string, adLive?: (month: string, start: string, end: string) => Promise<{ google: number; meta: number } | null>) {
   const asOf = asOfIn ?? addDays(todaySydney(), -1);
-  const raw = await fetchUmsRows(DATA_START, asOf);
+  const raw = await fetchUmsRows(DATA_START, asOf, 8);
   const ds = normalise(raw, asOf);
   const ix = makeIndex(ds);
   const W = (s: string, e: string) => windowTotals(ds, ix, s, e);
