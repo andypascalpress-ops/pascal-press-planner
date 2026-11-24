@@ -26,11 +26,15 @@ async function mondayRequest(query: string, variables?: Record<string, unknown>)
 export async function getSpendBoardId(): Promise<string | null> {
   if (process.env.MONDAY_SPEND_BOARD_ID) return process.env.MONDAY_SPEND_BOARD_ID;
   if (cachedBoardId) return cachedBoardId;
-  const data = await mondayRequest(`query { boards(limit: 100) { id name } }`);
-  const board = data.boards.find((b: { id: string; name: string }) => b.name === SPEND_BOARD_NAME);
-  if (!board) return null;
-  cachedBoardId = board.id;
-  return board.id;
+  // search every board page by page (the account can hold more than one page of boards)
+  for (let page = 1; page <= 20; page++) {
+    const data = await mondayRequest(`query($page: Int!) { boards(limit: 100, page: $page) { id name } }`, { page });
+    const boards: { id: string; name: string }[] = data.boards ?? [];
+    const board = boards.find(b => b.name === SPEND_BOARD_NAME) ?? boards.find(b => b.name.trim().toLowerCase() === SPEND_BOARD_NAME.toLowerCase());
+    if (board) { cachedBoardId = board.id; return board.id; }
+    if (boards.length < 100) break;
+  }
+  return null;
 }
 
 export async function getSpendBoardIdOrThrow(): Promise<string> {
