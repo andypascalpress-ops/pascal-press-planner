@@ -6,7 +6,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { checkReportToken } from '@/lib/report-auth';
-import { buildEtzExecData } from '@/lib/etz-exec-data';
+import { buildEtzExecData, cardTimes } from '@/lib/etz-exec-data';
 import { buildConfig, fetchMonthlySpend } from '@/lib/google-ads';
 import { fetchEtzMetaSpend } from '@/lib/meta-ads';
 
@@ -30,6 +30,10 @@ export async function GET(req: NextRequest) {
   if (!signedIn) {
     const refused = checkReportToken(req);
     if (refused) return refused;
+  }
+  if (req.nextUrl.searchParams.get('debug') === 'card-times') {
+    const s0 = req.nextUrl.searchParams.get('start') ?? '', e0 = req.nextUrl.searchParams.get('end') ?? '';
+    return NextResponse.json(await cardTimes(s0, e0), { headers: { 'Cache-Control': 'private, no-store' } });
   }
   const asOf = req.nextUrl.searchParams.get('asOf') ?? undefined;
   if (asOf && !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return NextResponse.json({ error: 'asOf must be YYYY-MM-DD' }, { status: 400 });

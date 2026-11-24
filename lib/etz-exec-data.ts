@@ -88,6 +88,16 @@ export function normalise(raw: UmsRawRow[], asOf: string): Dataset {
   const lastAt = new Map<string, number>();
   const dupBy = new Map<string, number>();
   const excluded = excludedOrders();
+  const excludedKeys = new Set<string>();
+  if (excluded.length) {
+    const sums = new Map<string, number>();
+    for (const r of raw) {
+      if (str(r.payment_method).toUpperCase() !== 'CARD') continue;
+      const d0 = new Date(str(r.purchase_date)); if (isNaN(d0.getTime())) continue;
+      const k = `${str(r.user_id)}|${sydDay.format(d0)}`; sums.set(k, (sums.get(k) ?? 0) + num(r.total));
+    }
+    for (const [k, total] of sums) if (excluded.some(x => k.endsWith(`|${x.day}`) && Math.abs(x.total - total) < 1)) excludedKeys.add(k);
+  }
   const sorted = [...raw].sort((a, b) => str(a.purchase_date).localeCompare(str(b.purchase_date)));
   // full price = the highest price each item set has sold for (promotional prices are lower)
   const itemsKey = (r: UmsRawRow) => (Array.isArray(r.items) ? r.items : []).map(it => `${str(it.name)}x${num(it.quantity) || 1}`).sort().join('|');
@@ -113,13 +123,13 @@ export function normalise(raw: UmsRawRow[], asOf: string): Dataset {
     }
     // CARD (online)
     if (total <= 0) { notes.zeroCardRows += 1; continue; }
-    if (excluded.some(x => x.day === day && Math.abs(x.total - total) < 0.01)) { notes.excludedOrders += 1; continue; }
+    if (excludedKeys.has(`${uid}|${day}`) || excluded.some(x => x.day === day && Math.abs(x.total - total) < 0.01)) { notes.excludedOrders += 1; continue; }
     const names = items.map(it => `${str(it.name)}x${num(it.quantity) || 1}`).sort().join('|');
     const key = `${uid}|${sydMinute.format(d)}|${names}|${total.toFixed(2)}`;
     // a duplicate is only dropped at full price on both rows, as in the hand-made report
     const fullPrice = total >= (fullPriceOf.get(names) ?? Infinity) - 0.01;
     // a logging duplicate lands within a few seconds of the original; rows further apart are real repeat purchases
-    const nearTwin = seen.has(key) && d.getTime() - (lastAt.get(key) ?? -Infinity) < 5000;
+    const nearTwin = seen.has(key);
     if (nearTwin && fullPrice && names.toLowerCase().includes('bundle')) {
       notes.duplicateRows += 1; notes.duplicateValue += total;
       { const k = `${names} @ ${total.toFixed(0)} (gap ${Math.round((d.getTime() - (lastAt.get(key) ?? d.getTime())) / 1000)}s)`.replace(/ \(gap \d+s\)/, d.getTime() - (lastAt.get(key) ?? 0) < 5000 ? ' (<5s)' : ' (5-60s)'); dupBy.set(k, (dupBy.get(k) ?? 0) + 1); }
@@ -397,3 +407,9 @@ export async function buildEtzExecData(asOfIn?: string, adLive?: (month: string,
 }
 
 export type EtzExecData = Awaited<ReturnType<typeof buildEtzExecData>>;
+
+/** Temporary check: order ids and exact times of online rows in a range (no customer details), to line up with an export. */
+export async function cardTimes(start: string, end: string) {
+  const raw = await fetchUmsRows(start, end);
+  return raw.filter(r => str(r.payment_method).toUpperCase() === 'CARD').map(r => [str(r.id), str(r.purchase_date), num(r.total)]);
+}
