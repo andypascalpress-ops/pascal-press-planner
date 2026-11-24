@@ -87,6 +87,10 @@ export function normalise(raw: UmsRawRow[], asOf: string): Dataset {
   const seen = new Set<string>();
   const excluded = excludedOrders();
   const sorted = [...raw].sort((a, b) => str(a.purchase_date).localeCompare(str(b.purchase_date)));
+  // full price = the highest price each item set has sold for (promotional prices are lower)
+  const itemsKey = (r: UmsRawRow) => (Array.isArray(r.items) ? r.items : []).map(it => `${str(it.name)}x${num(it.quantity) || 1}`).sort().join('|');
+  const fullPriceOf = new Map<string, number>();
+  for (const r of sorted) { if (str(r.payment_method).toUpperCase() !== 'CARD') continue; const k = itemsKey(r), t = num(r.total); if (t > (fullPriceOf.get(k) ?? 0)) fullPriceOf.set(k, t); }
   for (const r of sorted) {
     const d = new Date(str(r.purchase_date));
     if (isNaN(d.getTime())) continue;
@@ -111,8 +115,7 @@ export function normalise(raw: UmsRawRow[], asOf: string): Dataset {
     const names = items.map(it => `${str(it.name)}x${num(it.quantity) || 1}`).sort().join('|');
     const key = `${uid}|${sydMinute.format(d)}|${names}|${total.toFixed(2)}`;
     // a duplicate is only dropped at full price on both rows, as in the hand-made report
-    const listPrice = items.reduce((t, it) => t + num(it.unit_price) * (num(it.quantity) || 1), 0);
-    const fullPrice = listPrice > 0 && total >= listPrice - 0.01;
+    const fullPrice = total >= (fullPriceOf.get(names) ?? Infinity) - 0.01;
     if (seen.has(key) && fullPrice && names.toLowerCase().includes('bundle')) {
       notes.duplicateRows += 1; notes.duplicateValue += total;
       if (!notes.duplicateLastSeen || day > notes.duplicateLastSeen) notes.duplicateLastSeen = day;
