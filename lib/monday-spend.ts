@@ -176,10 +176,21 @@ export async function deleteSpendRecord(id: string): Promise<void> {
   `, { itemId: id });
 }
 
+/** Boards with the spend board's name in any state (active, archived or deleted), so a lost board can be restored instead of rebuilt. */
+export async function findSpendBoardsAnyState(): Promise<{ id: string; name: string; state: string; updated_at?: string }[]> {
+  const found: { id: string; name: string; state: string; updated_at?: string }[] = [];
+  for (let page = 1; page <= 30; page++) {
+    const data = await mondayRequest(`query($page: Int!) { boards(limit: 100, page: $page, state: all) { id name state updated_at } }`, { page });
+    const boards: { id: string; name: string; state: string; updated_at?: string }[] = data.boards ?? [];
+    found.push(...boards.filter(b => b.name.trim().toLowerCase().includes('marketing spend')));
+    if (boards.length < 100) break;
+  }
+  return found;
+}
+
 export async function createSpendBoard(): Promise<string> {
-  const data = await mondayRequest(`query { boards(limit:100) { id name } }`);
-  const existing = data.boards.find((b: { id: string; name: string }) => b.name === SPEND_BOARD_NAME);
-  if (existing) return existing.id;
+  const existing = await getSpendBoardId();
+  if (existing) return existing;
   const created = await mondayRequest(`
     mutation($name:String!) { create_board(board_name:$name,board_kind:public) { id } }
   `, { name: SPEND_BOARD_NAME });
