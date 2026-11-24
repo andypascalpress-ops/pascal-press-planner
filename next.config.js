@@ -20,6 +20,11 @@ const nextConfig = {
   reactStrictMode: true,
   eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: true },
+  experimental: {
+    // headless Chrome for the ETZ executive report PDF: keep it out of the bundle and ship its binary with that route
+    serverComponentsExternalPackages: ['@sparticuz/chromium', 'puppeteer-core'],
+    outputFileTracingIncludes: { '/api/etz-exec-report': ['./node_modules/@sparticuz/chromium/bin/**'] },
+  },
   async headers() {
     return cachedRoutes.map(([route, value]) => ({
       source: `/api/${route}`,

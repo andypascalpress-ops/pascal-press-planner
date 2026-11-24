@@ -389,6 +389,30 @@ export async function buildEtzExecData(asOfIn?: string, adLive?: (month: string,
       trialCustomers: w.trialCustomers, costPerTrial: t != null && w.trialCustomers ? t / w.trialCustomers : null };
   });
 
+  // --- rolling 12 months measured at each month end (first full window ends Jul 2025)
+  const r12Trend = monthsBetween(monthOf(addMonths(DATA_START, 12)), curMonth).map(m => {
+    const e = m === curMonth ? asOf : monthEnd(m); const w = W(addDays(addMonths(e, -12), 1), e);
+    return { month: m, end: e, online: w.online, schools: w.schools, paying: w.customers, trials: w.trialCustomers };
+  });
+
+  // --- cumulative curves through the financial year, by day (this year to date, last year in full)
+  const fyCurve = (start: string, end: string) => {
+    const out: { day: string; trials: number; onlineCustomers: number; online: number; payingSchools: number; schools: number }[] = [];
+    const tU = new Set<string>(), oU = new Set<string>(), sU = new Set<string>(); let on = 0, sc = 0;
+    const byDayO = new Map<string, Order[]>(), byDayT = new Map<string, Trial[]>(), byDayS = new Map<string, SchoolTx[]>();
+    for (const o of ds.orders) if (o.day >= start && o.day <= end) { const a = byDayO.get(o.day) ?? []; a.push(o); byDayO.set(o.day, a); }
+    for (const t of ds.trials) if (t.day >= start && t.day <= end) { const a = byDayT.get(t.day) ?? []; a.push(t); byDayT.set(t.day, a); }
+    for (const x of ds.schools) if (x.day >= start && x.day <= end) { const a = byDayS.get(x.day) ?? []; a.push(x); byDayS.set(x.day, a); }
+    for (let d = start; d <= end; d = addDays(d, 1)) {
+      for (const o of byDayO.get(d) ?? []) { oU.add(o.uid); on += o.total; }
+      for (const t of byDayT.get(d) ?? []) tU.add(t.uid);
+      for (const x of byDayS.get(d) ?? []) { if (x.total > 0) { sc += x.total; if (x.uid) sU.add(x.uid); } }
+      out.push({ day: d, trials: tU.size, onlineCustomers: oU.size, online: on, payingSchools: sU.size, schools: sc });
+    }
+    return out;
+  };
+  const fyCurves = { ty: fyCurve(fy, asOf), ly: fyCurve(lyFy, addDays(fy, -1)) };
+
   return {
     asOf, preparedOn: addDays(asOf, 1), dataStart: DATA_START,
     periods: { mtd: [mtdStart, asOf], mtdLy: [lyMonthStart, lyAsOf], fy: [fy, asOf], fyLy: [lyFy, lyAsOf], r12: [r12Start, asOf], p12: [p12Start, p12End] },
@@ -400,6 +424,8 @@ export async function buildEtzExecData(asOfIn?: string, adLive?: (month: string,
     base: { months: baseMonths, activeNow, scheduled: scheduledWithLeft, lapseRestOfMonth, lapseNext30: lapseNext(30), lapseNext90: lapseNext(90), biggestPair },
     current: { trialists30: last30.trialCustomers, notYetPaying, trialists30Ly: last30Ly.trialCustomers, paying12: r12.customers, payingPrev12: p12.customers, schools12: schools12.allSchools, payingSchools12: schools12.payingSchools },
     ads: adRows,
+    r12Trend, fyCurves,
+    schoolCountsAvailable: ds.schools.some(x => !!x.uid),
     dataNotes: ds.notes,
   };
 
