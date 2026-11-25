@@ -58,7 +58,13 @@ export async function GET(req: NextRequest) {
   const signedIn = !!sitePassword && req.cookies.get('pp_auth')?.value === sitePassword;
   if (!signedIn) {
     const refused = checkReportToken(req);
-    if (refused) return refused;
+    if (refused) {
+      // a person in a browser (no Authorization header): show a sign-in link rather than bare JSON
+      if (!req.headers.get('authorization')) {
+        return new NextResponse(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in needed</title><body style="font-family:system-ui,sans-serif;background:#f1f5f9;margin:0;display:grid;place-items:center;min-height:100vh"><div style="background:#fff;padding:32px;border-radius:14px;max-width:420px;box-shadow:0 4px 20px rgba(0,0,0,.08)"><h1 style="font-size:18px;margin:0 0 8px">Sign in to the planner first</h1><p style="color:#475569;font-size:14px;line-height:1.5">This report needs the Marketing Planner sign-in in this browser (it lasts 24 hours).</p><ol style="color:#334155;font-size:14px;line-height:1.7;padding-left:18px"><li><a href="/" target="_blank" rel="noopener">Open the planner and sign in</a></li><li>Come back to this tab and reload it</li></ol></div></body>`, { status: 401, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
+      }
+      return refused;
+    }
   }
   const asOf = req.nextUrl.searchParams.get('asOf') ?? undefined;
   if (asOf && !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return NextResponse.json({ error: 'asOf must be YYYY-MM-DD' }, { status: 400 });
