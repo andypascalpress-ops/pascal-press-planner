@@ -174,19 +174,20 @@ function page1(d: D) {
   const t2 = [
     tile(`Current trialists (as at ${dm(d.preparedOn)})`, int(d.current.trialists30), `started a trial in the last 30 days | ${int(d.current.notYetPaying)} not yet paying | ${int(d.current.trialists30Ly)} a year ago`, 'alt'),
     tile('Current paying customers', int(d.current.paying12), `${chg(d.current.paying12, d.current.payingPrev12)} vs ${int(d.current.payingPrev12)} customers in the previous 12 months`, 'alt'),
-    tile('Currently subscribed schools', d.schoolCountsAvailable ? int(d.current.schools12) : 'n/a', d.schoolCountsAvailable ? `${int(d.current.payingSchools12)} paying + ${int(d.current.schools12 - d.current.payingSchools12)} on $0 allocations, last 12 months` : 'needs a school id in the UMS feed (requested)', 'alt'),
+    d.schoolCountsAvailable ? tile('Currently subscribed schools', int(d.current.schools12), `${int(d.current.payingSchools12)} paying + ${int(d.current.schools12 - d.current.payingSchools12)} on $0 allocations, last 12 months`, 'alt') : '',
     tile(`Net online sign-ups, ${mShort}`, netNow ? `<span class="${tone(netNow.net)}">${signedInt(netNow.net)}</span>` : '–', netNow ? `${int(netNow.newCustomers)} new customers − ${int(netNow.lapsed)} lapsed | FYTD ${signedInt(netFy)} (see page 6)` : '', 'alt'),
   ].join('');
-  const rows = d.monthly.map(x => [`${monY(x.month)}${x.partial ? ' *' : ''}`, money(x.online), money(x.schools), `<b>${money(x.total)}</b>`, money(x.aov), int(x.customers), d.schoolCountsAvailable ? int(x.payingSchools) : '–', int(x.trialCustomers)]);
+  const sc = d.schoolCountsAvailable;
+  const rows = d.monthly.map(x => [`${monY(x.month)}${x.partial ? ' *' : ''}`, money(x.online), money(x.schools), `<b>${money(x.total)}</b>`, money(x.aov), int(x.customers), ...(sc ? [int(x.payingSchools)] : []), int(x.trialCustomers)]);
   const tot = d.monthly.reduce((a, x) => ({ o: a.o + x.online, s: a.s + x.schools, ord: a.ord + x.orders }), { o: 0, s: 0, ord: 0 });
-  rows.push(['Total shown', money(tot.o), money(tot.s), money(tot.o + tot.s), money(tot.ord ? tot.o / tot.ord : null), '–', '–', '–']);
+  rows.push(['Total shown', money(tot.o), money(tot.s), money(tot.o + tot.s), money(tot.ord ? tot.o / tot.ord : null), '–', ...(sc ? ['–'] : []), '–']);
   const chart = bars({ cats: d.monthly.map(x => monY(x.month)), series: [{ name: 'Online', color: C.blue, values: d.monthly.map(x => x.online) }, { name: 'Schools', color: C.orange, values: d.monthly.map(x => x.schools) }], mode: 'stack', w: 1040, h: 120, fmt: v => moneyK(v), labelFmt: v => moneyK(v) });
   return page(d, 1, 'Sales revenue, paid orders and channel split', `
     <div class="glance"><b class="gt">At a glance</b><ul>${glance.map(g => `<li>${g}</li>`).join('')}</ul></div>
-    <div class="tiles t5">${t1}</div><div class="tiles t4">${t2}</div>
+    <div class="tiles t5">${t1}</div><div class="tiles ${sc ? 't4' : 't3'}">${t2}</div>
     <h3>Revenue by month, online vs schools</h3>${legend([{ color: C.blue, text: 'Online (Stripe)' }, { color: C.orange, text: 'Schools' }])}<span class="lnote">Label = total. Duplicated bundle rows excluded. * ${monY(cm)} is ${dm(d.periods.mtd[0])}–${dm(d.asOf)} only. Online AOV = online revenue ÷ online orders (one checkout, may hold several packs).</span>
     ${chart}
-    ${table(['Month', 'Online', 'Schools', 'Total revenue', 'Online AOV', 'Paying online customers', 'Paying schools', 'Trial customers'], rows, { boldLast: true, cls: 'dense' })}`);
+    ${table(['Month', 'Online', 'Schools', 'Total revenue', 'Online AOV', 'Paying online customers', ...(sc ? ['Paying schools'] : []), 'Trial customers'], rows, { boldLast: true, cls: 'dense' })}`);
 }
 function addDaysLocal(ymd: string, n: number) { const t = new Date(`${ymd}T12:00:00Z`); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); }
 
@@ -247,7 +248,7 @@ function page3(d: D) {
     tile('School revenue FYTD', money(f.schools), `${chg(f.schools, l.schools)} vs ${money(l.schools)}`),
     tile('Trial customers FYTD', int(f.trialCustomers), `${chg(f.trialCustomers, l.trialCustomers)} vs ${int(l.trialCustomers)}`),
     tile('Paying customers FYTD', int(f.customers), `${chg(f.customers, l.customers)} vs ${int(l.customers)}`),
-    tile('Schools FYTD', d.schoolCountsAvailable ? int(f.allSchools) : 'n/a', d.schoolCountsAvailable ? `${chg(f.allSchools, l.allSchools)} vs ${int(l.allSchools)} | paying ${int(f.payingSchools)} vs ${int(l.payingSchools)}` : 'needs a school id in the UMS feed'),
+    d.schoolCountsAvailable ? tile('Schools FYTD', int(f.allSchools), `${chg(f.allSchools, l.allSchools)} vs ${int(l.allSchools)} | paying ${int(f.payingSchools)} vs ${int(l.payingSchools)}`) : '',
   ].join('');
   const row = (name: string, a: number, b: number, isMoney = true) => [name, isMoney ? money(a) : int(a), isMoney ? money(b) : int(b), `<span class="${tone(b - a)}">${isMoney ? signedMoney(b - a) : signedInt(b - a)}</span>`, chg(b, a)];
   const streams = [row('Online', l.online, f.online), row('Schools', l.schools, f.schools), row('Total revenue', l.total, f.total)];
@@ -259,7 +260,7 @@ function page3(d: D) {
   const lineDiffs = (['Bundles', 'NAPLAN', 'Selective & Scholarship', 'Opportunity Class', 'Assessment / Skills Check'] as const).map(k => `${k} ${signedPct(change(f.byLine[k], l.byLine[k]))}`).join(', ');
   const read = `Revenue is ${signedPct(change(f.total, l.total))} (${moneyK1(f.total)} vs ${moneyK1(l.total)}); schools ${moneyK1(f.schools)} vs ${moneyK1(l.schools)}, online ${moneyK1(f.online)} vs ${moneyK1(l.online)} (${signedPct(change(f.online, l.online))}). Paying online customers ${int(f.customers)} vs ${int(l.customers)} (${signedPct(change(f.customers, l.customers))}); trials ${int(f.trialCustomers)} vs ${int(l.trialCustomers)} (${signedPct(change(f.trialCustomers, l.trialCustomers))}). By product line: ${lineDiffs}.`;
   return page(d, 3, 'Financial year to date vs last year: revenue streams, trial customers, paying customers and schools', `
-    <div class="tiles t6">${t}</div>
+    <div class="tiles ${d.schoolCountsAvailable ? 't6' : 't5'}">${t}</div>
     <div class="grid2"><div>
       <h3>Revenue by stream</h3>${table(['', 'FYTD last year', 'FYTD this year', 'Change', '%'], streams, { boldLast: true })}
       <h3>Online revenue by product line</h3>${table(['', 'FYTD last year', 'FYTD this year', 'Change', '%'], linesT)}
@@ -405,9 +406,10 @@ function page7(d: D) {
   return page(d, 7, 'Progressive (cumulative) paying customers and revenue by channel: this financial year vs last', `
     <div class="grid2"><div><h3>Online: cumulative paying customers</h3>${legend([{ color: C.blue, text: 'Online, this FY' }, { color: C.grey, text: 'Online, last FY (full year)' }])}${curveChart(d, 'onlineCustomers', C.blue, v => int(v), 'TY')}</div>
     <div><h3>Online: cumulative $ value</h3>${legend([{ color: C.blue, text: 'Online, this FY' }, { color: C.grey, text: 'Online, last FY (full year)' }])}${curveChart(d, 'online', C.blue, v => moneyK1(v), 'TY')}</div>
-    ${d.schoolCountsAvailable ? `<div><h3>Schools: cumulative paying schools</h3>${legend([{ color: C.orange, text: 'Schools, this FY' }, { color: C.grey, text: 'Schools, last FY (full year)' }])}${curveChart(d, 'payingSchools', C.orange, v => int(v), 'TY')}</div>` : `<div><h3>Schools: cumulative paying schools</h3><p class="small">Not available yet: school orders in the UMS feed carry no school id or name. Requested from IT.</p></div>`}
-    <div><h3>Schools: cumulative $ value</h3>${legend([{ color: C.orange, text: 'Schools, this FY' }, { color: C.grey, text: 'Schools, last FY (full year)' }])}${curveChart(d, 'schools', C.orange, v => moneyK1(v), 'TY')}</div></div>
-    ${callout('What this shows.', what)}
+    ${d.schoolCountsAvailable ? `<div><h3>Schools: cumulative paying schools</h3>${legend([{ color: C.orange, text: 'Schools, this FY' }, { color: C.grey, text: 'Schools, last FY (full year)' }])}${curveChart(d, 'payingSchools', C.orange, v => int(v), 'TY')}</div>` : ''}
+    <div><h3>Schools: cumulative $ value</h3>${legend([{ color: C.orange, text: 'Schools, this FY' }, { color: C.grey, text: 'Schools, last FY (full year)' }])}${curveChart(d, 'schools', C.orange, v => moneyK1(v), 'TY')}</div>
+    ${d.schoolCountsAvailable ? '' : `<div>${callout('What this shows.', what)}</div>`}</div>
+    ${d.schoolCountsAvailable ? callout('What this shows.', what) : ''}
     ${howto(`Each line adds up from 1 July. Customers = parent accounts (online), each counted once in the financial year on their first purchase; $0 rows, UMS manual entries, duplicated bundle rows and refunded orders excluded. The grey line runs the full last financial year to show the season still ahead; the dotted marker is ${dm(d.asOf)}, and 'LY same day' is last year at that date.`)}`);
 }
 
@@ -417,8 +419,8 @@ function page8(d: D) {
   const lyEnd = d.lyFyCurve[d.lyFyCurve.length - 1];
   trialRows.push(['<b>Full last FY</b>', `<b>${int(lyEnd?.trials)}</b>`, '', '']);
   const big = pos.map(p => [`${monName(p.month)}${p.partial ? ' *' : ''}`, int(p.ly.onlineCustomers), int(p.ty.onlineCustomers), chg(p.ty.onlineCustomers, p.ly.onlineCustomers), money(p.ly.online), money(p.ty.online), chg(p.ty.online, p.ly.online),
-    d.schoolCountsAvailable ? int(p.ly.payingSchools) : '–', d.schoolCountsAvailable ? int(p.ty.payingSchools) : '–', d.schoolCountsAvailable ? chg(p.ty.payingSchools, p.ly.payingSchools) : '', money(p.ly.schools), money(p.ty.schools), chg(p.ty.schools, p.ly.schools)]);
-  big.push(['<b>Full last FY</b>', `<b>${int(lyEnd?.onlineCustomers)}</b>`, '', '', `<b>${money(lyEnd?.online)}</b>`, '', '', d.schoolCountsAvailable ? `<b>${int(lyEnd?.payingSchools)}</b>` : '–', '', '', `<b>${money(lyEnd?.schools)}</b>`, '', '']);
+    ...(d.schoolCountsAvailable ? [int(p.ly.payingSchools), int(p.ty.payingSchools), chg(p.ty.payingSchools, p.ly.payingSchools)] : []), money(p.ly.schools), money(p.ty.schools), chg(p.ty.schools, p.ly.schools)]);
+  big.push(['<b>Full last FY</b>', `<b>${int(lyEnd?.onlineCustomers)}</b>`, '', '', `<b>${money(lyEnd?.online)}</b>`, '', '', ...(d.schoolCountsAvailable ? [`<b>${int(lyEnd?.payingSchools)}</b>`, '', ''] : []), `<b>${money(lyEnd?.schools)}</b>`, '', '']);
   const f = d.fytd, l = d.fytdLy, lf = d.lyFullFy;
   const what = `<b>Seasonality:</b> ETZ is highly seasonal, driven by NAPLAN testing in March, and peak buying is always Dec–Feb. Trial customers are ${signedPct(change(f.trialCustomers, l.trialCustomers))} on last year (${int(f.trialCustomers)} vs ${int(l.trialCustomers)}). Last year about ${int(Math.round((lf.trialCustomers - l.trialCustomers) / 100) * 100)} more trial customers came in between ${dm(addDaysLocal(d.periods.fyLy[1], 1))} and June, so trial volume in the Jan–Feb pre-test window matters more than anything else in the funnel.`;
   return page(d, 8, 'Progressive (cumulative) trial customers, and month-end positions by channel', `
@@ -427,7 +429,7 @@ function page8(d: D) {
     <div><h3>Trials, month-end position vs same point last year</h3>${table(['Cumulative to end of', 'Trial customers LY', 'Trial customers TY', '%'], trialRows, { cls: 'dense' })}</div>
     <div>${callout('What this shows.', what)}</div></div>
     <h3>Paying customers and revenue, month-end position FYTD vs same point last year</h3>
-    ${table(['Cumulative to end of', 'Online customers LY', 'Online customers TY', '%', 'Online $ LY', 'Online $ TY', '%', 'Paying schools LY', 'Paying schools TY', '%', 'School $ LY', 'School $ TY', '%'], big, { cls: 'dense' })}
+    ${table(['Cumulative to end of', 'Online customers LY', 'Online customers TY', '%', 'Online $ LY', 'Online $ TY', '%', ...(d.schoolCountsAvailable ? ['Paying schools LY', 'Paying schools TY', '%'] : []), 'School $ LY', 'School $ TY', '%'], big, { cls: 'dense' })}
     ${howto(`Trial customers = parent account, counted once in the financial year on their first trial (a parent trialling two year levels counts once). All trials are online. Each line adds up from 1 July. $0 rows, UMS manual entries, duplicated bundle rows and refunded orders excluded. * = month to date.`)}`);
 }
 
@@ -522,7 +524,7 @@ body { margin: 0; font-family: 'Inter', 'Segoe UI', Arial, sans-serif; color: ${
 h3 { font-size: 10px; margin: 4px 0 1px; font-weight: 700; } h4 { font-size: 9px; margin: 2px 0; font-weight: 700; }
 .glance { background: #f1f4fa; border-left: 3px solid ${C.blue}; padding: 5px 9px; font-size: 8.4px; }
 .glance .gt { font-size: 9.5px; } .glance ul { margin: 2px 0 0; padding-left: 14px; } .glance li { margin: 1px 0; }
-.tiles { display: grid; gap: 6px; } .t4 { grid-template-columns: repeat(4, 1fr); } .t5 { grid-template-columns: repeat(5, 1fr); } .t6 { grid-template-columns: repeat(6, 1fr); }
+.tiles { display: grid; gap: 6px; } .t3 { grid-template-columns: repeat(3, 1fr); } .t4 { grid-template-columns: repeat(4, 1fr); } .t5 { grid-template-columns: repeat(5, 1fr); } .t6 { grid-template-columns: repeat(6, 1fr); }
 .tile { border: 1px solid #d6dbe4; border-radius: 4px; padding: 5px 8px; background: #fff; }
 .tile.alt { background: #f3f8f6; border-color: #d3e5dd; }
 .tl { font-size: 7px; text-transform: uppercase; letter-spacing: 0.05em; color: ${C.muted}; } .tv { font-size: 19px; font-weight: 800; margin: 1px 0; } .ts { font-size: 7.4px; color: ${C.muted}; }
