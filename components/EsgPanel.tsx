@@ -132,7 +132,8 @@ interface OverlapResp {
   error?: string;
   pp?: { totalCost: number; products: number; error: string | null };
   esg?: { totalCost: number; products: number; error: string | null };
-  pairs?: { pp: OverlapProduct; esg: OverlapProduct; match: 'exact' | 'close' }[];
+  pairs?: { pp: OverlapProduct; esg: OverlapProduct; match: 'exact' | 'close'; ppSales?: { revenue: number; units: number } | null; esgSales?: { revenue: number; units: number | null } | null }[];
+  sales?: { pp: number; esg: number; ppError: string | null; esgError: string | null };
   overlapCost?: { pp: number; esg: number };
   ppInternal?: { title: string; campaigns: { name: string; cost: number }[]; cost: number }[];
   ppInternalCost?: number;
@@ -141,16 +142,28 @@ interface OverlapResp {
 /** Products both stores advertise on Google Shopping: the two accounts bid against each other for these. */
 function ShoppingOverlapSection({ start, end }: { start: string; end: string }) {
   const [d, setD] = useState<OverlapResp | null>(null);
+  const [withSales, setWithSales] = useState<OverlapResp | null>(null);
+  const [salesState, setSalesState] = useState<'loading' | 'done' | 'too-long' | 'error'>('loading');
   const [showAll, setShowAll] = useState(false);
+  const tooLong = daysBetween(start, end) > 35;
   useEffect(() => {
     let cancelled = false;
-    setD(null);
+    setD(null); setWithSales(null); setSalesState(tooLong ? 'too-long' : 'loading');
     fetch(`/api/shopping-overlap?start=${start}&end=${end}`)
       .then(r => r.json() as Promise<OverlapResp>)
       .then(j => { if (!cancelled) setD(j); })
       .catch(e => { if (!cancelled) setD({ error: e instanceof Error ? e.message : 'Failed to load' }); });
+    // store sales take longer (every Pascal Press order's line items), so they arrive second and fill the table in
+    if (!tooLong) {
+      fetch(`/api/shopping-overlap?start=${start}&end=${end}&sales=1`)
+        .then(r => r.json() as Promise<OverlapResp>)
+        .then(j => { if (!cancelled) { if (j.error) setSalesState('error'); else { setWithSales(j); setSalesState('done'); } } })
+        .catch(() => { if (!cancelled) setSalesState('error'); });
+    }
     return () => { cancelled = true; };
-  }, [start, end]);
+  }, [start, end, tooLong]);
+  const salesOf = new Map((withSales?.pairs ?? []).map(x => [`${x.pp.itemId}|${x.esg.itemId}`, x]));
+  const salesCell = (v: number | undefined) => salesState === 'done' ? (v != null ? AUD.format(v) : '–') : salesState === 'loading' ? <span className="inline-block h-3 w-12 animate-pulse rounded bg-gray-100" /> : '–';
   const pct = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` : '–');
   const pairs = d?.pairs ?? [];
   const shown = showAll ? pairs : pairs.slice(0, 15);
@@ -165,13 +178,26 @@ function ShoppingOverlapSection({ start, end }: { start: string; end: string }) 
             <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">ESG spend on them</p><p className="text-xl font-bold tabular-nums text-gray-900">{AUD.format(d.overlapCost?.esg ?? 0)}</p><p className="text-xs text-gray-400">{pct(d.overlapCost?.esg ?? 0, d.esg?.totalCost ?? 0)} of its {AUD.format(d.esg?.totalCost ?? 0)} Shopping spend</p></div>
             <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Combined on the same books</p><p className="text-xl font-bold tabular-nums text-gray-900">{AUD.format((d.overlapCost?.pp ?? 0) + (d.overlapCost?.esg ?? 0))}</p><p className="text-xs text-gray-400">both accounts in the same auctions</p></div>
           </div>
+          <div className="mb-4 grid grid-cols-1 gap-3 rounded-xl border border-gray-100 bg-gray-50/60 p-3 sm:grid-cols-3">
+            {salesState === 'too-long' ? <p className="text-xs text-gray-500 sm:col-span-3">Store sales for these products can be shown for up to 35 days at a time. Pick a shorter range to see them.</p>
+              : salesState === 'error' ? <p className="text-xs text-amber-700 sm:col-span-3">Could not read store sales for these products. Spend figures above are still correct.</p>
+              : (() => {
+                const s = withSales?.sales; const ppCost = d.overlapCost?.pp ?? 0, esgCost = d.overlapCost?.esg ?? 0, cost = ppCost + esgCost;
+                const tot = s ? s.pp + s.esg : null;
+                return (<>
+                  <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Pascal Press sales of these books</p><p className="text-lg font-bold tabular-nums text-gray-900">{s ? AUD.format(s.pp) : salesCell(undefined)}</p><p className="text-xs text-gray-400">{s && ppCost > 0 ? `${(s.pp / ppCost).toFixed(1)}x its spend on them` : 'BigCommerce, all channels'}</p></div>
+                  <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">ESG sales of these books</p><p className="text-lg font-bold tabular-nums text-gray-900">{s ? AUD.format(s.esg) : salesCell(undefined)}</p><p className="text-xs text-gray-400">{s && esgCost > 0 ? `${(s.esg / esgCost).toFixed(1)}x its spend on them` : 'Shopify, all channels'}</p></div>
+                  <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Combined sales</p><p className="text-lg font-bold tabular-nums text-gray-900">{tot != null ? AUD.format(tot) : salesCell(undefined)}</p><p className="text-xs text-gray-400">{tot != null && cost > 0 ? `${(tot / cost).toFixed(1)}x the combined ${AUD.format(cost)} spend` : 'ex GST and shipping'}</p></div>
+                </>);
+              })()}
+          </div>
           {pairs.length === 0 ? <p className="text-sm text-gray-400">No products advertised by both stores in this period.</p> : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm tabular-nums">
                 <thead><tr className="text-left text-[11px] text-gray-400">
                   <th className="py-1 font-medium">Product</th>
-                  <th className="py-1 text-right font-medium">PP spend</th><th className="py-1 text-right font-medium">PP clicks</th><th className="py-1 text-right font-medium">PP conv.</th>
-                  <th className="py-1 text-right font-medium">ESG spend</th><th className="py-1 text-right font-medium">ESG clicks</th><th className="py-1 text-right font-medium">ESG conv.</th>
+                  <th className="py-1 text-right font-medium">PP spend</th><th className="py-1 text-right font-medium">PP clicks</th><th className="py-1 text-right font-medium">PP sales</th>
+                  <th className="py-1 text-right font-medium">ESG spend</th><th className="py-1 text-right font-medium">ESG clicks</th><th className="py-1 text-right font-medium">ESG sales</th>
                 </tr></thead>
                 <tbody>{shown.map(x => (
                   <tr key={`${x.pp.itemId}|${x.esg.itemId}`} className="border-t border-gray-50 align-top">
@@ -180,8 +206,8 @@ function ShoppingOverlapSection({ start, end }: { start: string; end: string }) 
                       {x.match === 'close' && <span className="ml-1.5 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">close match</span>}
                       {x.match === 'close' && <p className="text-[11px] text-gray-400">ESG: {x.esg.title}</p>}
                     </td>
-                    <td className="py-1.5 text-right text-gray-700">{AUD.format(x.pp.cost)}</td><td className="py-1.5 text-right text-gray-500">{x.pp.clicks.toLocaleString()}</td><td className="py-1.5 text-right text-gray-500">{x.pp.conversions}</td>
-                    <td className="py-1.5 text-right text-gray-700">{AUD.format(x.esg.cost)}</td><td className="py-1.5 text-right text-gray-500">{x.esg.clicks.toLocaleString()}</td><td className="py-1.5 text-right text-gray-500">{x.esg.conversions}</td>
+                    <td className="py-1.5 text-right text-gray-700">{AUD.format(x.pp.cost)}</td><td className="py-1.5 text-right text-gray-500">{x.pp.clicks.toLocaleString()}</td><td className="py-1.5 text-right font-medium text-gray-900">{salesCell(salesOf.get(`${x.pp.itemId}|${x.esg.itemId}`)?.ppSales?.revenue)}</td>
+                    <td className="py-1.5 text-right text-gray-700">{AUD.format(x.esg.cost)}</td><td className="py-1.5 text-right text-gray-500">{x.esg.clicks.toLocaleString()}</td><td className="py-1.5 text-right font-medium text-gray-900">{salesCell(salesOf.get(`${x.pp.itemId}|${x.esg.itemId}`)?.esgSales?.revenue)}</td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -196,7 +222,7 @@ function ShoppingOverlapSection({ start, end }: { start: string; end: string }) 
               </ul>
             </div>
           )}
-          <p className="mt-3 text-[11px] text-gray-400">Spend and conversions are as Google Ads reports them for Shopping (including Performance Max product ads). Conversions are Google&rsquo;s count, not Shopify or BigCommerce orders.</p>
+          <p className="mt-3 text-[11px] text-gray-400">Spend and conversions are as Google Ads reports them for Shopping (including Performance Max product ads). Sales are what each book sold on that store in the period from every channel (not only Shopping ads), before GST and shipping: BigCommerce for Pascal Press, Shopify for Excel Study Guides.</p>
         </>
       )}
     </Section>

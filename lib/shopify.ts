@@ -237,12 +237,12 @@ export async function fetchShopifySalesReport(start: string, end: string): Promi
 
 export interface ShopifyProductSales { title: string; units: number | null; revenue: number }
 
-export async function fetchShopifyProductSales(start: string, end: string): Promise<ShopifyProductSales[]> {
+export async function fetchShopifyProductSales(start: string, end: string, limit = 25): Promise<ShopifyProductSales[]> {
   // the units metric is tried under its likely names; the table still works (revenue only) if none is accepted
   const unitMetrics = ['net_items_sold', 'ordered_item_quantity', ''];
   let lastErr = '';
   for (const um of unitMetrics) {
-    const q = `FROM sales SHOW ${um ? `${um}, ` : ''}net_sales GROUP BY product_title SINCE ${start} UNTIL ${end} ORDER BY net_sales DESC LIMIT 25`;
+    const q = `FROM sales SHOW ${um ? `${um}, ` : ''}net_sales GROUP BY product_title SINCE ${start} UNTIL ${end} ORDER BY net_sales DESC LIMIT ${Math.max(1, Math.min(1000, Math.round(limit)))}`;
     try {
       const data = await shopifyGraphql<{ shopifyqlQuery: { parseErrors?: unknown; tableData?: { columns?: { name: string }[]; rows?: unknown } | null } }>(
         `query($q: String!) { shopifyqlQuery(query: $q) { parseErrors tableData { columns { name } rows } } }`, { q });

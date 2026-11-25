@@ -9,6 +9,8 @@
  * It also flags products Pascal Press advertises in more than one of its own Shopping campaigns.
  */
 import { buildConfig, runGaqlQuery } from '@/lib/google-ads';
+import { fetchPPProductSales } from '@/lib/bigcommerce-revenue';
+import { fetchShopifyProductSales } from '@/lib/shopify';
 
 export interface ProductSpend {
   itemId: string;
@@ -25,6 +27,9 @@ export interface OverlapPair {
   pp: ProductSpend;
   esg: ProductSpend;
   match: 'exact' | 'close';
+  /** What the product actually sold on each store in the period, all channels, ex GST (filled when sales are asked for). */
+  ppSales?: { revenue: number; units: number } | null;
+  esgSales?: { revenue: number; units: number | null } | null;
 }
 
 export interface ShoppingOverlap {
@@ -36,6 +41,8 @@ export interface ShoppingOverlap {
   /** Pascal Press products running in two or more of its own Shopping campaigns. */
   ppInternal: { title: string; campaigns: { name: string; cost: number }[]; cost: number }[];
   ppInternalCost: number;
+  /** Set when store sales were asked for: totals over the paired products, and any error reading either store. */
+  sales?: { pp: number; esg: number; ppError: string | null; esgError: string | null };
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -89,8 +96,12 @@ async function productSpend(brand: 'pp' | 'esg', start: string, end: string): Pr
   return { rows, byCampaign };
 }
 
-export async function fetchShoppingOverlap(start: string, end: string): Promise<ShoppingOverlap> {
-  const [ppRes, esgRes] = await Promise.allSettled([productSpend('pp', start, end), productSpend('esg', start, end)]);
+export async function fetchShoppingOverlap(start: string, end: string, withSales = false): Promise<ShoppingOverlap> {
+  const [ppRes, esgRes, ppSalesRes, esgSalesRes] = await Promise.allSettled([
+    productSpend('pp', start, end), productSpend('esg', start, end),
+    withSales ? fetchPPProductSales(start, end) : Promise.resolve(null),
+    withSales ? fetchShopifyProductSales(start, end, 1000) : Promise.resolve(null),
+  ]);
   const err = (r: PromiseSettledResult<unknown>) => (r.status === 'rejected' ? (r.reason instanceof Error ? r.reason.message : String(r.reason)).slice(0, 240) : null);
   const pp = ppRes.status === 'fulfilled' ? ppRes.value : { rows: new Map<string, ProductSpend>(), byCampaign: new Map<string, Map<string, number>>() };
   const esg = esgRes.status === 'fulfilled' ? esgRes.value : { rows: new Map<string, ProductSpend>(), byCampaign: new Map<string, Map<string, number>>() };
@@ -122,6 +133,35 @@ export async function fetchShoppingOverlap(start: string, end: string): Promise<
     .map(([id, m]) => ({ title: pp.rows.get(id)?.title ?? id, campaigns: [...m.entries()].filter(([, v]) => v > 0).map(([name, cost]) => ({ name, cost: r2(cost) })).sort((a, b) => b.cost - a.cost), cost: r2([...m.values()].reduce((s, v) => s + v, 0)) }))
     .sort((a, b) => b.cost - a.cost);
 
+  let sales: ShoppingOverlap['sales'];
+  if (withSales) {
+    const bc = ppSalesRes.status === 'fulfilled' ? ppSalesRes.value : null;
+    const sh = esgSalesRes.status === 'fulfilled' ? esgSalesRes.value : null;
+    const bcById = new Map<string, { revenue: number; units: number }>(), bcByKey = new Map<string, { revenue: number; units: number }>();
+    for (const p of bc?.products ?? []) {
+      const v = { revenue: p.revenueExTax, units: p.units };
+      if (p.id) bcById.set(String(p.id), v);
+      if (p.sku) bcById.set(p.sku.toLowerCase(), v);
+      const k = key(p.name); if (k) { const e = bcByKey.get(k); bcByKey.set(k, e ? { revenue: e.revenue + v.revenue, units: e.units + v.units } : v); }
+    }
+    const shByKey = new Map<string, { revenue: number; units: number | null }>();
+    for (const p of sh ?? []) { const k = key(p.title); if (k) { const e = shByKey.get(k); shByKey.set(k, { revenue: (e?.revenue ?? 0) + p.revenue, units: p.units == null ? null : (e?.units ?? 0) + p.units }); } }
+    const shList = [...shByKey.entries()].map(([k, v]) => ({ t: k.split(' '), v }));
+    for (const x of pairs) {
+      if (bc) x.ppSales = bcById.get(x.pp.itemId) ?? bcByKey.get(key(x.pp.title)) ?? { revenue: 0, units: 0 };
+      if (sh) {
+        let hit = shByKey.get(key(x.esg.title));
+        if (!hit) { const et = tokens(x.esg.title); let best = 0; for (const c of shList) { if (!compatible(c.t, et)) continue; const s = similarity(c.t, et); if (s > best && s >= 0.75) { best = s; hit = c.v; } } }
+        x.esgSales = hit ?? { revenue: 0, units: 0 };
+      }
+    }
+    sales = {
+      pp: r2(pairs.reduce((s, x) => s + (x.ppSales?.revenue ?? 0), 0)),
+      esg: r2(pairs.reduce((s, x) => s + (x.esgSales?.revenue ?? 0), 0)),
+      ppError: err(ppSalesRes), esgError: err(esgSalesRes),
+    };
+  }
+
   const sum = (m: Map<string, ProductSpend>) => r2([...m.values()].reduce((s, p) => s + p.cost, 0));
   return {
     period: { start, end },
@@ -131,5 +171,6 @@ export async function fetchShoppingOverlap(start: string, end: string): Promise<
     overlapCost: { pp: r2(pairs.reduce((s, x) => s + x.pp.cost, 0)), esg: r2(pairs.reduce((s, x) => s + x.esg.cost, 0)) },
     ppInternal: ppInternal.slice(0, 40),
     ppInternalCost: r2(ppInternal.reduce((s, x) => s + x.cost, 0)),
+    sales,
   };
 }
