@@ -178,21 +178,6 @@ function ShoppingOverlapSection({ start, end }: { start: string; end: string }) 
             <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">ESG spend on them</p><p className="text-xl font-bold tabular-nums text-gray-900">{AUD.format(d.overlapCost?.esg ?? 0)}</p><p className="text-xs text-gray-400">{pct(d.overlapCost?.esg ?? 0, d.esg?.totalCost ?? 0)} of its {AUD.format(d.esg?.totalCost ?? 0)} Shopping spend</p></div>
             <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Combined on the same books</p><p className="text-xl font-bold tabular-nums text-gray-900">{AUD.format((d.overlapCost?.pp ?? 0) + (d.overlapCost?.esg ?? 0))}</p><p className="text-xs text-gray-400">both accounts in the same auctions</p></div>
           </div>
-          {(() => {
-            // what Google Ads itself credits to the Shopping ads on these shared books, per store
-            const ppCost = d.overlapCost?.pp ?? 0, esgCost = d.overlapCost?.esg ?? 0;
-            const ppAd = pairs.reduce((t, x) => t + x.pp.convValue, 0), esgAd = pairs.reduce((t, x) => t + x.esg.convValue, 0);
-            const ppConv = pairs.reduce((t, x) => t + x.pp.conversions, 0), esgConv = pairs.reduce((t, x) => t + x.esg.conversions, 0);
-            const roas = (v: number, c: number) => (c > 0 ? `${(v / c).toFixed(1)}x` : '–');
-            return (
-              <div className="mb-3 grid grid-cols-1 gap-3 rounded-xl border border-blue-100 bg-blue-50/40 p-3 sm:grid-cols-3">
-                <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Pascal Press ad revenue on these books</p><p className="text-lg font-bold tabular-nums text-gray-900">{AUD.format(ppAd)}</p><p className="text-xs text-gray-400">{roas(ppAd, ppCost)} return on {AUD.format(ppCost)} · {Math.round(ppConv)} conversions</p></div>
-                <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">ESG ad revenue on these books</p><p className="text-lg font-bold tabular-nums text-gray-900">{AUD.format(esgAd)}</p><p className="text-xs text-gray-400">{roas(esgAd, esgCost)} return on {AUD.format(esgCost)} · {Math.round(esgConv)} conversions</p></div>
-                <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Combined ad revenue</p><p className="text-lg font-bold tabular-nums text-gray-900">{AUD.format(ppAd + esgAd)}</p><p className="text-xs text-gray-400">{roas(ppAd + esgAd, ppCost + esgCost)} return on the combined {AUD.format(ppCost + esgCost)}</p></div>
-                <p className="text-[11px] text-gray-500 sm:col-span-3">Ad revenue = conversion value each Google Ads account credits to its Shopping ads for these books (Google&rsquo;s own attribution). The grey row below is all sales of the same books from every channel.</p>
-              </div>
-            );
-          })()}
           <div className="mb-4 grid grid-cols-1 gap-3 rounded-xl border border-gray-100 bg-gray-50/60 p-3 sm:grid-cols-3">
             {salesState === 'too-long' ? <p className="text-xs text-gray-500 sm:col-span-3">Store sales for these products can be shown for up to 35 days at a time. Pick a shorter range to see them.</p>
               : salesState === 'error' ? <p className="text-xs text-amber-700 sm:col-span-3">Could not read store sales for these products. Spend figures above are still correct.</p>
