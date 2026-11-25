@@ -14,7 +14,7 @@ import { fetchTrialConversion } from '@/lib/hubspot-trials';
 import { fetchUmsTrials, umsConfigured } from '@/lib/ums-trials';
 import { fetchEtzSiteEngagement, fetchEtzFunnelTraffic, fetchChannelRevenue, type EtzEngagement } from '@/lib/google-analytics';
 import { etzSpend } from '@/lib/etz-spend';
-import { ETZ_MONTHLY_REVENUE_TARGETS, ETZ_MONTHLY_MARKETING_BUDGET } from '@/lib/constants';
+import { ETZ_MONTHLY_REVENUE_TARGETS, marketingBudgetFor } from '@/lib/constants';
 import { sydneyToday, addDays, rangeLabel, dayLabel, msRange, avg, round2 } from '@/lib/exec-report-data';
 import type { DailyPoint, Trend } from '@/lib/exec-report-pdf';
 
@@ -164,7 +164,7 @@ export async function gatherEtzReportData(): Promise<EtzReportData> {
     channels,
     engagement: engC && engP ? { cur: engC, prior: engP } : null,
     spend: spendC,
-    marketingBudget: ETZ_MONTHLY_MARKETING_BUDGET,
+    marketingBudget: marketingBudgetFor('Excel Test Zone', monthStart.slice(0, 7))!,
     spendPrior: spendPr ? spendPr.total : null,
   };
 }

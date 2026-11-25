@@ -67,6 +67,7 @@ export const MONTHLY_GOOGLE_BUDGETS: Record<string, number> = {
 
 export const SPEND_CHANNELS = [
   'Google Ads',
+  'Microsoft Ads',
   'Meta Ads',
   'ChatGPT Ads',
   'Online Advertising',
@@ -129,6 +130,18 @@ export const HSC_MONTHLY_REVENUE_TARGETS: Record<number, number> = {
 
 // Excel Test Zone total monthly marketing budget (Google + Meta + other paid channels). Raised to $5,500 in Oct 2026.
 export const ETZ_MONTHLY_MARKETING_BUDGET = 5500;
+
+// One-off total marketing budgets for a single month (YYYY-MM), replacing the usual figure for that month only.
+export const MARKETING_BUDGET_OVERRIDES: Record<string, Partial<Record<'Pascal Press' | 'Excel Test Zone', number>>> = {
+  '2026-11': { 'Pascal Press': 15000, 'Excel Test Zone': 15000 },   // November 2026 only
+};
+
+/** Total monthly marketing budget for a brand in a month: the one-off figure if set, otherwise the usual one. */
+export function marketingBudgetFor(brand: 'Pascal Press' | 'Excel Test Zone', month: string): number | undefined {
+  const o = MARKETING_BUDGET_OVERRIDES[month]?.[brand];
+  if (o != null) return o;
+  return brand === 'Excel Test Zone' ? ETZ_MONTHLY_MARKETING_BUDGET : undefined;
+}
 
 // Excel HSC Copilot total monthly marketing budget
 export const HSC_MONTHLY_MARKETING_BUDGET = 5500;

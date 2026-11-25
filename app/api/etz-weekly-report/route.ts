@@ -13,7 +13,7 @@ import { fetchChannelRevenue, fetchEtzFunnelTraffic, fetchEtzAppTraffic, fetchEt
 import { fetchTrialConversion, fetchOfflineTrials } from '@/lib/hubspot-trials';
 import { etzSpend } from '@/lib/etz-spend';
 import { fetchUmsTrials, umsConfigured } from '@/lib/ums-trials';
-import { ETZ_MONTHLY_REVENUE_TARGETS, MONTHLY_GOOGLE_BUDGETS, ETZ_MONTHLY_MARKETING_BUDGET } from '@/lib/constants';
+import { ETZ_MONTHLY_REVENUE_TARGETS, MONTHLY_GOOGLE_BUDGETS, marketingBudgetFor } from '@/lib/constants';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -226,7 +226,7 @@ export async function GET(request: Request) {
       revenue: mtd?.totalRevenue ?? null, monthlyTarget,
       spend: mtdS?.total ?? null, googleSpend: mtdS?.google ?? null, metaSpend: mtdS?.meta ?? null,
       monthlyGoogleBudget: monthlyBudget,
-      monthlyMarketingBudget: ETZ_MONTHLY_MARKETING_BUDGET,
+      monthlyMarketingBudget: marketingBudgetFor('Excel Test Zone', month),
     },
     engagement: {
       mainSite: { current: emc, prior: emp },
