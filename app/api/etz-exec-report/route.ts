@@ -53,6 +53,21 @@ async function htmlToPdf(html: string): Promise<Uint8Array> {
   }
 }
 
+/** The three headline lines for the email body: month-to-date revenue, last 12 months, families trialling. */
+function summaryLines(data: Awaited<ReturnType<typeof buildEtzExecData>>): string[] {
+  const aud = (n: number) => `$${Math.round(n).toLocaleString('en-AU')}`;
+  const pct = (a: number, b: number) => (b > 0 ? `${a >= b ? '+' : '−'}${Math.abs(Math.round(((a - b) / b) * 100))}%` : 'n/a');
+  const day = (ymd: string) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const yr = (ymd: string) => ymd.slice(0, 4);
+  const [ms, me] = data.periods.mtd, [r1, r2] = data.periods.r12;
+  const m = data.mtd, l = data.mtdLy;
+  return [
+    `Revenue month to date (${day(ms)} – ${day(me)}): ${aud(m.total)} vs ${aud(l.total)} same dates last year (${pct(m.total, l.total)}). Online ${aud(m.online)} vs ${aud(l.online)} (${pct(m.online, l.online)}).`,
+    `Sales, last 12 months (${day(r1)} ${yr(r1)} – ${day(r2)} ${yr(r2)}): ${aud(data.r12.total)} vs ${aud(data.p12.total)} the 12 months before (${pct(data.r12.total, data.p12.total)}).`,
+    `Families trialling month to date: ${m.trialCustomers.toLocaleString('en-AU')} vs ${l.trialCustomers.toLocaleString('en-AU')} same dates last year (${pct(m.trialCustomers, l.trialCustomers)}).`,
+  ];
+}
+
 export async function GET(req: NextRequest) {
   const sitePassword = process.env.SITE_PASSWORD;
   const signedIn = !!sitePassword && req.cookies.get('pp_auth')?.value === sitePassword;
@@ -70,6 +85,14 @@ export async function GET(req: NextRequest) {
   if (asOf && !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return NextResponse.json({ error: 'asOf must be YYYY-MM-DD' }, { status: 400 });
   try {
     const data = await buildEtzExecData(asOf, etzAdSpend);
+    const lines = summaryLines(data);
+    if (req.nextUrl.searchParams.get('format') === 'summary') {
+      return NextResponse.json({ preparedOn: data.preparedOn, asOf: data.asOf, lines }, { headers: { 'Cache-Control': 'private, no-store' } });
+    }
+    // the same three lines ride along with the PDF so Power Automate can put them in the email body without a second run:
+    // base64 of an HTML list (decode in the flow with base64ToString)
+    const summaryHtml = `<ul>${lines.map(t => `<li>${t.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</li>`).join('')}</ul>`;
+    const summaryB64 = Buffer.from(summaryHtml, 'utf-8').toString('base64');
     const html = renderEtzExecHtml(data);
     if (req.nextUrl.searchParams.get('format') === 'html') {
       return new NextResponse(html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, no-store' } });
@@ -78,7 +101,7 @@ export async function GET(req: NextRequest) {
     const d = new Date(`${data.preparedOn}T12:00:00Z`);
     const name = `ETZ Executive Summary ${d.getUTCDate()} ${d.toLocaleString('en-AU', { month: 'short', timeZone: 'UTC' })} ${d.getUTCFullYear()}.pdf`;
     return new NextResponse(Buffer.from(pdf), {
-      headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'private, no-store' },
+      headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'private, no-store', 'X-Report-Summary': summaryB64, 'X-Report-Filename': name },
     });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message.slice(0, 300) : 'failed' }, { status: 502, headers: { 'Cache-Control': 'private, no-store' } });
