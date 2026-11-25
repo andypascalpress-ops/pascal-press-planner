@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchShopifySales, fetchShopifySalesReport, fetchShopifyProductSales, shopifyConfigured } from '@/lib/shopify';
 import { META_ESG_ACCOUNT_ID, fetchEsgMetaCampaigns, fetchEsgMetaSpend } from '@/lib/meta-ads';
+import { buildConfig, fetchCampaignPerformance, fetchMonthlySpend } from '@/lib/google-ads';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -51,6 +52,38 @@ async function buildAds(start: string, end: string, cs: string, ce: string, hasC
   };
 }
 
+/**
+ * Google Ads for Excel Study Guides: spend per campaign (with Google's own conversion value), set against the sales
+ * Shopify credits to paid Google visits. Shopify's "Shopping (free listings + Shopping ads)" channel mixes free and paid
+ * Shopping clicks, so it is reported next to the paid figure rather than counted in it.
+ */
+async function buildGoogleAds(start: string, end: string, cs: string, ce: string, hasComp: boolean, current: Awaited<ReturnType<typeof fetchShopifySales>>) {
+  let error = '';
+  let campaigns: Awaited<ReturnType<typeof fetchCampaignPerformance>> = [];
+  let priorSpend: number | null = null;
+  try {
+    const cfg = buildConfig('esg');
+    campaigns = await fetchCampaignPerformance(cfg, { dateRange: { start, end }, limit: 100 });
+    if (hasComp) priorSpend = r2((await fetchMonthlySpend(cfg, cs, ce).catch(() => [])).reduce((s, m) => s + m.actualSpend, 0));
+  } catch (e) { error = e instanceof Error ? e.message.slice(0, 300) : 'failed'; }
+  const spend = r2(campaigns.reduce((s, c) => s + c.cost, 0));
+  const paid = current.bySource.filter(s => /^Google – paid/.test(s.source));
+  const paidRevenue = r2(paid.reduce((s, x) => s + x.revenue, 0));
+  const paidOrders = paid.reduce((s, x) => s + x.orders, 0);
+  const mixed = current.bySource.find(s => s.source.startsWith('Google – Shopping (free listings'));
+  return {
+    configured: true, error: error || null, spend, priorSpend,
+    paidRevenue, paidOrders,
+    shoppingMixedRevenue: mixed?.revenue ?? 0, shoppingMixedOrders: mixed?.orders ?? 0,
+    roas: spend > 0 && paidRevenue > 0 ? Math.round((paidRevenue / spend) * 10) / 10 : null,
+    googleConvValue: r2(campaigns.reduce((s, c) => s + c.convValue, 0)),
+    campaigns: campaigns.filter(c => c.cost > 0 || c.convValue > 0).map(c => ({
+      name: c.name, spend: c.cost, clicks: c.clicks, conversions: Math.round(c.conversions * 10) / 10, convValue: c.convValue,
+      roas: c.cost > 0 && c.convValue > 0 ? Math.round((c.convValue / c.cost) * 10) / 10 : null,
+    })),
+  };
+}
+
 export async function GET(req: NextRequest) {
   const sitePassword = process.env.SITE_PASSWORD;
   if (sitePassword && req.cookies.get('pp_auth')?.value !== sitePassword) {
@@ -78,9 +111,13 @@ export async function GET(req: NextRequest) {
       fetchShopifyProductSales(start, end).catch(noteErr),
       hasComp ? fetchShopifyProductSales(cs, ce).catch(() => null) : Promise.resolve(null),
     ]);
-    const ads = await buildAds(start, end, cs, ce, hasComp, current).catch((e: unknown) => ({ configured: true, error: e instanceof Error ? e.message.slice(0, 200) : 'failed' }));
+    const fail = (e: unknown) => ({ configured: true, error: e instanceof Error ? e.message.slice(0, 200) : 'failed' });
+    const [ads, googleAds] = await Promise.all([
+      buildAds(start, end, cs, ce, hasComp, current).catch(fail),
+      buildGoogleAds(start, end, cs, ce, hasComp, current).catch(fail),
+    ]);
     return NextResponse.json({
-      configured: true, ads, period: { start, end }, comparison: prior ? { start: cs, end: ce } : null, current, prior, products, priorProducts, productsError: productsError || null,
+      configured: true, ads, googleAds, period: { start, end }, comparison: prior ? { start: cs, end: ce } : null, current, prior, products, priorProducts, productsError: productsError || null,
       priorSource: prior ? (useReport ? 'report' : 'orders') : null, priorError: priorError || null,
     }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (e) {

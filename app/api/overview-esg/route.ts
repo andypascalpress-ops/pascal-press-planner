@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchShopifySales, shopifyConfigured } from '@/lib/shopify';
 import { fetchEsgMetaSpend } from '@/lib/meta-ads';
+import { buildConfig, fetchMonthlySpend } from '@/lib/google-ads';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -25,26 +26,31 @@ export async function GET(req: NextRequest) {
   const start = req.nextUrl.searchParams.get('start') ?? '', end = req.nextUrl.searchParams.get('end') ?? '';
   if (!ymd.test(start) || !ymd.test(end) || start > end) return NextResponse.json({ error: 'start and end required (YYYY-MM-DD)' }, { status: 400, headers: NO_STORE });
   try {
-    const [sales, meta] = await Promise.allSettled([fetchShopifySales(start, end), fetchEsgMetaSpend(start, end)]);
+    const [sales, meta, google] = await Promise.allSettled([
+      fetchShopifySales(start, end), fetchEsgMetaSpend(start, end),
+      fetchMonthlySpend(buildConfig('esg'), start, end).then(rows => rows.reduce((s, r) => s + r.actualSpend, 0)),
+    ]);
     if (sales.status === 'rejected') {
       return NextResponse.json({ error: sales.reason instanceof Error ? sales.reason.message.slice(0, 240) : 'Shopify could not be read' }, { status: 502, headers: NO_STORE });
     }
     const metaSpend = meta.status === 'fulfilled' ? meta.value : 0;
+    const googleSpend = google.status === 'fulfilled' ? google.value : 0;
+    const totalSpend = metaSpend + googleSpend;
     const r2 = (n: number) => Math.round(n * 100) / 100;
     const revenue = sales.value.revenue, orders = sales.value.orders;
     return NextResponse.json({
       esg: {
-        spend: 0,
+        spend: r2(googleSpend),
         metaSpend: r2(metaSpend),
-        totalSpend: r2(metaSpend),
+        totalSpend: r2(totalSpend),
         budget: 0,
         revenue,
-        roas: metaSpend > 0 ? Math.round((revenue / metaSpend) * 10) / 10 : 0,
+        roas: totalSpend > 0 ? Math.round((revenue / totalSpend) * 10) / 10 : 0,
         orders,
         aov: orders > 0 ? Math.round(revenue / orders) : null,
         revConnected: true,
-        adsConnected: metaSpend > 0,
-        adsError: null,
+        adsConnected: google.status === 'fulfilled' || metaSpend > 0,
+        adsError: google.status === 'rejected' ? String(google.reason).replace(/^Error:\s*/, '').slice(0, 240) : null,
         metaError: meta.status === 'rejected' ? String(meta.reason).replace(/^Error:\s*/, '').slice(0, 240) : null,
         conversion: null,
       },

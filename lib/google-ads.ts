@@ -357,14 +357,17 @@ export async function fetchAdGroupPerformance(
 
 // ─── Config builder ───────────────────────────────────────────────────────────
 
-export function buildConfig(brand: 'pp' | 'etz' | 'hsc'): GoogleAdsConfig {
+export function buildConfig(brand: 'pp' | 'etz' | 'hsc' | 'esg'): GoogleAdsConfig {
   // ETZ falls back to PP account when GOOGLE_ADS_ETZ_CUSTOMER_ID is not yet set
   // (while ETZ campaigns still live under the PP account, filtered by name)
   const customerId = brand === 'pp'
     ? process.env.GOOGLE_ADS_PP_CUSTOMER_ID
     : brand === 'hsc'
       ? process.env.GOOGLE_ADS_HSC_CUSTOMER_ID
-      : (process.env.GOOGLE_ADS_ETZ_CUSTOMER_ID || process.env.GOOGLE_ADS_PP_CUSTOMER_ID);
+      : brand === 'esg'
+        // Excel Study Guides' own account, reached through the manager account
+        ? (process.env.GOOGLE_ADS_ESG_CUSTOMER_ID || '863-413-4596')
+        : (process.env.GOOGLE_ADS_ETZ_CUSTOMER_ID || process.env.GOOGLE_ADS_PP_CUSTOMER_ID);
 
   const required = {
     developerToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN,

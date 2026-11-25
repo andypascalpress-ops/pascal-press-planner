@@ -15,8 +15,13 @@ interface AdsBlock {
   campaigns?: { id: string; name: string; spend: number; clicks: number; impressions: number; revenue: number; orders: number; roas: number | null }[];
   unmatched?: { campaign: string; orders: number; revenue: number }[];
 }
+interface GoogleAdsBlock {
+  configured?: boolean; error?: string | null; spend?: number; priorSpend?: number | null; paidRevenue?: number; paidOrders?: number; roas?: number | null;
+  shoppingMixedRevenue?: number; shoppingMixedOrders?: number; googleConvValue?: number;
+  campaigns?: { name: string; spend: number; clicks: number; conversions: number; convValue: number; roas: number | null }[];
+}
 interface Item { title: string; units: number | null; revenue: number }
-interface Resp { ads?: AdsBlock; configured?: boolean; error?: string; priorSource?: 'orders' | 'report' | null; priorError?: string | null; period?: { start: string; end: string }; comparison?: { start: string; end: string } | null; current?: Sales; prior?: Sales | null; products?: Item[] | null; priorProducts?: Item[] | null; productsError?: string | null }
+interface Resp { ads?: AdsBlock; googleAds?: GoogleAdsBlock; configured?: boolean; error?: string; priorSource?: 'orders' | 'report' | null; priorError?: string | null; period?: { start: string; end: string }; comparison?: { start: string; end: string } | null; current?: Sales; prior?: Sales | null; products?: Item[] | null; priorProducts?: Item[] | null; productsError?: string | null }
 
 type RangeKey = 'yesterday' | 'last7' | 'last30' | 'mtd' | 'lastmonth';
 const RANGES: { key: RangeKey; label: string }[] = [
@@ -165,11 +170,19 @@ export default function EsgPanel({ color }: { color: string }) {
   const prevItems = new Map((data?.priorProducts ?? []).map(x => [x.title, x]));
   const showUnits = items.some(i => i.units != null);
   const gradId = 'esgFill';
-  // revenue after ad spend: all Shopify revenue less Meta spend (Google Ads for this store is not connected yet)
-  const adSpend = data?.ads?.configured && !data.ads.error ? (data.ads.spend ?? 0) : 0;
-  const showNet = Boolean(c && data?.ads?.configured && !data.ads.error && adSpend > 0);
+  // revenue after ad spend: all Shopify revenue less Meta and Google Ads spend
+  const metaOk = Boolean(data?.ads?.configured && !data.ads.error);
+  const gOk = Boolean(data?.googleAds?.configured && !data.googleAds.error);
+  const metaSpend = metaOk ? (data?.ads?.spend ?? 0) : 0;
+  const googleSpend = gOk ? (data?.googleAds?.spend ?? 0) : 0;
+  const adSpend = metaSpend + googleSpend;
+  const showNet = Boolean(c && adSpend > 0);
   const netNow = (c?.revenue ?? 0) - adSpend;
-  const netPrev = p && data?.ads?.priorSpend != null ? p.revenue - data.ads.priorSpend : null;
+  const priorAd = (metaOk ? data?.ads?.priorSpend : 0) ?? null;
+  const priorG = (gOk ? data?.googleAds?.priorSpend : 0) ?? null;
+  const netPrev = p && priorAd != null && priorG != null ? p.revenue - priorAd - priorG : null;
+  const spendWords = [metaSpend > 0 ? `${AUD.format(metaSpend)} Facebook & Instagram` : '', googleSpend > 0 ? `${AUD.format(googleSpend)} Google Ads` : ''].filter(Boolean).join(' + ');
+  const g = data?.googleAds;
 
   return (
     <div className="space-y-5">
@@ -248,9 +261,44 @@ export default function EsgPanel({ color }: { color: string }) {
             {showNet && (
               <Stat label="Revenue after ad spend" value={AUD.format(netNow)} icon="net" color={color}
                 delta={<Delta cur={netNow} prev={netPrev} />}
-                sub={`${AUD.format(c.revenue)} revenue less ${AUD.format(adSpend)} Facebook & Instagram spend${netPrev != null ? ` · Previous: ${AUD.format(netPrev)}` : ''}`} />
+                sub={`${AUD.format(c.revenue)} revenue less ${spendWords} spend${netPrev != null ? ` · Previous: ${AUD.format(netPrev)}` : ''}`} />
             )}
           </div>
+
+          {g?.configured && (
+            <Section title="Google Ads" note="Google Ads spend by campaign against the sales Shopify credits to paid Google visits (last click)">
+              {g.error ? <p className="text-sm text-red-600">Could not read the Google Ads account: {g.error}</p> : (
+                <>
+                  <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Ad spend</p><p className="text-xl font-bold tabular-nums text-gray-900">{AUD.format(g.spend ?? 0)}</p>{g.priorSpend != null && <p className="text-xs text-gray-400">Previous: {AUD.format(g.priorSpend)}</p>}</div>
+                    <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Paid Google revenue</p><p className="text-xl font-bold tabular-nums text-gray-900">{AUD.format(g.paidRevenue ?? 0)}</p><p className="text-xs text-gray-400">{g.paidOrders ?? 0} orders (Shopify)</p></div>
+                    <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">ROAS</p><p className="text-xl font-bold tabular-nums text-gray-900">{g.roas != null ? `${g.roas}x` : '–'}</p><p className="text-xs text-gray-400">paid Google revenue / spend</p></div>
+                    <div><p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Google-reported value</p><p className="text-xl font-bold tabular-nums text-gray-900">{AUD.format(g.googleConvValue ?? 0)}</p><p className="text-xs text-gray-400">{(g.spend ?? 0) > 0 && (g.googleConvValue ?? 0) > 0 ? `${((g.googleConvValue ?? 0) / (g.spend ?? 1)).toFixed(1)}x by Google's own count` : "Google's own conversion count"}</p></div>
+                  </div>
+                  {(g.campaigns ?? []).length === 0 ? <p className="text-sm text-gray-400">No Google Ads spend in this period.</p> : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm tabular-nums">
+                        <thead><tr className="text-left text-[11px] text-gray-400"><th className="py-1 font-medium">Campaign</th><th className="py-1 text-right font-medium">Spend</th><th className="py-1 text-right font-medium">Clicks</th><th className="py-1 text-right font-medium">Conversions</th><th className="py-1 text-right font-medium">Conv. value (Google)</th><th className="py-1 text-right font-medium">ROAS (Google)</th></tr></thead>
+                        <tbody>{(g.campaigns ?? []).map(r => (
+                          <tr key={r.name} className="border-t border-gray-50">
+                            <td className="py-1.5 pr-3 text-gray-800">{r.name}</td>
+                            <td className="py-1.5 text-right text-gray-600">{AUD.format(r.spend)}</td>
+                            <td className="py-1.5 text-right text-gray-500">{r.clicks.toLocaleString()}</td>
+                            <td className="py-1.5 text-right text-gray-600">{r.conversions}</td>
+                            <td className="py-1.5 text-right font-medium text-gray-900">{AUD.format(r.convValue)}</td>
+                            <td className="py-1.5 text-right text-gray-700">{r.roas != null ? `${r.roas}x` : '–'}</td>
+                          </tr>
+                        ))}</tbody>
+                      </table>
+                    </div>
+                  )}
+                  {(g.shoppingMixedRevenue ?? 0) > 0 && (
+                    <p className="mt-3 text-[11px] text-gray-400">Not counted above: {AUD.format(g.shoppingMixedRevenue ?? 0)} ({g.shoppingMixedOrders ?? 0} orders) from Google Shopping clicks that Shopify cannot split between free listings and Shopping ads. Some of it is paid, so Google ROAS is somewhere between the Shopify and Google figures.</p>
+                  )}
+                </>
+              )}
+            </Section>
+          )}
 
           {data?.ads?.configured && (
             <Section title="Facebook & Instagram ads" note="Meta spend by campaign against the sales Shopify credits to paid Facebook visits (last click)">
