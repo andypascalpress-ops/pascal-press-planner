@@ -87,11 +87,23 @@ export async function GET(req: NextRequest) {
     const data = await buildEtzExecData(asOf, etzAdSpend);
     const lines = summaryLines(data);
     if (req.nextUrl.searchParams.get('format') === 'summary') {
-      return NextResponse.json({ preparedOn: data.preparedOn, asOf: data.asOf, lines }, { headers: { 'Cache-Control': 'private, no-store' } });
+      const y = data.yesterday;
+      return NextResponse.json({ preparedOn: data.preparedOn, asOf: data.asOf, yesterday: { trials: y.trialCustomers, payingCustomers: y.customers, online: y.online, schools: y.schools }, lines }, { headers: { 'Cache-Control': 'private, no-store' } });
     }
     // the same three lines ride along with the PDF so Power Automate can put them in the email body without a second run:
     // base64 of an HTML list (decode in the flow with base64ToString)
-    const summaryHtml = `<ul>${lines.map(t => `<li>${t.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</li>`).join('')}</ul>`;
+    const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const y = data.yesterday;
+    const yDay = new Date(`${data.asOf}T12:00:00Z`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' });
+    const aud = (n: number) => `$${Math.round(n).toLocaleString('en-AU')}`;
+    const yLines = [
+      `Trials \u2013 ${y.trialCustomers.toLocaleString('en-AU')}`,
+      `Paying customers \u2013 ${y.customers.toLocaleString('en-AU')}`,
+      `Online revenue \u2013 ${aud(y.online)}`,
+      `School revenue \u2013 ${aud(y.schools)}`,
+    ];
+    const summaryHtml = `<p><b>Yesterday's results (${esc(yDay)})</b></p><ul>${yLines.map(t => `<li>${esc(t)}</li>`).join('')}</ul>`
+      + `<p><b>Headlines</b></p><ul>${lines.map(t => `<li>${esc(t)}</li>`).join('')}</ul>`;
     const summaryB64 = Buffer.from(summaryHtml, 'utf-8').toString('base64');
     const html = renderEtzExecHtml(data);
     if (req.nextUrl.searchParams.get('format') === 'html') {
